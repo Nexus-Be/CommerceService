@@ -8,7 +8,7 @@ CommerceService là **Trung Tâm Điều Phối Saga (Saga Orchestrator)** cho l
 
 | Tên Sự Kiện | Thời Điểm Kích Hoạt | Payload Dữ Liệu | Services Quan Tâm |
 |:---|:---|:---|:---|
-| `OrderSubmittedEvent` | Khách gửi request tạo đơn hàng thành công | `OrderId`, `UserId`, `Items: [{ ProductId, Quantity }]`, `TotalAmount`, `CreatedAt` | `CatalogService` (Giữ kho ảo), `AuditService`. |
+| `OrderSubmittedEvent` | Khách gửi request tạo đơn hàng thành công | `OrderId`, `UserId`, `Items: [{ ProductId, Quantity }]`, `TotalAmount`, `CreatedAt` | `CatalogService` (Giữ kho ảo), `LogService`. |
 | `OrderPaidEvent` | Nhận được xác nhận thanh toán thành công từ ví | `OrderId`, `TransactionId`, `PaidAt` | `FulfillmentService` (Tạo phiếu xuất kho), `NotificationService` (Báo khách). |
 | `OrderCancelledEvent` | Đơn hàng bị hủy do hết kho hoặc thanh toán lỗi | `OrderId`, `Reason`, `CancelledAt` | `CatalogService` (Nhả lại kho nếu trước đó đã giữ), `NotificationService`. |
 
