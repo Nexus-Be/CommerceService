@@ -21,6 +21,11 @@ public class OrderCancellationConfiguration : IEntityTypeConfiguration<OrderCanc
             .WithOne(ao => ao.Cancellation)
             .HasForeignKey<OrderCancellation>(c => c.AuctionOrderId);
 
+        builder.HasMany(c => c.Refunds)
+            .WithOne(r => r.Cancellation)
+            .HasForeignKey(r => r.CancellationId)
+            .OnDelete(DeleteBehavior.SetNull);
+
         builder.HasQueryFilter(x => !x.IsDeleted);
     }
 }

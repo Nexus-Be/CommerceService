@@ -18,6 +18,7 @@ public class DiscountCodeConfiguration : IEntityTypeConfiguration<DiscountCode>
         builder.Property(x => x.MaxDiscountAmount).HasPrecision(18, 2);
         builder.Property(x => x.MinOrderAmount).HasPrecision(18, 2);
         builder.Property(x => x.Status).HasConversion<string>();
+        builder.Property(x => x.IsVisible).HasDefaultValue(true);
 
         builder.HasMany(d => d.Scopes)
             .WithOne(s => s.DiscountCode)
@@ -26,5 +27,7 @@ public class DiscountCodeConfiguration : IEntityTypeConfiguration<DiscountCode>
         builder.HasMany(d => d.Usages)
             .WithOne(u => u.DiscountCode)
             .HasForeignKey(u => u.DiscountCodeId);
+
+        builder.HasQueryFilter(x => !x.IsDeleted);
     }
 }

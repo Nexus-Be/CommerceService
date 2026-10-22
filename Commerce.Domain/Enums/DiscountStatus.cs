@@ -4,5 +4,6 @@ public enum DiscountStatus
 {
     Draft = 0,
     Active = 1,
-    Expired = 2
+    Inactive = 2,
+    Expired = 3
 }

@@ -12,9 +12,11 @@ public class OrderCancellation : BaseEntity<Guid>
     public required CancellationReasonCode ReasonCode { get; set; }
     public string? ReasonNote { get; set; }
     public bool WasPaid { get; set; }
+    public Guid? RefundTransactionId { get; set; }
     public bool InventoryReleased { get; set; }
 
     // Navigation
     public SubOrder? SubOrder { get; set; }
     public AuctionOrder? AuctionOrder { get; set; }
+    public ICollection<OrderRefund> Refunds { get; set; } = new List<OrderRefund>();
 }

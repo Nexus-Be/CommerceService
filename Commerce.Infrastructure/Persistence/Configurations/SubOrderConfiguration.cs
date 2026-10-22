@@ -12,7 +12,8 @@ public class SubOrderConfiguration : IEntityTypeConfiguration<SubOrder>
         builder.Property(x => x.SubOrderNo).HasMaxLength(100).IsRequired();
         builder.HasIndex(x => x.SubOrderNo).IsUnique();
         builder.Property(x => x.Status).HasConversion<string>();
-        builder.Property(x => x.ShippingAddress).HasMaxLength(2000);
+        builder.Property(x => x.PaymentMethod).HasConversion<string>();
+        builder.Property(x => x.ShippingAddress).HasColumnType("jsonb");
         builder.Property(x => x.ContactPhone).HasMaxLength(50);
         builder.Property(x => x.ItemsAmount).HasPrecision(18, 2);
         builder.Property(x => x.ProductDiscountAmount).HasPrecision(18, 2);
@@ -48,6 +49,11 @@ public class SubOrderConfiguration : IEntityTypeConfiguration<SubOrder>
         builder.HasMany(s => s.DiscountCodeUsages)
             .WithOne(u => u.SubOrder)
             .HasForeignKey(u => u.SubOrderId);
+
+        builder.HasMany(s => s.Refunds)
+            .WithOne(r => r.SubOrder)
+            .HasForeignKey(r => r.SubOrderId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasQueryFilter(x => !x.IsDeleted);
     }

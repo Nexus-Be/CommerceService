@@ -10,6 +10,8 @@ public class SubOrder : BaseEntity<Guid>
     public required Guid BuyerId { get; set; }
     public required Guid SellerId { get; set; }
     public required SubOrderStatus Status { get; set; } = SubOrderStatus.PendingPayment;
+    public required PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Wallet;
+    public Guid? WalletTransactionId { get; set; }
     public required string ShippingAddress { get; set; }
     public required string ContactPhone { get; set; }
     public decimal ItemsAmount { get; set; }
@@ -37,5 +39,6 @@ public class SubOrder : BaseEntity<Guid>
     public ICollection<OrderStatusHistory> StatusHistories { get; set; } = new List<OrderStatusHistory>();
     public OrderInvoice? Invoice { get; set; }
     public OrderCancellation? Cancellation { get; set; }
+    public ICollection<OrderRefund> Refunds { get; set; } = new List<OrderRefund>();
     public ICollection<DiscountCodeUsage> DiscountCodeUsages { get; set; } = new List<DiscountCodeUsage>();
 }

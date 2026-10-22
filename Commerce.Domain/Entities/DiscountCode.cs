@@ -17,7 +17,7 @@ public class DiscountCode : BaseEntity<Guid>
     public int? MaxUsesPerUser { get; set; }
     public int UsedCount { get; set; }
     public int ReservedCount { get; set; }
-    public bool IsDisabled { get; set; }
+    public bool IsVisible { get; set; } = true;
     public required DiscountStatus Status { get; set; } = DiscountStatus.Draft;
     public DateTimeOffset? StartsAt { get; set; }
     public DateTimeOffset? EndsAt { get; set; }

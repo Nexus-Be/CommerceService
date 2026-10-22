@@ -2,7 +2,9 @@ namespace Commerce.Domain.Enums;
 
 public enum DiscountScopeRefType
 {
-    Category = 0,
+    Shop = 0,
     Product = 1,
-    Shop = 2
+    Sku = 2,
+    Category = 3,
+    All = 4
 }

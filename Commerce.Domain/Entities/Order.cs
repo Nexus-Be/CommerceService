@@ -9,6 +9,8 @@ public class Order : BaseEntity<Guid>
     public required Guid BuyerId { get; set; }
     public required OrderStatus Status { get; set; } = OrderStatus.PendingPayment;
     public required decimal TotalAmount { get; set; }
+    public Guid? WalletTransactionId { get; set; }
+    public int PaymentAttemptCount { get; set; }
     public required DateTimeOffset PaymentDeadlineAt { get; set; }
     public long RowVersion { get; set; }
 
@@ -17,4 +19,5 @@ public class Order : BaseEntity<Guid>
     public ICollection<SubOrder> SubOrders { get; set; } = new List<SubOrder>();
     public ICollection<DiscountCodeUsage> DiscountCodeUsages { get; set; } = new List<DiscountCodeUsage>();
     public OrderInvoice? Invoice { get; set; }
+    public ICollection<OrderRefund> Refunds { get; set; } = new List<OrderRefund>();
 }

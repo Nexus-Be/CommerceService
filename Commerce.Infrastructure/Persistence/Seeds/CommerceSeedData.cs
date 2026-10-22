@@ -16,8 +16,8 @@ public static class CommerceSeedData
                 Id = welcomeVoucherId,
                 Code = "WELCOME2026",
                 Name = "Khuyến mại chào mừng thành viên mới",
-                ScopeType = DiscountScopeType.Global,
-                DiscountType = DiscountType.FixedAmount,
+                ScopeType = DiscountScopeType.System,
+                DiscountType = DiscountType.Fixed,
                 DiscountValue = 50000m,
                 MaxDiscountAmount = 50000m,
                 MinOrderAmount = 200000m,
@@ -25,10 +25,107 @@ public static class CommerceSeedData
                 MaxUsesPerUser = 1,
                 UsedCount = 0,
                 ReservedCount = 0,
-                IsDisabled = false,
+                IsVisible = true,
                 Status = DiscountStatus.Active,
                 StartsAt = DateTimeOffset.UtcNow,
                 EndsAt = DateTimeOffset.UtcNow.AddYears(1),
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                IsDeleted = false
+            }
+        );
+    }
+
+    public static void SeedSystemSettings(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<SystemSetting>().HasData(
+            new SystemSetting
+            {
+                Id = Guid.Parse("11111111-1111-1111-1111-111111111101"),
+                SettingKey = "CART_EXPIRATION_DAYS",
+                SettingValue = "7",
+                ValueType = SettingValueType.Integer,
+                Category = SettingCategory.Timing,
+                Description = "Số ngày không hoạt động trước khi giỏ hàng thành ABANDONED",
+                IsEditable = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                IsDeleted = false
+            },
+            new SystemSetting
+            {
+                Id = Guid.Parse("11111111-1111-1111-1111-111111111102"),
+                SettingKey = "CHECKOUT_TIMEOUT_MINUTES",
+                SettingValue = "15",
+                ValueType = SettingValueType.Integer,
+                Category = SettingCategory.Timing,
+                Description = "Hạn thanh toán sau khi tạo đơn tổng (phút)",
+                IsEditable = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                IsDeleted = false
+            },
+            new SystemSetting
+            {
+                Id = Guid.Parse("11111111-1111-1111-1111-111111111103"),
+                SettingKey = "SELLER_RESPOND_HOURS",
+                SettingValue = "24",
+                ValueType = SettingValueType.Integer,
+                Category = SettingCategory.Timing,
+                Description = "Hạn người bán phản hồi đơn đã thanh toán (giờ)",
+                IsEditable = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                IsDeleted = false
+            },
+            new SystemSetting
+            {
+                Id = Guid.Parse("11111111-1111-1111-1111-111111111104"),
+                SettingKey = "ORDER_AUTO_COMPLETE_DAYS",
+                SettingValue = "7",
+                ValueType = SettingValueType.Integer,
+                Category = SettingCategory.Timing,
+                Description = "Số ngày tự hoàn tất đơn đã giao thành công",
+                IsEditable = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                IsDeleted = false
+            },
+            new SystemSetting
+            {
+                Id = Guid.Parse("11111111-1111-1111-1111-111111111105"),
+                SettingKey = "PAYMENT_RETRY_LIMIT",
+                SettingValue = "3",
+                ValueType = SettingValueType.Integer,
+                Category = SettingCategory.System,
+                Description = "Số lần thử thanh toán tối đa cho mỗi đơn tổng",
+                IsEditable = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                IsDeleted = false
+            },
+            new SystemSetting
+            {
+                Id = Guid.Parse("11111111-1111-1111-1111-111111111106"),
+                SettingKey = "MAX_QTY_PER_ITEM",
+                SettingValue = "99",
+                ValueType = SettingValueType.Integer,
+                Category = SettingCategory.System,
+                Description = "Số lượng tối đa cho mỗi sản phẩm trong giỏ hàng",
+                IsEditable = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                IsDeleted = false
+            },
+            new SystemSetting
+            {
+                Id = Guid.Parse("11111111-1111-1111-1111-111111111107"),
+                SettingKey = "MAX_CART_ITEMS",
+                SettingValue = "50",
+                ValueType = SettingValueType.Integer,
+                Category = SettingCategory.System,
+                Description = "Số dòng sản phẩm tối đa trong giỏ hàng",
+                IsEditable = true,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow,
                 IsDeleted = false

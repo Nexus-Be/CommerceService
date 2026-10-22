@@ -13,6 +13,8 @@ public class AuctionOrder : BaseEntity<Guid>
     public required Guid ProductId { get; set; }
     public Guid? SkuId { get; set; }
     public required string ProductNameSnapshot { get; set; }
+    public string? ImageUrlSnapshot { get; set; }
+    public string SkuAttributesSnapshot { get; set; } = "{}";
     public required decimal WinningAmount { get; set; }
     public string? ShippingAddress { get; set; }
     public string? ContactPhone { get; set; }
@@ -21,6 +23,8 @@ public class AuctionOrder : BaseEntity<Guid>
     public required decimal SellerReceiveAmount { get; set; }
     public required decimal PlatformFeeAmount { get; set; }
     public required SubOrderStatus Status { get; set; } = SubOrderStatus.PendingPayment;
+    public required PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Wallet;
+    public Guid? WalletTransactionId { get; set; }
     public required DateTimeOffset PaymentDeadlineAt { get; set; }
     public DateTimeOffset? SellerRespondDeadlineAt { get; set; }
     public DateTimeOffset? PaidAt { get; set; }
@@ -35,4 +39,5 @@ public class AuctionOrder : BaseEntity<Guid>
     public ICollection<OrderStatusHistory> StatusHistories { get; set; } = new List<OrderStatusHistory>();
     public OrderInvoice? Invoice { get; set; }
     public OrderCancellation? Cancellation { get; set; }
+    public ICollection<OrderRefund> Refunds { get; set; } = new List<OrderRefund>();
 }

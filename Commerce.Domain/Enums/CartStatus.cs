@@ -3,6 +3,6 @@ namespace Commerce.Domain.Enums;
 public enum CartStatus
 {
     Active = 0,
-    Abandoned = 1,
-    Converted = 2
+    CheckedOut = 1,
+    Abandoned = 2
 }

@@ -32,6 +32,11 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
             .HasForeignKey<OrderInvoice>(inv => inv.OrderId)
             .OnDelete(DeleteBehavior.SetNull);
 
+        builder.HasMany(o => o.Refunds)
+            .WithOne(r => r.Order)
+            .HasForeignKey(r => r.OrderId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasQueryFilter(x => !x.IsDeleted);
     }
 }

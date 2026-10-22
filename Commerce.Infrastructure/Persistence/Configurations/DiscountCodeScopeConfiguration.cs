@@ -14,5 +14,7 @@ public class DiscountCodeScopeConfiguration : IEntityTypeConfiguration<DiscountC
         builder.HasOne(s => s.DiscountCode)
             .WithMany(d => d.Scopes)
             .HasForeignKey(s => s.DiscountCodeId);
+
+        builder.HasQueryFilter(x => !x.IsDeleted);
     }
 }

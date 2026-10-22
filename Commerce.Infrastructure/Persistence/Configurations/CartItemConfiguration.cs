@@ -12,8 +12,13 @@ public class CartItemConfiguration : IEntityTypeConfiguration<CartItem>
         builder.Property(x => x.ProductNameSnapshot).HasMaxLength(500).IsRequired();
         builder.Property(x => x.UnitPriceSnapshot).HasPrecision(18, 2);
 
+        builder.HasIndex(x => new { x.CartId, x.SkuId }).IsUnique();
+        builder.HasIndex(x => x.ProductId);
+
         builder.HasOne(i => i.Cart)
             .WithMany(c => c.Items)
             .HasForeignKey(i => i.CartId);
+
+        builder.HasQueryFilter(x => !x.IsDeleted);
     }
 }
