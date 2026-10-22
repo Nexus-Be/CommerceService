@@ -19,8 +19,14 @@ public class OrderInvoiceConfiguration : IEntityTypeConfiguration<OrderInvoice>
             .WithOne(o => o.Invoice)
             .HasForeignKey<OrderInvoice>(inv => inv.OrderId);
 
+        builder.HasOne(inv => inv.SubOrder)
+            .WithOne(s => s.Invoice)
+            .HasForeignKey<OrderInvoice>(inv => inv.SubOrderId);
+
         builder.HasOne(inv => inv.AuctionOrder)
             .WithOne(ao => ao.Invoice)
             .HasForeignKey<OrderInvoice>(inv => inv.AuctionOrderId);
+
+        builder.HasQueryFilter(x => !x.IsDeleted);
     }
 }

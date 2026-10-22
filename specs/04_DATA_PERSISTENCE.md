@@ -4,53 +4,72 @@
 
 ## 1. MÔ HÌNH THỰC THỂ CHÍNH (DOMAIN ENTITIES)
 
-1. **`Cart`**:
+1. **`Cart` (Giỏ hàng)**:
    - `Id`: `Guid`.
-   - `UserId`: `Guid` (Unique, mỗi user chỉ có 1 giỏ hàng hoạt động).
-   - `CreatedAt`, `UpdatedAt`: `DateTimeOffset`.
-   - Navigation: `ICollection<CartItem> Items`.
+   - `BuyerId`: `Guid` (Liên kết logic `UserService.Users.Id`).
+   - `Status`: `CartStatus` (`Active = 0`, `Abandoned = 1`, `Converted = 2`).
+   - `ItemCount`: `int`.
+   - `SubtotalAmount`: `decimal`.
+   - `LastActivityAt`: `DateTimeOffset`.
+   - Navigation: `ICollection<CartItem> Items`, `ICollection<Order> Orders`.
 
 2. **`CartItem`**:
    - `Id`: `Guid`.
    - `CartId`: `Guid` (FK $\rightarrow$ `Cart.Id`).
-   - `ProductId`: `Guid`.
-   - `Quantity`: `int` (Bắt buộc $\ge 1$).
-   - `UnitPrice`: `decimal` (Precision: 18, Scale: 2).
-   - `AddedAt`: `DateTimeOffset`.
-
-3. **`Order`**:
-   - `Id`: `Guid`.
-   - `OrderCode`: `string` (Mã đơn thân thiện hiển thị cho khách, ví dụ: `"ORD-202610-8812"`).
-   - `UserId`: `Guid`.
-   - `Status`: `OrderStatus` (`Pending`, `StockReserved`, `Paid`, `Preparing`, `Shipped`, `Completed`, `Cancelled`).
-   - `TotalAmount`: `decimal` (Precision: 18, Scale: 2).
-   - `Currency`: `string` (`"VND"`).
-   - `IdempotencyKey`: `string` (UUID, Unique Index để chống tạo trùng đơn).
-   - `CancellationReason`: `string?`.
-   - `CreatedAt`, `UpdatedAt`: `DateTimeOffset`.
-   - Navigation: `ICollection<OrderLine> Lines`.
-
-4. **`OrderLine`**:
-   - `Id`: `Guid`.
-   - `OrderId`: `Guid` (FK $\rightarrow$ `Order.Id`).
-   - `ProductId`: `Guid`.
-   - `SellerId`: `Guid`.
+   - `ProductId`: `Guid` (Cross-service Ref $\rightarrow$ `CatalogService.Products.Id`).
+   - `SkuId`: `Guid?` (Cross-service Ref $\rightarrow$ `CatalogService.ProductVariants.Id`).
+   - `SellerId`: `Guid` (Cross-service Ref $\rightarrow$ `UserService.Users.Id`).
    - `Quantity`: `int`.
-   - `UnitPrice`: `decimal`.
-   - `Subtotal`: `decimal` (`UnitPrice * Quantity`).
+   - `UnitPriceSnapshot`: `decimal`.
+   - `ProductNameSnapshot`: `string`.
 
-5. **`OrderStateInstance` (MassTransit Saga State)**:
-   - `CorrelationId`: `Guid` (Khóa chính Saga, ánh xạ với `Order.Id`).
-   - `CurrentState`: `string`.
-   - `PaymentAttemptCount`: `int`.
-   - `Version`: `int`.
+3. **`Order` (Đơn hàng tổng / Master Order - Trước đây là CheckoutGroup)**:
+   - `Id`: `Guid`.
+   - `CartId`: `Guid?` (FK $\rightarrow$ `Cart.Id`).
+   - `BuyerId`: `Guid` (Cross-service Ref $\rightarrow$ `UserService.Users.Id`).
+   - `Status`: `OrderStatus` (`PendingPayment = 0`, `Paid = 1`, `Failed = 2`, `Expired = 3`, `Cancelled = 4`).
+   - `TotalAmount`: `decimal` (Precision: 18, Scale: 2).
+   - `PaymentDeadlineAt`: `DateTimeOffset`.
+   - `RowVersion`: `long` (Concurrency Token).
+   - Navigation: `Cart?`, `ICollection<SubOrder> SubOrders`, `ICollection<DiscountCodeUsage> DiscountCodeUsages`, `OrderInvoice? Invoice`.
 
----
+4. **`SubOrder` (Đơn hàng con theo từng Shop/Seller - Trước đây là Order)**:
+   - `Id`: `Guid`.
+   - `SubOrderNo`: `string` (Unique Index).
+   - `OrderId`: `Guid` (FK $\rightarrow$ `Order.Id`).
+   - `BuyerId`, `SellerId`: `Guid`.
+   - `Status`: `SubOrderStatus` (`PendingPayment = 0`, `Paid = 1`, `SellerAccepted = 2`, `Shipped = 3`, `Delivered = 4`, `Completed = 5`, `Cancelled = 6`).
+   - `ShippingAddress`: `string` (JSON cấu trúc địa chỉ).
+   - `ContactPhone`: `string`.
+   - `ItemsAmount`, `ProductDiscountAmount`, `ShopDiscountAmount`, `PlatformMarkupAmount`, `SystemDiscountAmount`, `ShippingFeeAmount`, `TotalAmount`, `SellerReceiveAmount`, `PlatformFeeAmount`: `decimal`.
+   - `PaymentDeadlineAt`, `SellerRespondDeadlineAt`, `PaidAt`, `SellerAcceptedAt`, `ShippedAt`, `DeliveredAt`, `CompletedAt`, `CancelledAt`: `DateTimeOffset?`.
+   - `RowVersion`: `long`.
+   - Navigation: `Order`, `ICollection<SubOrderItem> Items`, `ICollection<OrderStatusHistory> StatusHistories`, `OrderInvoice? Invoice`, `OrderCancellation? Cancellation`, `ICollection<DiscountCodeUsage> DiscountCodeUsages`.
 
-## 2. QUY CHUẨN CƠ SỞ DỮ LIỆU & EF CORE
+5. **`SubOrderItem` (Dòng sản phẩm đơn con - Trước đây là OrderItem)**:
+   - `Id`: `Guid`.
+   - `SubOrderId`: `Guid` (FK $\rightarrow$ `SubOrder.Id`).
+   - `ProductId`, `SkuId`, `SellerId`: `Guid`.
+   - `ProductNameSnapshot`, `SkuCodeSnapshot`, `SkuAttributesSnapshot`, `ImageUrlSnapshot`: Snapshot thông tin sản phẩm.
+   - `Quantity`: `int`.
+   - `UnitPrice`, `UnitPriceAfterDiscount`, `LineTotal`: `decimal`.
+   - `DiscountCodeId`: `Guid?`.
+   - Navigation: `SubOrder`.
 
-- Engine: PostgreSQL.
-- Database: `commerce_db` tại port `5434`.
-- Chuỗi kết nối: `Host=localhost;Port=5434;Database=commerce_db;Username=postgres;Password=...`.
-- Tên bảng: `carts`, `cart_items`, `orders`, `order_lines`, `order_saga_states`.
-- **No Repository Pattern**: Tầng Application tương tác trực tiếp với `CommerceDbContext`.
+6. **`AuctionOrder` (Đơn hàng từ kết quả đấu giá)**:
+   - `Id`: `Guid`.
+   - `OrderNo`: `string` (Unique Index).
+   - `AuctionId`: `Guid` (Cross-service Ref $\rightarrow$ `AuctionService.Auctions.Id`).
+   - `BuyerId`, `SellerId`, `WinningBidId`, `ProductId`, `SkuId`: `Guid`.
+   - `WinningAmount`, `ShippingFeeAmount`, `TotalAmount`, `SellerReceiveAmount`, `PlatformFeeAmount`: `decimal`.
+   - `Status`: `SubOrderStatus`.
+   - Navigation: `StatusHistories`, `Invoice`, `Cancellation`.
+
+7. **`DiscountCode`, `DiscountCodeScope`, `DiscountCodeUsage`**:
+   - Quản lý mã giảm giá toàn sàn và theo shop, phạm vi áp dụng và lịch sử giữ chỗ/sử dụng.
+
+8. **`OrderStatusHistory`, `OrderInvoice`, `OrderCancellation`**:
+   - Lịch sử biến động trạng thái đơn, hóa đơn điện tử và ghi nhận lý do hủy đơn.
+
+9. **`AuditLog`**:
+   - Nhật ký kiểm toán thao tác thương mại.

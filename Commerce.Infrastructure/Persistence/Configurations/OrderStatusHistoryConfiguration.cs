@@ -14,12 +14,14 @@ public class OrderStatusHistoryConfiguration : IEntityTypeConfiguration<OrderSta
         builder.Property(x => x.ActorRole).HasConversion<string>();
         builder.Property(x => x.Reason).HasMaxLength(1000);
 
-        builder.HasOne(h => h.Order)
-            .WithMany(o => o.StatusHistories)
-            .HasForeignKey(h => h.OrderId);
+        builder.HasOne(h => h.SubOrder)
+            .WithMany(s => s.StatusHistories)
+            .HasForeignKey(h => h.SubOrderId);
 
         builder.HasOne(h => h.AuctionOrder)
             .WithMany(ao => ao.StatusHistories)
             .HasForeignKey(h => h.AuctionOrderId);
+
+        builder.HasQueryFilter(x => !x.IsDeleted);
     }
 }

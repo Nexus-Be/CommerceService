@@ -11,12 +11,12 @@ public class AppDbContext : DbContext
 
     public DbSet<Cart> Carts => Set<Cart>();
     public DbSet<CartItem> CartItems => Set<CartItem>();
-    public DbSet<CheckoutGroup> CheckoutGroups => Set<CheckoutGroup>();
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<SubOrder> SubOrders => Set<SubOrder>();
+    public DbSet<SubOrderItem> SubOrderItems => Set<SubOrderItem>();
     public DbSet<DiscountCode> DiscountCodes => Set<DiscountCode>();
     public DbSet<DiscountCodeScope> DiscountCodeScopes => Set<DiscountCodeScope>();
     public DbSet<DiscountCodeUsage> DiscountCodeUsages => Set<DiscountCodeUsage>();
-    public DbSet<Order> Orders => Set<Order>();
-    public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<AuctionOrder> AuctionOrders => Set<AuctionOrder>();
     public DbSet<OrderStatusHistory> OrderStatusHistories => Set<OrderStatusHistory>();
     public DbSet<OrderInvoice> OrderInvoices => Set<OrderInvoice>();

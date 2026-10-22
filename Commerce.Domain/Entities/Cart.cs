@@ -13,5 +13,5 @@ public class Cart : BaseEntity<Guid>
 
     // Navigation
     public ICollection<CartItem> Items { get; set; } = new List<CartItem>();
-    public ICollection<CheckoutGroup> CheckoutGroups { get; set; } = new List<CheckoutGroup>();
+    public ICollection<Order> Orders { get; set; } = new List<Order>();
 }

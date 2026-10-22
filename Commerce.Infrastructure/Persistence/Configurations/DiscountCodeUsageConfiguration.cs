@@ -20,8 +20,10 @@ public class DiscountCodeUsageConfiguration : IEntityTypeConfiguration<DiscountC
             .WithMany(o => o.DiscountCodeUsages)
             .HasForeignKey(u => u.OrderId);
 
-        builder.HasOne(u => u.CheckoutGroup)
-            .WithMany(g => g.DiscountCodeUsages)
-            .HasForeignKey(u => u.CheckoutGroupId);
+        builder.HasOne(u => u.SubOrder)
+            .WithMany(s => s.DiscountCodeUsages)
+            .HasForeignKey(u => u.SubOrderId);
+
+        builder.HasQueryFilter(x => !x.IsDeleted);
     }
 }

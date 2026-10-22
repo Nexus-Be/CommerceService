@@ -7,6 +7,7 @@ public class OrderInvoice : BaseEntity<Guid>
 {
     public required string InvoiceNo { get; set; }
     public Guid? OrderId { get; set; }
+    public Guid? SubOrderId { get; set; }
     public Guid? AuctionOrderId { get; set; }
     public required decimal TotalAmount { get; set; }
     public string? FileUrl { get; set; }
@@ -15,5 +16,6 @@ public class OrderInvoice : BaseEntity<Guid>
 
     // Navigation
     public Order? Order { get; set; }
+    public SubOrder? SubOrder { get; set; }
     public AuctionOrder? AuctionOrder { get; set; }
 }

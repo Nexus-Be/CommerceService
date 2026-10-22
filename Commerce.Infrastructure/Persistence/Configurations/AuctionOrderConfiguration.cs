@@ -33,5 +33,7 @@ public class AuctionOrderConfiguration : IEntityTypeConfiguration<AuctionOrder>
         builder.HasOne(ao => ao.Cancellation)
             .WithOne(c => c.AuctionOrder)
             .HasForeignKey<OrderCancellation>(c => c.AuctionOrderId);
+
+        builder.HasQueryFilter(x => !x.IsDeleted);
     }
 }

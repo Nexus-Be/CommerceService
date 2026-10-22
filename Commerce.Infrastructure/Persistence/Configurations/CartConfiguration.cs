@@ -16,8 +16,10 @@ public class CartConfiguration : IEntityTypeConfiguration<Cart>
             .WithOne(i => i.Cart)
             .HasForeignKey(i => i.CartId);
 
-        builder.HasMany(c => c.CheckoutGroups)
-            .WithOne(g => g.Cart)
-            .HasForeignKey(g => g.CartId);
+        builder.HasMany(c => c.Orders)
+            .WithOne(o => o.Cart)
+            .HasForeignKey(o => o.CartId);
+
+        builder.HasQueryFilter(x => !x.IsDeleted);
     }
 }

@@ -2,9 +2,9 @@ using Commerce.Domain.Base;
 
 namespace Commerce.Domain.Entities;
 
-public class OrderItem : BaseEntity<Guid>
+public class SubOrderItem : BaseEntity<Guid>
 {
-    public required Guid OrderId { get; set; }
+    public required Guid SubOrderId { get; set; }
     public required Guid ProductId { get; set; }
     public required Guid SkuId { get; set; }
     public required Guid SellerId { get; set; }
@@ -19,5 +19,5 @@ public class OrderItem : BaseEntity<Guid>
     public Guid? DiscountCodeId { get; set; }
 
     // Navigation
-    public Order? Order { get; set; }
+    public SubOrder? SubOrder { get; set; }
 }

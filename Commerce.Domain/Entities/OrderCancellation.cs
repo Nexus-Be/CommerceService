@@ -5,7 +5,7 @@ namespace Commerce.Domain.Entities;
 
 public class OrderCancellation : BaseEntity<Guid>
 {
-    public Guid? OrderId { get; set; }
+    public Guid? SubOrderId { get; set; }
     public Guid? AuctionOrderId { get; set; }
     public Guid? CancelledBy { get; set; }
     public required OrderActorRole ActorRole { get; set; }
@@ -15,6 +15,6 @@ public class OrderCancellation : BaseEntity<Guid>
     public bool InventoryReleased { get; set; }
 
     // Navigation
-    public Order? Order { get; set; }
+    public SubOrder? SubOrder { get; set; }
     public AuctionOrder? AuctionOrder { get; set; }
 }

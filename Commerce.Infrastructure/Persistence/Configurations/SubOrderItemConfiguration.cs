@@ -4,9 +4,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Commerce.Domain.Entities;
 
-public class OrderItemConfiguration : IEntityTypeConfiguration<OrderItem>
+public class SubOrderItemConfiguration : IEntityTypeConfiguration<SubOrderItem>
 {
-    public void Configure(EntityTypeBuilder<OrderItem> builder)
+    public void Configure(EntityTypeBuilder<SubOrderItem> builder)
     {
         builder.HasKey(x => x.Id);
         builder.Property(x => x.ProductNameSnapshot).HasMaxLength(500).IsRequired();
@@ -17,8 +17,10 @@ public class OrderItemConfiguration : IEntityTypeConfiguration<OrderItem>
         builder.Property(x => x.UnitPriceAfterDiscount).HasPrecision(18, 2);
         builder.Property(x => x.LineTotal).HasPrecision(18, 2);
 
-        builder.HasOne(i => i.Order)
-            .WithMany(o => o.Items)
-            .HasForeignKey(i => i.OrderId);
+        builder.HasOne(i => i.SubOrder)
+            .WithMany(s => s.Items)
+            .HasForeignKey(i => i.SubOrderId);
+
+        builder.HasQueryFilter(x => !x.IsDeleted);
     }
 }

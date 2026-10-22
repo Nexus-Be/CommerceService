@@ -20,7 +20,7 @@ public class AuctionOrder : BaseEntity<Guid>
     public decimal? TotalAmount { get; set; }
     public required decimal SellerReceiveAmount { get; set; }
     public required decimal PlatformFeeAmount { get; set; }
-    public required OrderStatus Status { get; set; } = OrderStatus.PendingPayment;
+    public required SubOrderStatus Status { get; set; } = SubOrderStatus.PendingPayment;
     public required DateTimeOffset PaymentDeadlineAt { get; set; }
     public DateTimeOffset? SellerRespondDeadlineAt { get; set; }
     public DateTimeOffset? PaidAt { get; set; }

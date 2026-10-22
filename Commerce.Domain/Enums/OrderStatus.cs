@@ -4,9 +4,7 @@ public enum OrderStatus
 {
     PendingPayment = 0,
     Paid = 1,
-    SellerAccepted = 2,
-    Shipped = 3,
-    Delivered = 4,
-    Completed = 5,
-    Cancelled = 6
+    Failed = 2,
+    Expired = 3,
+    Cancelled = 4
 }
