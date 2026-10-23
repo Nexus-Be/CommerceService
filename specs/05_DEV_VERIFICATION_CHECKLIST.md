@@ -23,5 +23,5 @@ dotnet run --project Commerce.Api
 - [ ] **Biên dịch thành công 100%**: Không lỗi cảnh báo nghiêm trọng.
 - [ ] **Không vi phạm rào chắn**: Không dùng Repository Pattern bọc ngoài EF Core.
 - [ ] **Bắt buộc Idempotency-Key**: Logic tạo đơn phải kiểm tra IdempotencyKey UUID.
-- [ ] **Port & Database**: Lắng nghe đúng port `8003`, kết nối `commerce_db` trên port `5434`.
+- [ ] **Port & Database**: Lắng nghe đúng port `8003`, kết nối `commerce_db` trên port `5435` (Password: `MatkhaucuaTui123@`).
 - [ ] **Git Status**: Không commit file rác (`bin/`, `obj/`, `.idea/`, `.env`).

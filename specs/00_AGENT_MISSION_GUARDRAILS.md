@@ -26,6 +26,6 @@
 3. **BẮT BUỘC KIỂM TRA IDEMPOTENCY-KEY KHI TẠO ĐƠN**:
    - Mọi request tạo đơn bắt buộc mang `Idempotency-Key` (UUID). Nếu trùng key trong vòng 24h, phải trả về đơn hàng đã tạo trước đó hoặc báo lỗi xung đột, không được tạo 2 đơn trùng lặp.
 
-4. **TUYỆT ĐỐI KHÔNG THAY ĐỔI CỔNG 8003 VÀ DATABASE 5434**:
+4. **TUYỆT ĐỐI KHÔNG THAY ĐỔI CỔNG 8003 VÀ DATABASE 5435**:
    - Service gRPC chạy tại `http://localhost:8003`.
-   - Chuỗi kết nối DB trỏ tới `localhost:5434/commerce_db`.
+   - Chuỗi kết nối DB trỏ tới `localhost:5435/commerce_db` với mật khẩu mặc định `MatkhaucuaTui123@`.
