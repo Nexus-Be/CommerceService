@@ -622,9 +622,19 @@ namespace Commerce.Infrastructure.Migrations
                 });
 
             migrationBuilder.InsertData(
+                table: "Carts",
+                columns: new[] { "Id", "BuyerId", "CreatedAt", "DeletedAt", "IsDeleted", "ItemCount", "LastActivityAt", "RowVersion", "Status", "SubtotalAmount", "UpdatedAt" },
+                values: new object[] { new Guid("c0000000-0000-0000-0000-000000000001"), new Guid("dddddddd-4444-4444-4444-444444444444"), new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, false, 2, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), 1L, "Active", 15900000m, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)) });
+
+            migrationBuilder.InsertData(
                 table: "DiscountCodes",
                 columns: new[] { "Id", "Code", "CreatedAt", "CreatedBy", "DeletedAt", "DiscountType", "DiscountValue", "EndsAt", "IsDeleted", "IsVisible", "MaxDiscountAmount", "MaxUsesPerUser", "MaxUsesTotal", "MinOrderAmount", "Name", "OwnerSellerId", "ReservedCount", "ScopeType", "StartsAt", "Status", "UpdatedAt", "UsedCount" },
                 values: new object[] { new Guid("dddddddd-dddd-dddd-dddd-dddddddddddd"), "WELCOME2026", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, null, "Fixed", 50000m, new DateTimeOffset(new DateTime(2027, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), false, true, 50000m, 1, 10000, 200000m, "Khuyến mại chào mừng thành viên mới", null, 0, "System", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), "Active", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), 0 });
+
+            migrationBuilder.InsertData(
+                table: "Orders",
+                columns: new[] { "Id", "BuyerId", "CartId", "CreatedAt", "DeletedAt", "IsDeleted", "PaymentAttemptCount", "PaymentDeadlineAt", "RowVersion", "Status", "TotalAmount", "UpdatedAt", "WalletTransactionId" },
+                values: new object[] { new Guid("01000000-0000-0000-0000-000000000001"), new Guid("dddddddd-4444-4444-4444-444444444444"), null, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, false, 1, new DateTimeOffset(new DateTime(2026, 1, 2, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), 1L, "Paid", 850000m, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null });
 
             migrationBuilder.InsertData(
                 table: "SystemSettings",
@@ -639,6 +649,25 @@ namespace Commerce.Infrastructure.Migrations
                     { new Guid("11111111-1111-1111-1111-111111111106"), "System", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Số lượng tối đa cho mỗi sản phẩm trong giỏ hàng", false, true, "MAX_QTY_PER_ITEM", "99", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Integer" },
                     { new Guid("11111111-1111-1111-1111-111111111107"), "System", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Số dòng sản phẩm tối đa trong giỏ hàng", false, true, "MAX_CART_ITEMS", "50", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Integer" }
                 });
+
+            migrationBuilder.InsertData(
+                table: "CartItems",
+                columns: new[] { "Id", "AddedAt", "CartId", "CreatedAt", "DeletedAt", "IsDeleted", "ProductId", "ProductNameSnapshot", "Quantity", "SellerId", "SkuId", "UnitPriceSnapshot", "UpdatedAt" },
+                values: new object[,]
+                {
+                    { new Guid("c1000000-0000-0000-0000-000000000001"), new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), new Guid("c0000000-0000-0000-0000-000000000001"), new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, false, new Guid("11000000-0000-0000-0000-000000000001"), "Smartphone Nexus X Pro 256GB Midnight Black", 1, new Guid("cccccccc-3333-3333-3333-333333333333"), new Guid("11100000-0000-0000-0000-000000000001"), 15000000m, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)) },
+                    { new Guid("c1000000-0000-0000-0000-000000000002"), new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), new Guid("c0000000-0000-0000-0000-000000000001"), new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, false, new Guid("22000000-0000-0000-0000-000000000002"), "Áo Hoodie Nexus Unisex Cotton - Đen / Size L", 2, new Guid("cccccccc-3333-3333-3333-333333333333"), new Guid("22100000-0000-0000-0000-000000000002"), 450000m, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)) }
+                });
+
+            migrationBuilder.InsertData(
+                table: "SubOrders",
+                columns: new[] { "Id", "BuyerId", "CancelledAt", "CompletedAt", "ContactPhone", "CreatedAt", "DeletedAt", "DeliveredAt", "IsDeleted", "ItemsAmount", "OrderId", "PaidAt", "PaymentDeadlineAt", "PaymentMethod", "PlatformFeeAmount", "PlatformMarkupAmount", "ProductDiscountAmount", "RowVersion", "SellerAcceptedAt", "SellerId", "SellerReceiveAmount", "SellerRespondDeadlineAt", "ShippedAt", "ShippingAddress", "ShippingFeeAmount", "ShopDiscountAmount", "Status", "SubOrderNo", "SystemDiscountAmount", "TotalAmount", "UpdatedAt", "WalletTransactionId" },
+                values: new object[] { new Guid("02000000-0000-0000-0000-000000000001"), new Guid("dddddddd-4444-4444-4444-444444444444"), null, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), "0900000004", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), false, 850000m, new Guid("01000000-0000-0000-0000-000000000001"), new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), new DateTimeOffset(new DateTime(2026, 1, 2, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), "Wallet", 42500m, 0m, 0m, 1L, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), new Guid("cccccccc-3333-3333-3333-333333333333"), 807500m, null, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), "{\"fullName\":\"John Buyer\",\"phone\":\"0900000004\",\"address\":\"123 Nguyen Trai, Thanh Xuan, Ha Noi\"}", 0m, 0m, "Completed", "SUB-20260101-0001", 0m, 850000m, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null });
+
+            migrationBuilder.InsertData(
+                table: "SubOrderItems",
+                columns: new[] { "Id", "CreatedAt", "DeletedAt", "DiscountCodeId", "ImageUrlSnapshot", "IsDeleted", "LineTotal", "ProductId", "ProductNameSnapshot", "Quantity", "SellerId", "SkuAttributesSnapshot", "SkuCodeSnapshot", "SkuId", "SubOrderId", "UnitPrice", "UnitPriceAfterDiscount", "UpdatedAt" },
+                values: new object[] { new Guid("03000000-0000-0000-0000-000000000001"), new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, null, "https://images.nexus.local/products/kettle-white.png", false, 850000m, new Guid("33000000-0000-0000-0000-000000000003"), "Ấm Siêu Tốc Thông Minh Nexus 1.7L Trắng Tinh Khôi", 1, new Guid("cccccccc-3333-3333-3333-333333333333"), "{}", "NX-KETTLE-17", new Guid("33100000-0000-0000-0000-000000000003"), new Guid("02000000-0000-0000-0000-000000000001"), 850000m, 850000m, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)) });
 
             migrationBuilder.CreateIndex(
                 name: "IX_AuctionOrders_OrderNo",

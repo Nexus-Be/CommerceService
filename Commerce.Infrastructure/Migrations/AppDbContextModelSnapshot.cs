@@ -257,6 +257,21 @@ namespace Commerce.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Carts");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("c0000000-0000-0000-0000-000000000001"),
+                            BuyerId = new Guid("dddddddd-4444-4444-4444-444444444444"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            IsDeleted = false,
+                            ItemCount = 2,
+                            LastActivityAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RowVersion = 1L,
+                            Status = "Active",
+                            SubtotalAmount = 15900000m,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        });
                 });
 
             modelBuilder.Entity("Commerce.Domain.Entities.CartItem", b =>
@@ -312,6 +327,38 @@ namespace Commerce.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("CartItems");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("c1000000-0000-0000-0000-000000000001"),
+                            AddedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            CartId = new Guid("c0000000-0000-0000-0000-000000000001"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            IsDeleted = false,
+                            ProductId = new Guid("11000000-0000-0000-0000-000000000001"),
+                            ProductNameSnapshot = "Smartphone Nexus X Pro 256GB Midnight Black",
+                            Quantity = 1,
+                            SellerId = new Guid("cccccccc-3333-3333-3333-333333333333"),
+                            SkuId = new Guid("11100000-0000-0000-0000-000000000001"),
+                            UnitPriceSnapshot = 15000000m,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Id = new Guid("c1000000-0000-0000-0000-000000000002"),
+                            AddedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            CartId = new Guid("c0000000-0000-0000-0000-000000000001"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            IsDeleted = false,
+                            ProductId = new Guid("22000000-0000-0000-0000-000000000002"),
+                            ProductNameSnapshot = "Áo Hoodie Nexus Unisex Cotton - Đen / Size L",
+                            Quantity = 2,
+                            SellerId = new Guid("cccccccc-3333-3333-3333-333333333333"),
+                            SkuId = new Guid("22100000-0000-0000-0000-000000000002"),
+                            UnitPriceSnapshot = 450000m,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        });
                 });
 
             modelBuilder.Entity("Commerce.Domain.Entities.DailyOrderSequence", b =>
@@ -592,6 +639,21 @@ namespace Commerce.Infrastructure.Migrations
                     b.HasIndex("CartId");
 
                     b.ToTable("Orders");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("01000000-0000-0000-0000-000000000001"),
+                            BuyerId = new Guid("dddddddd-4444-4444-4444-444444444444"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            IsDeleted = false,
+                            PaymentAttemptCount = 1,
+                            PaymentDeadlineAt = new DateTimeOffset(new DateTime(2026, 1, 2, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            RowVersion = 1L,
+                            Status = "Paid",
+                            TotalAmount = 850000m,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        });
                 });
 
             modelBuilder.Entity("Commerce.Domain.Entities.OrderCancellation", b =>
@@ -989,6 +1051,39 @@ namespace Commerce.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("SubOrders");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("02000000-0000-0000-0000-000000000001"),
+                            BuyerId = new Guid("dddddddd-4444-4444-4444-444444444444"),
+                            CompletedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            ContactPhone = "0900000004",
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            DeliveredAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            IsDeleted = false,
+                            ItemsAmount = 850000m,
+                            OrderId = new Guid("01000000-0000-0000-0000-000000000001"),
+                            PaidAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            PaymentDeadlineAt = new DateTimeOffset(new DateTime(2026, 1, 2, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            PaymentMethod = "Wallet",
+                            PlatformFeeAmount = 42500m,
+                            PlatformMarkupAmount = 0m,
+                            ProductDiscountAmount = 0m,
+                            RowVersion = 1L,
+                            SellerAcceptedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            SellerId = new Guid("cccccccc-3333-3333-3333-333333333333"),
+                            SellerReceiveAmount = 807500m,
+                            ShippedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            ShippingAddress = "{\"fullName\":\"John Buyer\",\"phone\":\"0900000004\",\"address\":\"123 Nguyen Trai, Thanh Xuan, Ha Noi\"}",
+                            ShippingFeeAmount = 0m,
+                            ShopDiscountAmount = 0m,
+                            Status = "Completed",
+                            SubOrderNo = "SUB-20260101-0001",
+                            SystemDiscountAmount = 0m,
+                            TotalAmount = 850000m,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        });
                 });
 
             modelBuilder.Entity("Commerce.Domain.Entities.SubOrderItem", b =>
@@ -1061,6 +1156,27 @@ namespace Commerce.Infrastructure.Migrations
                     b.HasIndex("SubOrderId");
 
                     b.ToTable("SubOrderItems");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("03000000-0000-0000-0000-000000000001"),
+                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
+                            ImageUrlSnapshot = "https://images.nexus.local/products/kettle-white.png",
+                            IsDeleted = false,
+                            LineTotal = 850000m,
+                            ProductId = new Guid("33000000-0000-0000-0000-000000000003"),
+                            ProductNameSnapshot = "Ấm Siêu Tốc Thông Minh Nexus 1.7L Trắng Tinh Khôi",
+                            Quantity = 1,
+                            SellerId = new Guid("cccccccc-3333-3333-3333-333333333333"),
+                            SkuAttributesSnapshot = "{}",
+                            SkuCodeSnapshot = "NX-KETTLE-17",
+                            SkuId = new Guid("33100000-0000-0000-0000-000000000003"),
+                            SubOrderId = new Guid("02000000-0000-0000-0000-000000000001"),
+                            UnitPrice = 850000m,
+                            UnitPriceAfterDiscount = 850000m,
+                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        });
                 });
 
             modelBuilder.Entity("Commerce.Domain.Entities.SystemSetting", b =>

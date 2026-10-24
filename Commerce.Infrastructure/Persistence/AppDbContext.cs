@@ -32,8 +32,7 @@ public class AppDbContext : DbContext, ICommerceDbContext
     {
         base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
-        Seeds.CommerceSeedData.SeedDiscountCodes(modelBuilder);
-        Seeds.CommerceSeedData.SeedSystemSettings(modelBuilder);
+        Seeds.CommerceSeedData.SeedAll(modelBuilder);
 
         // MassTransit Transactional Outbox entities
         modelBuilder.AddInboxStateEntity();

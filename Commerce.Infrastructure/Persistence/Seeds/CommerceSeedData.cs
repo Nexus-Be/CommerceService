@@ -6,6 +6,14 @@ using Commerce.Domain.Enums;
 
 public static class CommerceSeedData
 {
+    public static void SeedAll(ModelBuilder modelBuilder)
+    {
+        SeedDiscountCodes(modelBuilder);
+        SeedSystemSettings(modelBuilder);
+        SeedCarts(modelBuilder);
+        SeedOrders(modelBuilder);
+    }
+
     public static void SeedDiscountCodes(ModelBuilder modelBuilder)
     {
         var welcomeVoucherId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
@@ -130,6 +138,151 @@ public static class CommerceSeedData
                 Category = SettingCategory.System,
                 Description = "Số dòng sản phẩm tối đa trong giỏ hàng",
                 IsEditable = true,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
+                IsDeleted = false
+            }
+        );
+    }
+
+    public static void SeedCarts(ModelBuilder modelBuilder)
+    {
+        var seedDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var buyerUserId = Guid.Parse("dddddddd-4444-4444-4444-444444444444");
+        var sellerUserId = Guid.Parse("cccccccc-3333-3333-3333-333333333333");
+
+        var cartId = Guid.Parse("c0000000-0000-0000-0000-000000000001");
+
+        // 1. Buyer's Active Cart
+        modelBuilder.Entity<Cart>().HasData(
+            new Cart
+            {
+                Id = cartId,
+                BuyerId = buyerUserId,
+                Status = CartStatus.Active,
+                ItemCount = 2,
+                SubtotalAmount = 15900000m, // 15,000,000 + (450,000 * 2)
+                LastActivityAt = seedDate,
+                RowVersion = 1,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
+                IsDeleted = false
+            }
+        );
+
+        // 2. Cart Items linking directly to real Products in Catalog
+        modelBuilder.Entity<CartItem>().HasData(
+            new CartItem
+            {
+                Id = Guid.Parse("c1000000-0000-0000-0000-000000000001"),
+                CartId = cartId,
+                ProductId = Guid.Parse("11000000-0000-0000-0000-000000000001"), // Smartphone Nexus X Pro 256GB
+                SkuId = Guid.Parse("11100000-0000-0000-0000-000000000001"),     // NX-PHONE-256
+                SellerId = sellerUserId,
+                Quantity = 1,
+                UnitPriceSnapshot = 15000000m,
+                ProductNameSnapshot = "Smartphone Nexus X Pro 256GB Midnight Black",
+                AddedAt = seedDate,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
+                IsDeleted = false
+            },
+            new CartItem
+            {
+                Id = Guid.Parse("c1000000-0000-0000-0000-000000000002"),
+                CartId = cartId,
+                ProductId = Guid.Parse("22000000-0000-0000-0000-000000000002"), // Áo Hoodie Nexus Unisex Cotton
+                SkuId = Guid.Parse("22100000-0000-0000-0000-000000000002"),     // NX-HOODIE-L
+                SellerId = sellerUserId,
+                Quantity = 2,
+                UnitPriceSnapshot = 450000m,
+                ProductNameSnapshot = "Áo Hoodie Nexus Unisex Cotton - Đen / Size L",
+                AddedAt = seedDate,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
+                IsDeleted = false
+            }
+        );
+    }
+
+    public static void SeedOrders(ModelBuilder modelBuilder)
+    {
+        var seedDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var buyerUserId = Guid.Parse("dddddddd-4444-4444-4444-444444444444");
+        var sellerUserId = Guid.Parse("cccccccc-3333-3333-3333-333333333333");
+
+        var orderId = Guid.Parse("01000000-0000-0000-0000-000000000001");
+        var subOrderId = Guid.Parse("02000000-0000-0000-0000-000000000001");
+
+        // 1. Order (Paid / Completed)
+        modelBuilder.Entity<Order>().HasData(
+            new Order
+            {
+                Id = orderId,
+                BuyerId = buyerUserId,
+                Status = OrderStatus.Paid,
+                TotalAmount = 850000m,
+                PaymentAttemptCount = 1,
+                PaymentDeadlineAt = seedDate.AddDays(1),
+                RowVersion = 1,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
+                IsDeleted = false
+            }
+        );
+
+        // 2. SubOrder
+        modelBuilder.Entity<SubOrder>().HasData(
+            new SubOrder
+            {
+                Id = subOrderId,
+                SubOrderNo = "SUB-20260101-0001",
+                OrderId = orderId,
+                BuyerId = buyerUserId,
+                SellerId = sellerUserId,
+                Status = SubOrderStatus.Completed,
+                PaymentMethod = PaymentMethod.Wallet,
+                ShippingAddress = "{\"fullName\":\"John Buyer\",\"phone\":\"0900000004\",\"address\":\"123 Nguyen Trai, Thanh Xuan, Ha Noi\"}",
+                ContactPhone = "0900000004",
+                ItemsAmount = 850000m,
+                ProductDiscountAmount = 0m,
+                ShopDiscountAmount = 0m,
+                PlatformMarkupAmount = 0m,
+                SystemDiscountAmount = 0m,
+                ShippingFeeAmount = 0m,
+                TotalAmount = 850000m,
+                SellerReceiveAmount = 807500m,
+                PlatformFeeAmount = 42500m,
+                PaymentDeadlineAt = seedDate.AddDays(1),
+                PaidAt = seedDate,
+                SellerAcceptedAt = seedDate,
+                ShippedAt = seedDate,
+                DeliveredAt = seedDate,
+                CompletedAt = seedDate,
+                RowVersion = 1,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
+                IsDeleted = false
+            }
+        );
+
+        // 3. SubOrderItem (Product 3: Ấm Siêu Tốc Thông Minh Nexus 1.7L)
+        modelBuilder.Entity<SubOrderItem>().HasData(
+            new SubOrderItem
+            {
+                Id = Guid.Parse("03000000-0000-0000-0000-000000000001"),
+                SubOrderId = subOrderId,
+                ProductId = Guid.Parse("33000000-0000-0000-0000-000000000003"), // Ấm Siêu Tốc
+                SkuId = Guid.Parse("33100000-0000-0000-0000-000000000003"),     // NX-KETTLE-17
+                SellerId = sellerUserId,
+                ProductNameSnapshot = "Ấm Siêu Tốc Thông Minh Nexus 1.7L Trắng Tinh Khôi",
+                SkuCodeSnapshot = "NX-KETTLE-17",
+                SkuAttributesSnapshot = "{}",
+                ImageUrlSnapshot = "https://images.nexus.local/products/kettle-white.png",
+                Quantity = 1,
+                UnitPrice = 850000m,
+                UnitPriceAfterDiscount = 850000m,
+                LineTotal = 850000m,
                 CreatedAt = seedDate,
                 UpdatedAt = seedDate,
                 IsDeleted = false
