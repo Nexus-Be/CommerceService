@@ -1,9 +1,11 @@
 namespace Commerce.Infrastructure.Persistence;
 
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using Commerce.Application.Interfaces;
 using Commerce.Domain.Entities;
 
-public class AppDbContext : DbContext
+public class AppDbContext : DbContext, ICommerceDbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
     {
@@ -30,6 +32,13 @@ public class AppDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
+        Seeds.CommerceSeedData.SeedDiscountCodes(modelBuilder);
+        Seeds.CommerceSeedData.SeedSystemSettings(modelBuilder);
+
+        // MassTransit Transactional Outbox entities
+        modelBuilder.AddInboxStateEntity();
+        modelBuilder.AddOutboxMessageEntity();
+        modelBuilder.AddOutboxStateEntity();
     }
 }
 

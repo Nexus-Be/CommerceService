@@ -1,3 +1,6 @@
+using Commerce.Api.Middleware;
+using Commerce.Application;
+using Commerce.Infrastructure;
 using Commerce.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,11 +15,9 @@ builder.WebHost.ConfigureKestrel(options =>
     });
 });
 
-// 1. CSDL PostgreSQL
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? "Host=localhost;Port=5435;Database=commerce_db;Username=postgres;Password=MatkhaucuaTui123@";
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString));
+// 1. Application & Infrastructure Dependency Injection
+builder.Services.AddApplicationServices();
+builder.Services.AddInfrastructureServices(builder.Configuration);
 
 // 2. Swagger / OpenAPI
 builder.Services.AddEndpointsApiExplorer();
@@ -28,10 +29,30 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var app = builder.Build();
 
+// 3. Global Exception Handler Middleware
+app.UseGlobalExceptionHandler();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+}
+
+// Automatically apply database migrations on startup if relational DB is available
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    try
+    {
+        if (db.Database.IsRelational())
+        {
+            db.Database.Migrate();
+        }
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning("Database migration deferred on startup: {Message}", ex.Message);
+    }
 }
 
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy", service = "Commerce.Api" }));

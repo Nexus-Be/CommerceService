@@ -9,6 +9,8 @@ public static class CommerceSeedData
     public static void SeedDiscountCodes(ModelBuilder modelBuilder)
     {
         var welcomeVoucherId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        var seedDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var endDate = new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
         modelBuilder.Entity<DiscountCode>().HasData(
             new DiscountCode
@@ -27,10 +29,10 @@ public static class CommerceSeedData
                 ReservedCount = 0,
                 IsVisible = true,
                 Status = DiscountStatus.Active,
-                StartsAt = DateTimeOffset.UtcNow,
-                EndsAt = DateTimeOffset.UtcNow.AddYears(1),
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow,
+                StartsAt = seedDate,
+                EndsAt = endDate,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
                 IsDeleted = false
             }
         );
@@ -38,6 +40,8 @@ public static class CommerceSeedData
 
     public static void SeedSystemSettings(ModelBuilder modelBuilder)
     {
+        var seedDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
         modelBuilder.Entity<SystemSetting>().HasData(
             new SystemSetting
             {
@@ -48,8 +52,8 @@ public static class CommerceSeedData
                 Category = SettingCategory.Timing,
                 Description = "Số ngày không hoạt động trước khi giỏ hàng thành ABANDONED",
                 IsEditable = true,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
                 IsDeleted = false
             },
             new SystemSetting
@@ -61,8 +65,8 @@ public static class CommerceSeedData
                 Category = SettingCategory.Timing,
                 Description = "Hạn thanh toán sau khi tạo đơn tổng (phút)",
                 IsEditable = true,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
                 IsDeleted = false
             },
             new SystemSetting
@@ -74,8 +78,8 @@ public static class CommerceSeedData
                 Category = SettingCategory.Timing,
                 Description = "Hạn người bán phản hồi đơn đã thanh toán (giờ)",
                 IsEditable = true,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
                 IsDeleted = false
             },
             new SystemSetting
@@ -87,8 +91,8 @@ public static class CommerceSeedData
                 Category = SettingCategory.Timing,
                 Description = "Số ngày tự hoàn tất đơn đã giao thành công",
                 IsEditable = true,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
                 IsDeleted = false
             },
             new SystemSetting
@@ -100,8 +104,8 @@ public static class CommerceSeedData
                 Category = SettingCategory.System,
                 Description = "Số lần thử thanh toán tối đa cho mỗi đơn tổng",
                 IsEditable = true,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
                 IsDeleted = false
             },
             new SystemSetting
@@ -113,8 +117,8 @@ public static class CommerceSeedData
                 Category = SettingCategory.System,
                 Description = "Số lượng tối đa cho mỗi sản phẩm trong giỏ hàng",
                 IsEditable = true,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
                 IsDeleted = false
             },
             new SystemSetting
@@ -126,8 +130,8 @@ public static class CommerceSeedData
                 Category = SettingCategory.System,
                 Description = "Số dòng sản phẩm tối đa trong giỏ hàng",
                 IsEditable = true,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
                 IsDeleted = false
             }
         );
