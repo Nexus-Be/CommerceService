@@ -42,3 +42,79 @@ This project is indexed by GitNexus as **CommerceService** (540 symbols, 636 rel
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+---
+
+# QUY CHUẨN VẬN HÀNH DÀNH CHO AI CODING AGENTS (COMMERCE SERVICE)
+
+---
+
+## 🛑 NGUYÊN TẮC 1: BẮT BUỘC LẬP KẾ HOẠCH TRƯỚC KHI HÀNH ĐỘNG (PLAN-FIRST RULE)
+
+Mọi AI Agent khi nhận nhiệm vụ kỹ thuật tại CommerceService **BẮT BUỘC PHẢI LẬP VÀ TRÌNH BÀY PLAN** trước khi thực hiện bất kỳ hành động sửa đổi mã nguồn, thêm/xóa file, refactor, tạo migration database hay thay đổi cấu hình nào.
+
+Một Plan chuẩn bắt buộc phải có:
+1. **Mục tiêu (Objective)**: Tóm tắt chính xác điều cần làm.
+2. **Context & Files cần đọc**: Liệt kê các file nội bộ của CommerceService cần đọc theo đúng ma trận đọc file tại Nguyên tắc 3.
+3. **Phân tích rủi ro & Phạm vi ảnh hưởng (Impact Analysis)**:
+   - Dùng GitNexus `impact` đánh giá blast radius các symbol bị ảnh hưởng.
+   - Cảnh báo rõ nếu mức độ rủi ro là HIGH hoặc CRITICAL.
+4. **Checklist các bước thực hiện (Step-by-Step Implementation)**: Từng bước logic, chi tiết.
+5. **Kế hoạch kiểm chứng (Verification)**: `dotnet build` và `dotnet test` tương ứng.
+
+---
+
+## 🧭 NGUYÊN TẮC 2: QUY TẮC PHẠM VI NỘI BỘ (INWARD-ONLY / SELF-CONTAINED)
+
+CommerceService là một Git Repository độc lập (`CommerceService.git`):
+- **TUYỆT ĐỐI CHỈ ĐƯỢC trỏ tới các tài nguyên nội bộ của CommerceService**.
+- **TUYỆT ĐỐI KHÔNG ĐƯỢC trỏ ngược ra ngoài Root** (`../../../docs/...`) hay sang các Service khác (`../../Catalog/...`).
+- Toàn bộ tài liệu, hướng dẫn và cấu hình trong repo này phải 100% tự cung tự cấp (Self-contained).
+
+---
+
+## 📚 NGUYÊN TẮC 3: DANH MỤC FILE NỘI BỘ BẮT BUỘC PHẢI ĐỌC TẠI COMMERCE SERVICE
+
+Khi bắt đầu làm việc tại CommerceService, AI Agent **BẮT BUỘC PHẢI ĐỌC** các file nội bộ sau theo thứ tự:
+1. `specs/00_AGENT_MISSION_GUARDRAILS.md`: Bounded context giỏ hàng, đơn hàng, Saga Orchestrator, port `8003`, DB `5435` (`commerce_db`).
+2. `specs/01_CLEAN_ARCHITECTURE_LAYERS.md`: Cấu trúc 4 tầng Clean Architecture, MassTransit State Machine.
+3. `specs/02_API_GRPC_CONTRACTS.md`: Hợp đồng gRPC Server (`CommerceApi`: Carts, Orders, Checkout).
+4. `specs/03_EVENT_MESSAGING.md`: Điều phối Checkout Saga (`OrderCreatedEvent`, `OrderCancelledEvent`...).
+5. `specs/04_DATA_PERSISTENCE.md`: Schema PostgreSQL (`Carts`, `CartItems`, `Orders`, `OrderItems`, `OrderSagaState`).
+6. `specs/05_DEV_VERIFICATION_CHECKLIST.md`: Lệnh build & test kiểm chứng service.
+
+---
+
+## 🔒 NGUYÊN TẮC 4: RÀO CHẮN BẤT BIẾN TẠI COMMERCE SERVICE
+
+1. **TUYỆT ĐỐI KHÔNG DÙNG REPOSITORY PATTERN BỌC NGOÀI EF CORE**: Sử dụng trực tiếp `CommerceDbContext` và `DbSet<T>` (hoặc interface `ICommerceDbContext`) trong tầng Application. Cấm tạo `IOrderRepository`, `ICartRepository`, `UnitOfWork`.
+2. **ĐIỀU PHỐI GIAO DỊCH PHÂN TÁN QUA MASS TRANSIT SAGA STATE MACHINE**: Mọi giao dịch Checkout đa bước phải đi qua Saga, đảm bảo bù trừ tự động khi thanh toán hoặc giữ kho thất bại.
+3. **CẤU HÌNH PORT 8003 VÀ DATABASE 5435 LÀ BẤT BIẾN**.
+4. **HỢP ĐỒNG PROTOBUF ĐỒNG BỘ 100% VỚI GATEWAY**.
+
+---
+
+## 💬 NGUYÊN TẮC 5: QUY CHUẨN THÔNG BÁO LỖI TOÀN HỆ THỐNG (MANDATORY ERROR RULES)
+
+Tất cả các thông báo lỗi (Error Messages, Exceptions, ProblemDetails, Validation Errors, Response Details) **BẮT BUỘC** phải tuân theo 3 nguyên tắc sau:
+1. **Ngôn ngữ (100% English)**: Toàn bộ thông báo lỗi phải được viết bằng tiếng Anh. Tuyệt đối không dùng tiếng Việt trong chuỗi thông báo lỗi trả về cho client.
+2. **Quy cách viết hoa (Sentence case)**: Viết hoa duy nhất chữ cái đầu câu, các từ tiếp theo viết thường (ngoại trừ tên riêng, từ viết tắt hoặc định danh kỹ thuật như `ID`, `OTP`, `JWT`, `URL`, `UUID`, `Email`...).
+   - ✅ Đúng: `"Cart item not found in the user cart."`
+   - ✅ Đúng: `"Order cannot be cancelled in its current status."`
+   - ❌ Sai: `"Giỏ hàng không hợp lệ"` (Không dùng tiếng Việt)
+   - ❌ Sai: `"order not found"` (Chữ cái đầu không viết hoa)
+   - ❌ Sai: `"ORDER NOT FOUND"` (Cấm viết hoa toàn bộ)
+   - ❌ Sai: `"Order Not Found Provided"` (Không dùng Title Case)
+3. **Mã lỗi (Error Codes — SCREAMING_SNAKE_CASE)**: Mã lỗi luôn viết hoa toàn bộ và nối bằng dấu gạch dưới:
+   - Ví dụ: `CART_NOT_FOUND`, `ORDER_NOT_FOUND`, `ORDER_INVALID_STATUS`, `VAL_INVALID_INPUT`, `UNAUTHORIZED`, `FORBIDDEN`.
+
+---
+
+## 🎯 NGUYÊN TẮC 6: ĐIỀU KIỆN HOÀN THÀNH NHIỆM VỤ (DEFINITION OF DONE)
+
+Một task tại CommerceService chỉ hoàn tất khi:
+- [ ] Đã lập Plan chi tiết trước khi thực hiện.
+- [ ] Không chứa bất kỳ liên kết trỏ ngược ra ngoài CommerceService.
+- [ ] `dotnet build CommerceService.sln -c Release` thành công 100% (0 error).
+- [ ] `dotnet test CommerceService.sln -c Release` vượt qua 100% các bài test.
+- [ ] Trạng thái Git sạch, không commit file rác (`bin/`, `obj/`, `.vs/`, `.idea/`).
