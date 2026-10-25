@@ -9,10 +9,10 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace Commerce.Infrastructure.Migrations
+namespace Commerce.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261024103145_InitialCommerceSchema")]
+    [Migration("20261024145316_InitialCommerceSchema")]
     partial class InitialCommerceSchema
     {
         /// <inheritdoc />
