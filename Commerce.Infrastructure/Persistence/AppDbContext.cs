@@ -40,10 +40,3 @@ public class AppDbContext : DbContext, ICommerceDbContext
         modelBuilder.AddOutboxStateEntity();
     }
 }
-
-public class CommerceDbContext : AppDbContext
-{
-    public CommerceDbContext(DbContextOptions<AppDbContext> options) : base(options)
-    {
-    }
-}
