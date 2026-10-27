@@ -1,3 +1,4 @@
+using Commerce.Api.Extensions;
 using Commerce.Api.Middleware;
 using Commerce.Application;
 using Commerce.Infrastructure;
@@ -6,7 +7,10 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Cấu hình Kestrel chỉ định HTTP/2 cho gRPC không cần TLS (h2c)
+// 0. Observability / OpenTelemetry Tracing
+builder.Services.AddServiceObservability(builder.Configuration, "commerce-service");
+
+// Cấu hình Kestrel chỉ định HTTP/1 & HTTP/2
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.ConfigureEndpointDefaults(listenOptions =>

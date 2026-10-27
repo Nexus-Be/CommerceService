@@ -8,7 +8,7 @@
 
 services:
 
-  # 1. Ứng dụng Commerce Service gRPC (Port 8003)
+  # 1. Ứng dụng Commerce Service RESTful Web API (Port 8003)
   commerce-service:
     build:
       context: .
