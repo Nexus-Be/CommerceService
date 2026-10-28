@@ -54,3 +54,19 @@ Luật này **đang được tuân thủ trong code** (đối chiếu `*.csproj`
    - `DiscountType`: `Percent = 0`/`Percentage = 0`, `Fixed = 1`/`FixedAmount = 1` (`Commerce.Domain/Enums/DiscountType.cs:5-8`).
    - `DiscountScopeType`: `System = 0`/`Global = 0` (`Commerce.Domain/Enums/DiscountScopeType.cs:5-6`).
    - Hệ quả: so sánh trong C# (`x.Status == SubOrderStatus.Confirmed`) đúng cả với `SellerAccepted`; nhưng khi ghi/đọc qua `HasConversion<string>()` cột lưu chuỗi tên (`"Confirmed"` vs `"SellerAccepted"`, `"Shipping"` vs `"Shipped"`) nên truy vấn `Where(x => x.Status == SubOrderStatus.Shipped)` **không khớp** bản ghi đã lưu là `"Shipping"`. Cần chọn một tên chuẩn cho mỗi giá trị trước khi viết nghiệp vụ đơn hàng.
+
+---
+
+## 5. QUY CHUẨN CẤU TRÚC CHUẨN HÓA (SERVICE BLUEPRINT)
+1. **Giao tiếp đồng bộ (RESTful)**:
+   - `Commerce.Api/Controllers/`: Thin Dispatcher Controller, chỉ nhận request, gọi Service Interface trong Application, trả về `IActionResult`. Tuyệt đối cấm logic nghiệp vụ, cấm map anonymous object, cấm khai báo class DTO trong file controller.
+   - `Commerce.Application/Services/{Feature}/`: Mỗi feature (`Cart`, `Order`, `Checkout`...) chứa `I{Feature}Service.cs`, `{Feature}Service.cs`, và Request/Response DTOs dùng chung cho Controller.
+2. **Giao tiếp bất đồng bộ (RabbitMQ MassTransit)**:
+   - `Commerce.Application/Contracts/`: Chứa các Integration Events (ví dụ: `OrderCreatedIntegrationEvent`, `OrderCancelledIntegrationEvent`).
+   - `Commerce.Infrastructure/Consumers/`: Chứa các MassTransit Consumer và Saga State Machine xử lý luồng checkout phân tán.
+3. **Quản lý Dependency Injection**:
+   - `Commerce.Application/DependencyInjection.cs`: Đăng ký toàn bộ Application Services.
+   - `Commerce.Infrastructure/DependencyInjection.cs`: Đăng ký `CommerceDbContext`, MassTransit Bus, Outbox, Consumers.
+4. **Validation**:
+   - Input format validation đặt tại Request DTOs qua Data Annotations (`[Required]`, `[Range]`...).
+   - Business validation đặt tại Application Services hoặc Domain Exceptions.
