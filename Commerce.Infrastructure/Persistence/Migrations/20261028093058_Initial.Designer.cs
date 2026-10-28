@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Commerce.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261026105441_InitialCommerceSchema")]
-    partial class InitialCommerceSchema
+    [Migration("20261028093058_Initial")]
+    partial class Initial
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -74,9 +74,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("PaymentDeadlineAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("PaymentMethod")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("PaymentMethod")
+                        .HasColumnType("integer");
 
                     b.Property<decimal>("PlatformFeeAmount")
                         .HasPrecision(18, 2)
@@ -124,9 +123,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("SkuId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
 
                     b.Property<decimal?>("TotalAmount")
                         .HasPrecision(18, 2)
@@ -159,9 +157,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("Action")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("Action")
+                        .HasColumnType("integer");
 
                     b.Property<string>("ChangedColumns")
                         .HasColumnType("jsonb");
@@ -246,9 +243,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
 
                     b.Property<decimal>("SubtotalAmount")
                         .HasPrecision(18, 2)
@@ -271,7 +267,7 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             ItemCount = 2,
                             LastActivityAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             RowVersion = 1L,
-                            Status = "Active",
+                            Status = 0,
                             SubtotalAmount = 15900000m,
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         });
@@ -369,8 +365,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<DateOnly>("SeqDate")
                         .HasColumnType("date");
 
-                    b.Property<string>("SeqType")
-                        .HasColumnType("text");
+                    b.Property<int>("SeqType")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -406,9 +402,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("DeletedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("DiscountType")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("DiscountType")
+                        .HasColumnType("integer");
 
                     b.Property<decimal>("DiscountValue")
                         .HasPrecision(18, 2)
@@ -450,16 +445,14 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<int>("ReservedCount")
                         .HasColumnType("integer");
 
-                    b.Property<string>("ScopeType")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("ScopeType")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset?>("StartsAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -480,7 +473,7 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             Id = new Guid("dddddddd-dddd-dddd-dddd-dddddddddddd"),
                             Code = "WELCOME2026",
                             CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            DiscountType = "Fixed",
+                            DiscountType = 1,
                             DiscountValue = 50000m,
                             EndsAt = new DateTimeOffset(new DateTime(2027, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             IsDeleted = false,
@@ -491,9 +484,9 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             MinOrderAmount = 200000m,
                             Name = "Khuyến mại chào mừng thành viên mới",
                             ReservedCount = 0,
-                            ScopeType = "System",
+                            ScopeType = 0,
                             StartsAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            Status = "Active",
+                            Status = 1,
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             UsedCount = 0
                         });
@@ -520,9 +513,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("ScopeRefId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("ScopeRefType")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("ScopeRefType")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -565,9 +557,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("ReservedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
 
                     b.Property<Guid?>("SubOrderId")
                         .HasColumnType("uuid");
@@ -623,9 +614,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
 
                     b.Property<decimal>("TotalAmount")
                         .HasPrecision(18, 2)
@@ -653,7 +643,7 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             PaymentAttemptCount = 1,
                             PaymentDeadlineAt = new DateTimeOffset(new DateTime(2026, 1, 2, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             RowVersion = 1L,
-                            Status = "Paid",
+                            Status = 2,
                             TotalAmount = 850000m,
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         });
@@ -665,9 +655,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("ActorRole")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("ActorRole")
+                        .HasColumnType("integer");
 
                     b.Property<Guid?>("AuctionOrderId")
                         .HasColumnType("uuid");
@@ -687,9 +676,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
-                    b.Property<string>("ReasonCode")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("ReasonCode")
+                        .HasColumnType("integer");
 
                     b.Property<string>("ReasonNote")
                         .HasMaxLength(1000)
@@ -751,9 +739,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("OrderId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
 
                     b.Property<Guid?>("SubOrderId")
                         .HasColumnType("uuid");
@@ -788,9 +775,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("ActorRole")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("ActorRole")
+                        .HasColumnType("integer");
 
                     b.Property<decimal>("Amount")
                         .HasPrecision(18, 2)
@@ -836,9 +822,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("RefundTransactionId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("RefundType")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("RefundType")
+                        .HasColumnType("integer");
 
                     b.Property<Guid?>("RequestEventId")
                         .HasColumnType("uuid");
@@ -853,9 +838,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
 
                     b.Property<Guid?>("SubOrderId")
                         .HasColumnType("uuid");
@@ -885,9 +869,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("ActorRole")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("ActorRole")
+                        .HasColumnType("integer");
 
                     b.Property<Guid?>("AuctionOrderId")
                         .HasColumnType("uuid");
@@ -901,8 +884,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("DeletedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("FromStatus")
-                        .HasColumnType("text");
+                    b.Property<int?>("FromStatus")
+                        .HasColumnType("integer");
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
@@ -914,9 +897,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("SubOrderId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("ToStatus")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("ToStatus")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -975,9 +957,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("PaymentDeadlineAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("PaymentMethod")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("PaymentMethod")
+                        .HasColumnType("integer");
 
                     b.Property<decimal>("PlatformFeeAmount")
                         .HasPrecision(18, 2)
@@ -1023,9 +1004,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
 
                     b.Property<string>("SubOrderNo")
                         .IsRequired()
@@ -1069,7 +1049,7 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             OrderId = new Guid("01000000-0000-0000-0000-000000000001"),
                             PaidAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             PaymentDeadlineAt = new DateTimeOffset(new DateTime(2026, 1, 2, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            PaymentMethod = "Wallet",
+                            PaymentMethod = 0,
                             PlatformFeeAmount = 42500m,
                             PlatformMarkupAmount = 0m,
                             ProductDiscountAmount = 0m,
@@ -1081,7 +1061,7 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             ShippingAddress = "{\"fullName\":\"John Buyer\",\"phone\":\"0900000004\",\"address\":\"123 Nguyen Trai, Thanh Xuan, Ha Noi\"}",
                             ShippingFeeAmount = 0m,
                             ShopDiscountAmount = 0m,
-                            Status = "Completed",
+                            Status = 5,
                             SubOrderNo = "SUB-20260101-0001",
                             SystemDiscountAmount = 0m,
                             TotalAmount = 850000m,
@@ -1188,9 +1168,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("Category")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("Category")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1223,9 +1202,8 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("UpdatedBy")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("ValueType")
-                        .IsRequired()
-                        .HasColumnType("text");
+                    b.Property<int>("ValueType")
+                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 
@@ -1238,7 +1216,7 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         new
                         {
                             Id = new Guid("11111111-1111-1111-1111-111111111101"),
-                            Category = "Timing",
+                            Category = 3,
                             CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Số ngày không hoạt động trước khi giỏ hàng thành ABANDONED",
                             IsDeleted = false,
@@ -1246,12 +1224,12 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             SettingKey = "CART_EXPIRATION_DAYS",
                             SettingValue = "7",
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            ValueType = "Integer"
+                            ValueType = 1
                         },
                         new
                         {
                             Id = new Guid("11111111-1111-1111-1111-111111111102"),
-                            Category = "Timing",
+                            Category = 3,
                             CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Hạn thanh toán sau khi tạo đơn tổng (phút)",
                             IsDeleted = false,
@@ -1259,12 +1237,12 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             SettingKey = "CHECKOUT_TIMEOUT_MINUTES",
                             SettingValue = "15",
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            ValueType = "Integer"
+                            ValueType = 1
                         },
                         new
                         {
                             Id = new Guid("11111111-1111-1111-1111-111111111103"),
-                            Category = "Timing",
+                            Category = 3,
                             CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Hạn người bán phản hồi đơn đã thanh toán (giờ)",
                             IsDeleted = false,
@@ -1272,12 +1250,12 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             SettingKey = "SELLER_RESPOND_HOURS",
                             SettingValue = "24",
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            ValueType = "Integer"
+                            ValueType = 1
                         },
                         new
                         {
                             Id = new Guid("11111111-1111-1111-1111-111111111104"),
-                            Category = "Timing",
+                            Category = 3,
                             CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Số ngày tự hoàn tất đơn đã giao thành công",
                             IsDeleted = false,
@@ -1285,12 +1263,12 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             SettingKey = "ORDER_AUTO_COMPLETE_DAYS",
                             SettingValue = "7",
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            ValueType = "Integer"
+                            ValueType = 1
                         },
                         new
                         {
                             Id = new Guid("11111111-1111-1111-1111-111111111105"),
-                            Category = "System",
+                            Category = 4,
                             CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Số lần thử thanh toán tối đa cho mỗi đơn tổng",
                             IsDeleted = false,
@@ -1298,12 +1276,12 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             SettingKey = "PAYMENT_RETRY_LIMIT",
                             SettingValue = "3",
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            ValueType = "Integer"
+                            ValueType = 1
                         },
                         new
                         {
                             Id = new Guid("11111111-1111-1111-1111-111111111106"),
-                            Category = "System",
+                            Category = 4,
                             CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Số lượng tối đa cho mỗi sản phẩm trong giỏ hàng",
                             IsDeleted = false,
@@ -1311,12 +1289,12 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             SettingKey = "MAX_QTY_PER_ITEM",
                             SettingValue = "99",
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            ValueType = "Integer"
+                            ValueType = 1
                         },
                         new
                         {
                             Id = new Guid("11111111-1111-1111-1111-111111111107"),
-                            Category = "System",
+                            Category = 4,
                             CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
                             Description = "Số dòng sản phẩm tối đa trong giỏ hàng",
                             IsDeleted = false,
@@ -1324,7 +1302,7 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                             SettingKey = "MAX_CART_ITEMS",
                             SettingValue = "50",
                             UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            ValueType = "Integer"
+                            ValueType = 1
                         });
                 });
 

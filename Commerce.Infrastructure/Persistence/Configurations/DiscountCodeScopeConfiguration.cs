@@ -9,7 +9,6 @@ public class DiscountCodeScopeConfiguration : IEntityTypeConfiguration<DiscountC
     public void Configure(EntityTypeBuilder<DiscountCodeScope> builder)
     {
         builder.HasKey(x => x.Id);
-        builder.Property(x => x.ScopeRefType).HasConversion<string>();
 
         builder.HasOne(s => s.DiscountCode)
             .WithMany(d => d.Scopes)

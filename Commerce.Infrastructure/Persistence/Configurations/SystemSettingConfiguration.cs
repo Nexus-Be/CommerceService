@@ -12,8 +12,6 @@ public class SystemSettingConfiguration : IEntityTypeConfiguration<SystemSetting
         builder.Property(x => x.SettingKey).HasMaxLength(100).IsRequired();
         builder.HasIndex(x => x.SettingKey).IsUnique();
         builder.Property(x => x.SettingValue).IsRequired();
-        builder.Property(x => x.ValueType).HasConversion<string>();
-        builder.Property(x => x.Category).HasConversion<string>();
         builder.Property(x => x.Description).HasMaxLength(500);
 
         builder.HasQueryFilter(x => !x.IsDeleted);
