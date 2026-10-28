@@ -1,7 +1,7 @@
 # 01 — PHÂN TẦNG CLEAN ARCHITECTURE & QUY TẮC PHỤ THUỘC (COMMERCE SERVICE)
-> **Trạng thái triển khai (2026-10-24):** ⚠️ Một phần — 4/4 project và luật phụ thuộc ĐÚNG, nhưng tầng Application mới có 8 file / 199 LOC (3 hàm đọc); chưa có CQRS, chưa có Saga State Machine, chưa có gRPC server.
-> **Nguồn sự thật:** code trong repo này (`file:line` ghi kèm trong từng bảng).
-> **Cập nhật lần cuối:** 2026-10-24.
+> **Trạng thái triển khai (2026-10-29):** ✅ ĐÃ CHUẨN HÓA — 4 tầng Clean Architecture chuẩn hóa: Feature Co-location cho Cart và Order tại `Commerce.Application/Services/`, 1-to-1 REST Controllers tại `Commerce.Api/Controllers/CartsController.cs` và `OrdersController.cs`, Consumer DI extension `ConsumerExtensions.cs`, 100% RESTful HTTP/JSON (CẤM gRPC).
+> **Nguồn sự thật:** code trong repo này (`Commerce.sln`, `Commerce.Application/Services/`, `Commerce.Application/Consumers/`, `Commerce.Api/Controllers/`).
+> **Cập nhật lần cuối:** 2026-10-29.
 Solution `Commerce.sln` bao gồm 4 project tương ứng với 4 tầng kiến trúc sạch (Clean Architecture):
 ```
 Commerce.sln
