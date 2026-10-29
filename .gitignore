@@ -52,3 +52,41 @@ appsettings*.json
 !appsettings*.example.json
 !appsettings.example.json
 !appsettings.*.example.json
+
+## Personal Learning & Internal Documentation
+docs/ENGINEERING_HANDBOOK.md
+*ENGINEERING_HANDBOOK*
+
+## Test Results & Code Coverage
+[Tt]est[Rr]esult*/
+[Cc]overage/
+*.trx
+*.coverage
+*.coveragexml
+*.cobertura.xml
+
+## HTTP Client Secrets (.http file environments)
+http-client.private.env.json
+*.http.user
+
+## Database Dumps & Local Database files
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sql.dump
+*.backup
+*.dump
+
+## NuGet Packages & Crash Dumps
+*.nupkg
+*.snupkg
+*.dmp
+*.crashdump
+
+## Temporary files & VS Code user settings
+*.tmp
+*.temp
+*~
+.vscode/*
+!.vscode/extensions.json

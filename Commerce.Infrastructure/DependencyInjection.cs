@@ -18,9 +18,11 @@ public static class DependencyInjection
         var connectionString = NormalizeConnectionString(rawConnection);
 
         services.AddDbContext<AppDbContext>(options =>
-            options.UseNpgsql(connectionString));
+            options.UseNpgsql(connectionString).UseSnakeCaseNamingConvention());
 
         services.AddScoped<ICommerceDbContext>(sp => sp.GetRequiredService<AppDbContext>());
+        services.AddScoped<IIdempotencyService, Services.IdempotencyService>();
+        services.AddScoped<ICatalogServiceClient, Services.MockCatalogServiceClient>();
 
         // MassTransit + RabbitMQ + Transactional Outbox
         services.AddMassTransit(x =>

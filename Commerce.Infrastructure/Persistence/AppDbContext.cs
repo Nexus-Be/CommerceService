@@ -27,6 +27,7 @@ public class AppDbContext : DbContext, ICommerceDbContext
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<DailyOrderSequence> DailyOrderSequences => Set<DailyOrderSequence>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<IdempotencyKey> IdempotencyKeys => Set<IdempotencyKey>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

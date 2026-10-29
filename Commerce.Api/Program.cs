@@ -20,6 +20,9 @@ builder.WebHost.ConfigureKestrel(options =>
 });
 
 // 1. Application & Infrastructure Dependency Injection
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<Commerce.Application.Interfaces.ICurrentUserService, Commerce.Api.Services.CurrentUserService>();
+builder.Services.AddControllers();
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
 

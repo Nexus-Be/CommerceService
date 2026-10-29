@@ -23,6 +23,7 @@ public interface ICommerceDbContext
     DbSet<SystemSetting> SystemSettings { get; }
     DbSet<DailyOrderSequence> DailyOrderSequences { get; }
     DbSet<AuditLog> AuditLogs { get; }
+    DbSet<IdempotencyKey> IdempotencyKeys { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
