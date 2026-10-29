@@ -12,12 +12,9 @@ public class DiscountCodeConfiguration : IEntityTypeConfiguration<DiscountCode>
         builder.Property(x => x.Code).HasMaxLength(100).IsRequired();
         builder.HasIndex(x => x.Code).IsUnique();
         builder.Property(x => x.Name).HasMaxLength(255).IsRequired();
-        builder.Property(x => x.ScopeType).HasConversion<string>();
-        builder.Property(x => x.DiscountType).HasConversion<string>();
         builder.Property(x => x.DiscountValue).HasPrecision(18, 2);
         builder.Property(x => x.MaxDiscountAmount).HasPrecision(18, 2);
         builder.Property(x => x.MinOrderAmount).HasPrecision(18, 2);
-        builder.Property(x => x.Status).HasConversion<string>();
         builder.Property(x => x.IsVisible).HasDefaultValue(true);
 
         builder.HasMany(d => d.Scopes)

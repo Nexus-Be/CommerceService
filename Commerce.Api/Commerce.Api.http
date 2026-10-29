@@ -1,6 +1,9 @@
-@Commerce.Api_HostAddress = http://localhost:5105
+@Host = http://localhost:8003
 
-GET {{Commerce.Api_HostAddress}}/weatherforecast/
+### 1. Health Probe
+GET {{Host}}/health
 Accept: application/json
 
-###
+### 2. Swagger OpenAPI
+GET {{Host}}/swagger/v1/swagger.json
+Accept: application/json

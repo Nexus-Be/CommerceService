@@ -11,8 +11,6 @@ public class SubOrderConfiguration : IEntityTypeConfiguration<SubOrder>
         builder.HasKey(x => x.Id);
         builder.Property(x => x.SubOrderNo).HasMaxLength(100).IsRequired();
         builder.HasIndex(x => x.SubOrderNo).IsUnique();
-        builder.Property(x => x.Status).HasConversion<string>();
-        builder.Property(x => x.PaymentMethod).HasConversion<string>();
         builder.Property(x => x.ShippingAddress).HasColumnType("jsonb");
         builder.Property(x => x.ContactPhone).HasMaxLength(50);
         builder.Property(x => x.ItemsAmount).HasPrecision(18, 2);

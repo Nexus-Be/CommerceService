@@ -1,3 +1,4 @@
+using Commerce.Api.Extensions;
 using Commerce.Api.Middleware;
 using Commerce.Application;
 using Commerce.Infrastructure;
@@ -6,7 +7,10 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Cấu hình Kestrel chỉ định HTTP/2 cho gRPC không cần TLS (h2c)
+// 0. Observability / OpenTelemetry Tracing
+builder.Services.AddServiceObservability(builder.Configuration, "commerce-service");
+
+// Cấu hình Kestrel chỉ định HTTP/1 & HTTP/2
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.ConfigureEndpointDefaults(listenOptions =>
@@ -16,15 +20,23 @@ builder.WebHost.ConfigureKestrel(options =>
 });
 
 // 1. Application & Infrastructure Dependency Injection
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<Commerce.Application.Interfaces.ICurrentUserService, Commerce.Api.Services.CurrentUserService>();
+builder.Services.AddControllers();
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
 
-// 2. Swagger / OpenAPI
+// 2. Swagger / OpenAPI & JSON Serialization
+builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
-    options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    options.SerializerOptions.Converters.Add(new Commerce.Api.Common.Converters.PascalCaseJsonStringEnumConverter(allowIntegerValues: false));
+});
+builder.Services.Configure<Microsoft.AspNetCore.Mvc.JsonOptions>(options =>
+{
+    options.JsonSerializerOptions.Converters.Add(new Commerce.Api.Common.Converters.PascalCaseJsonStringEnumConverter(allowIntegerValues: false));
 });
 
 var app = builder.Build();
@@ -55,6 +67,7 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+app.MapControllers();
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy", service = "Commerce.Api" }));
 
 app.Run();

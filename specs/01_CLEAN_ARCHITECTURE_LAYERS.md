@@ -1,7 +1,7 @@
 # 01 — PHÂN TẦNG CLEAN ARCHITECTURE & QUY TẮC PHỤ THUỘC (COMMERCE SERVICE)
-> **Trạng thái triển khai (2026-10-24):** ⚠️ Một phần — 4/4 project và luật phụ thuộc ĐÚNG, nhưng tầng Application mới có 8 file / 199 LOC (3 hàm đọc); chưa có CQRS, chưa có Saga State Machine, chưa có gRPC server.
-> **Nguồn sự thật:** code trong repo này (`file:line` ghi kèm trong từng bảng).
-> **Cập nhật lần cuối:** 2026-10-24.
+> **Trạng thái triển khai (2026-10-29):** ✅ ĐÃ CHUẨN HÓA — 4 tầng Clean Architecture chuẩn hóa: Feature Co-location cho Cart và Order tại `Commerce.Application/Services/`, 1-to-1 REST Controllers tại `Commerce.Api/Controllers/CartsController.cs` và `OrdersController.cs`, Consumer DI extension `ConsumerExtensions.cs`, 100% RESTful HTTP/JSON (CẤM gRPC).
+> **Nguồn sự thật:** code trong repo này (`Commerce.sln`, `Commerce.Application/Services/`, `Commerce.Application/Consumers/`, `Commerce.Api/Controllers/`).
+> **Cập nhật lần cuối:** 2026-10-29.
 Solution `Commerce.sln` bao gồm 4 project tương ứng với 4 tầng kiến trúc sạch (Clean Architecture):
 ```
 Commerce.sln
@@ -54,3 +54,19 @@ Luật này **đang được tuân thủ trong code** (đối chiếu `*.csproj`
    - `DiscountType`: `Percent = 0`/`Percentage = 0`, `Fixed = 1`/`FixedAmount = 1` (`Commerce.Domain/Enums/DiscountType.cs:5-8`).
    - `DiscountScopeType`: `System = 0`/`Global = 0` (`Commerce.Domain/Enums/DiscountScopeType.cs:5-6`).
    - Hệ quả: so sánh trong C# (`x.Status == SubOrderStatus.Confirmed`) đúng cả với `SellerAccepted`; nhưng khi ghi/đọc qua `HasConversion<string>()` cột lưu chuỗi tên (`"Confirmed"` vs `"SellerAccepted"`, `"Shipping"` vs `"Shipped"`) nên truy vấn `Where(x => x.Status == SubOrderStatus.Shipped)` **không khớp** bản ghi đã lưu là `"Shipping"`. Cần chọn một tên chuẩn cho mỗi giá trị trước khi viết nghiệp vụ đơn hàng.
+
+---
+
+## 5. QUY CHUẨN CẤU TRÚC CHUẨN HÓA (SERVICE BLUEPRINT)
+1. **Giao tiếp đồng bộ (RESTful)**:
+   - `Commerce.Api/Controllers/`: Thin Dispatcher Controller, chỉ nhận request, gọi Service Interface trong Application, trả về `IActionResult`. Tuyệt đối cấm logic nghiệp vụ, cấm map anonymous object, cấm khai báo class DTO trong file controller.
+   - `Commerce.Application/Services/{Feature}/`: Mỗi feature (`Cart`, `Order`, `Checkout`...) chứa `I{Feature}Service.cs`, `{Feature}Service.cs`, và Request/Response DTOs dùng chung cho Controller.
+2. **Giao tiếp bất đồng bộ (RabbitMQ MassTransit)**:
+   - `Commerce.Application/Contracts/`: Chứa các Integration Events (ví dụ: `OrderCreatedIntegrationEvent`, `OrderCancelledIntegrationEvent`).
+   - `Commerce.Infrastructure/Consumers/`: Chứa các MassTransit Consumer và Saga State Machine xử lý luồng checkout phân tán.
+3. **Quản lý Dependency Injection**:
+   - `Commerce.Application/DependencyInjection.cs`: Đăng ký toàn bộ Application Services.
+   - `Commerce.Infrastructure/DependencyInjection.cs`: Đăng ký `CommerceDbContext`, MassTransit Bus, Outbox, Consumers.
+4. **Validation**:
+   - Input format validation đặt tại Request DTOs qua Data Annotations (`[Required]`, `[Range]`...).
+   - Business validation đặt tại Application Services hoặc Domain Exceptions.

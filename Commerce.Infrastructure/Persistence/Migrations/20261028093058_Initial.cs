@@ -6,10 +6,10 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #pragma warning disable CA1814 // Prefer jagged arrays over multidimensional
 
-namespace Commerce.Infrastructure.Migrations
+namespace Commerce.Infrastructure.Persistence.Migrations
 {
     /// <inheritdoc />
-    public partial class InitialCommerceSchema : Migration
+    public partial class Initial : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -36,8 +36,8 @@ namespace Commerce.Infrastructure.Migrations
                     TotalAmount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: true),
                     SellerReceiveAmount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
                     PlatformFeeAmount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
-                    Status = table.Column<string>(type: "text", nullable: false),
-                    PaymentMethod = table.Column<string>(type: "text", nullable: false),
+                    Status = table.Column<int>(type: "integer", nullable: false),
+                    PaymentMethod = table.Column<int>(type: "integer", nullable: false),
                     WalletTransactionId = table.Column<Guid>(type: "uuid", nullable: true),
                     PaymentDeadlineAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     SellerRespondDeadlineAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
@@ -67,7 +67,7 @@ namespace Commerce.Infrastructure.Migrations
                     TraceId = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: true),
                     UserId = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: true),
                     UserName = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: true),
-                    Action = table.Column<string>(type: "text", nullable: false),
+                    Action = table.Column<int>(type: "integer", nullable: false),
                     EntityName = table.Column<string>(type: "character varying(150)", maxLength: 150, nullable: false),
                     EntityId = table.Column<string>(type: "character varying(150)", maxLength: 150, nullable: false),
                     OldValues = table.Column<string>(type: "jsonb", nullable: true),
@@ -89,7 +89,7 @@ namespace Commerce.Infrastructure.Migrations
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     BuyerId = table.Column<Guid>(type: "uuid", nullable: false),
-                    Status = table.Column<string>(type: "text", nullable: false),
+                    Status = table.Column<int>(type: "integer", nullable: false),
                     ItemCount = table.Column<int>(type: "integer", nullable: false),
                     SubtotalAmount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
                     LastActivityAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
@@ -109,7 +109,7 @@ namespace Commerce.Infrastructure.Migrations
                 columns: table => new
                 {
                     SeqDate = table.Column<DateOnly>(type: "date", nullable: false),
-                    SeqType = table.Column<string>(type: "text", nullable: false),
+                    SeqType = table.Column<int>(type: "integer", nullable: false),
                     LastValue = table.Column<long>(type: "bigint", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
@@ -126,9 +126,9 @@ namespace Commerce.Infrastructure.Migrations
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     Code = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
                     Name = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: false),
-                    ScopeType = table.Column<string>(type: "text", nullable: false),
+                    ScopeType = table.Column<int>(type: "integer", nullable: false),
                     OwnerSellerId = table.Column<Guid>(type: "uuid", nullable: true),
-                    DiscountType = table.Column<string>(type: "text", nullable: false),
+                    DiscountType = table.Column<int>(type: "integer", nullable: false),
                     DiscountValue = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
                     MaxDiscountAmount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: true),
                     MinOrderAmount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
@@ -137,7 +137,7 @@ namespace Commerce.Infrastructure.Migrations
                     UsedCount = table.Column<int>(type: "integer", nullable: false),
                     ReservedCount = table.Column<int>(type: "integer", nullable: false),
                     IsVisible = table.Column<bool>(type: "boolean", nullable: false, defaultValue: true),
-                    Status = table.Column<string>(type: "text", nullable: false),
+                    Status = table.Column<int>(type: "integer", nullable: false),
                     StartsAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
                     EndsAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
                     CreatedBy = table.Column<Guid>(type: "uuid", nullable: true),
@@ -197,8 +197,8 @@ namespace Commerce.Infrastructure.Migrations
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     SettingKey = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
                     SettingValue = table.Column<string>(type: "text", nullable: false),
-                    ValueType = table.Column<string>(type: "text", nullable: false),
-                    Category = table.Column<string>(type: "text", nullable: false),
+                    ValueType = table.Column<int>(type: "integer", nullable: false),
+                    Category = table.Column<int>(type: "integer", nullable: false),
                     Description = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
                     IsEditable = table.Column<bool>(type: "boolean", nullable: false),
                     UpdatedBy = table.Column<Guid>(type: "uuid", nullable: true),
@@ -248,7 +248,7 @@ namespace Commerce.Infrastructure.Migrations
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     CartId = table.Column<Guid>(type: "uuid", nullable: true),
                     BuyerId = table.Column<Guid>(type: "uuid", nullable: false),
-                    Status = table.Column<string>(type: "text", nullable: false),
+                    Status = table.Column<int>(type: "integer", nullable: false),
                     TotalAmount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
                     WalletTransactionId = table.Column<Guid>(type: "uuid", nullable: true),
                     PaymentAttemptCount = table.Column<int>(type: "integer", nullable: false),
@@ -275,7 +275,7 @@ namespace Commerce.Infrastructure.Migrations
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     DiscountCodeId = table.Column<Guid>(type: "uuid", nullable: false),
-                    ScopeRefType = table.Column<string>(type: "text", nullable: false),
+                    ScopeRefType = table.Column<int>(type: "integer", nullable: false),
                     ScopeRefId = table.Column<Guid>(type: "uuid", nullable: true),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
@@ -344,8 +344,8 @@ namespace Commerce.Infrastructure.Migrations
                     OrderId = table.Column<Guid>(type: "uuid", nullable: false),
                     BuyerId = table.Column<Guid>(type: "uuid", nullable: false),
                     SellerId = table.Column<Guid>(type: "uuid", nullable: false),
-                    Status = table.Column<string>(type: "text", nullable: false),
-                    PaymentMethod = table.Column<string>(type: "text", nullable: false),
+                    Status = table.Column<int>(type: "integer", nullable: false),
+                    PaymentMethod = table.Column<int>(type: "integer", nullable: false),
                     WalletTransactionId = table.Column<Guid>(type: "uuid", nullable: true),
                     ShippingAddress = table.Column<string>(type: "jsonb", nullable: false),
                     ContactPhone = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: false),
@@ -392,7 +392,7 @@ namespace Commerce.Infrastructure.Migrations
                     UserId = table.Column<Guid>(type: "uuid", nullable: false),
                     OrderId = table.Column<Guid>(type: "uuid", nullable: true),
                     SubOrderId = table.Column<Guid>(type: "uuid", nullable: true),
-                    Status = table.Column<string>(type: "text", nullable: false),
+                    Status = table.Column<int>(type: "integer", nullable: false),
                     DiscountAmount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
                     ReservedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     UsedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
@@ -432,8 +432,8 @@ namespace Commerce.Infrastructure.Migrations
                     SubOrderId = table.Column<Guid>(type: "uuid", nullable: true),
                     AuctionOrderId = table.Column<Guid>(type: "uuid", nullable: true),
                     CancelledBy = table.Column<Guid>(type: "uuid", nullable: true),
-                    ActorRole = table.Column<string>(type: "text", nullable: false),
-                    ReasonCode = table.Column<string>(type: "text", nullable: false),
+                    ActorRole = table.Column<int>(type: "integer", nullable: false),
+                    ReasonCode = table.Column<int>(type: "integer", nullable: false),
                     ReasonNote = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: true),
                     WasPaid = table.Column<bool>(type: "boolean", nullable: false),
                     RefundTransactionId = table.Column<Guid>(type: "uuid", nullable: true),
@@ -469,7 +469,7 @@ namespace Commerce.Infrastructure.Migrations
                     AuctionOrderId = table.Column<Guid>(type: "uuid", nullable: true),
                     TotalAmount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
                     FileUrl = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: true),
-                    Status = table.Column<string>(type: "text", nullable: false),
+                    Status = table.Column<int>(type: "integer", nullable: false),
                     IssuedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
@@ -504,10 +504,10 @@ namespace Commerce.Infrastructure.Migrations
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     SubOrderId = table.Column<Guid>(type: "uuid", nullable: true),
                     AuctionOrderId = table.Column<Guid>(type: "uuid", nullable: true),
-                    FromStatus = table.Column<string>(type: "text", nullable: true),
-                    ToStatus = table.Column<string>(type: "text", nullable: false),
+                    FromStatus = table.Column<int>(type: "integer", nullable: true),
+                    ToStatus = table.Column<int>(type: "integer", nullable: false),
                     ChangedBy = table.Column<Guid>(type: "uuid", nullable: true),
-                    ActorRole = table.Column<string>(type: "text", nullable: false),
+                    ActorRole = table.Column<int>(type: "integer", nullable: false),
                     Reason = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: true),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
@@ -572,12 +572,12 @@ namespace Commerce.Infrastructure.Migrations
                     AuctionOrderId = table.Column<Guid>(type: "uuid", nullable: true),
                     OrderId = table.Column<Guid>(type: "uuid", nullable: true),
                     CancellationId = table.Column<Guid>(type: "uuid", nullable: true),
-                    RefundType = table.Column<string>(type: "text", nullable: false),
+                    RefundType = table.Column<int>(type: "integer", nullable: false),
                     Amount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
-                    Status = table.Column<string>(type: "text", nullable: false),
+                    Status = table.Column<int>(type: "integer", nullable: false),
                     ReasonCode = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
                     ReasonNote = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: true),
-                    ActorRole = table.Column<string>(type: "text", nullable: false),
+                    ActorRole = table.Column<int>(type: "integer", nullable: false),
                     RequestedBy = table.Column<Guid>(type: "uuid", nullable: true),
                     WalletTransactionId = table.Column<Guid>(type: "uuid", nullable: true),
                     RefundTransactionId = table.Column<Guid>(type: "uuid", nullable: true),
@@ -624,30 +624,30 @@ namespace Commerce.Infrastructure.Migrations
             migrationBuilder.InsertData(
                 table: "Carts",
                 columns: new[] { "Id", "BuyerId", "CreatedAt", "DeletedAt", "IsDeleted", "ItemCount", "LastActivityAt", "RowVersion", "Status", "SubtotalAmount", "UpdatedAt" },
-                values: new object[] { new Guid("c0000000-0000-0000-0000-000000000001"), new Guid("dddddddd-4444-4444-4444-444444444444"), new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, false, 2, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), 1L, "Active", 15900000m, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)) });
+                values: new object[] { new Guid("c0000000-0000-0000-0000-000000000001"), new Guid("dddddddd-4444-4444-4444-444444444444"), new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, false, 2, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), 1L, 0, 15900000m, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)) });
 
             migrationBuilder.InsertData(
                 table: "DiscountCodes",
                 columns: new[] { "Id", "Code", "CreatedAt", "CreatedBy", "DeletedAt", "DiscountType", "DiscountValue", "EndsAt", "IsDeleted", "IsVisible", "MaxDiscountAmount", "MaxUsesPerUser", "MaxUsesTotal", "MinOrderAmount", "Name", "OwnerSellerId", "ReservedCount", "ScopeType", "StartsAt", "Status", "UpdatedAt", "UsedCount" },
-                values: new object[] { new Guid("dddddddd-dddd-dddd-dddd-dddddddddddd"), "WELCOME2026", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, null, "Fixed", 50000m, new DateTimeOffset(new DateTime(2027, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), false, true, 50000m, 1, 10000, 200000m, "Khuyến mại chào mừng thành viên mới", null, 0, "System", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), "Active", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), 0 });
+                values: new object[] { new Guid("dddddddd-dddd-dddd-dddd-dddddddddddd"), "WELCOME2026", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, null, 1, 50000m, new DateTimeOffset(new DateTime(2027, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), false, true, 50000m, 1, 10000, 200000m, "Khuyến mại chào mừng thành viên mới", null, 0, 0, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), 1, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), 0 });
 
             migrationBuilder.InsertData(
                 table: "Orders",
                 columns: new[] { "Id", "BuyerId", "CartId", "CreatedAt", "DeletedAt", "IsDeleted", "PaymentAttemptCount", "PaymentDeadlineAt", "RowVersion", "Status", "TotalAmount", "UpdatedAt", "WalletTransactionId" },
-                values: new object[] { new Guid("01000000-0000-0000-0000-000000000001"), new Guid("dddddddd-4444-4444-4444-444444444444"), null, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, false, 1, new DateTimeOffset(new DateTime(2026, 1, 2, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), 1L, "Paid", 850000m, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null });
+                values: new object[] { new Guid("01000000-0000-0000-0000-000000000001"), new Guid("dddddddd-4444-4444-4444-444444444444"), null, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, false, 1, new DateTimeOffset(new DateTime(2026, 1, 2, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), 1L, 2, 850000m, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null });
 
             migrationBuilder.InsertData(
                 table: "SystemSettings",
                 columns: new[] { "Id", "Category", "CreatedAt", "DeletedAt", "Description", "IsDeleted", "IsEditable", "SettingKey", "SettingValue", "UpdatedAt", "UpdatedBy", "ValueType" },
                 values: new object[,]
                 {
-                    { new Guid("11111111-1111-1111-1111-111111111101"), "Timing", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Số ngày không hoạt động trước khi giỏ hàng thành ABANDONED", false, true, "CART_EXPIRATION_DAYS", "7", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Integer" },
-                    { new Guid("11111111-1111-1111-1111-111111111102"), "Timing", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Hạn thanh toán sau khi tạo đơn tổng (phút)", false, true, "CHECKOUT_TIMEOUT_MINUTES", "15", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Integer" },
-                    { new Guid("11111111-1111-1111-1111-111111111103"), "Timing", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Hạn người bán phản hồi đơn đã thanh toán (giờ)", false, true, "SELLER_RESPOND_HOURS", "24", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Integer" },
-                    { new Guid("11111111-1111-1111-1111-111111111104"), "Timing", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Số ngày tự hoàn tất đơn đã giao thành công", false, true, "ORDER_AUTO_COMPLETE_DAYS", "7", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Integer" },
-                    { new Guid("11111111-1111-1111-1111-111111111105"), "System", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Số lần thử thanh toán tối đa cho mỗi đơn tổng", false, true, "PAYMENT_RETRY_LIMIT", "3", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Integer" },
-                    { new Guid("11111111-1111-1111-1111-111111111106"), "System", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Số lượng tối đa cho mỗi sản phẩm trong giỏ hàng", false, true, "MAX_QTY_PER_ITEM", "99", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Integer" },
-                    { new Guid("11111111-1111-1111-1111-111111111107"), "System", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Số dòng sản phẩm tối đa trong giỏ hàng", false, true, "MAX_CART_ITEMS", "50", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Integer" }
+                    { new Guid("11111111-1111-1111-1111-111111111101"), 3, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Số ngày không hoạt động trước khi giỏ hàng thành ABANDONED", false, true, "CART_EXPIRATION_DAYS", "7", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, 1 },
+                    { new Guid("11111111-1111-1111-1111-111111111102"), 3, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Hạn thanh toán sau khi tạo đơn tổng (phút)", false, true, "CHECKOUT_TIMEOUT_MINUTES", "15", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, 1 },
+                    { new Guid("11111111-1111-1111-1111-111111111103"), 3, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Hạn người bán phản hồi đơn đã thanh toán (giờ)", false, true, "SELLER_RESPOND_HOURS", "24", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, 1 },
+                    { new Guid("11111111-1111-1111-1111-111111111104"), 3, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Số ngày tự hoàn tất đơn đã giao thành công", false, true, "ORDER_AUTO_COMPLETE_DAYS", "7", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, 1 },
+                    { new Guid("11111111-1111-1111-1111-111111111105"), 4, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Số lần thử thanh toán tối đa cho mỗi đơn tổng", false, true, "PAYMENT_RETRY_LIMIT", "3", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, 1 },
+                    { new Guid("11111111-1111-1111-1111-111111111106"), 4, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Số lượng tối đa cho mỗi sản phẩm trong giỏ hàng", false, true, "MAX_QTY_PER_ITEM", "99", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, 1 },
+                    { new Guid("11111111-1111-1111-1111-111111111107"), 4, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, "Số dòng sản phẩm tối đa trong giỏ hàng", false, true, "MAX_CART_ITEMS", "50", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, 1 }
                 });
 
             migrationBuilder.InsertData(
@@ -662,7 +662,7 @@ namespace Commerce.Infrastructure.Migrations
             migrationBuilder.InsertData(
                 table: "SubOrders",
                 columns: new[] { "Id", "BuyerId", "CancelledAt", "CompletedAt", "ContactPhone", "CreatedAt", "DeletedAt", "DeliveredAt", "IsDeleted", "ItemsAmount", "OrderId", "PaidAt", "PaymentDeadlineAt", "PaymentMethod", "PlatformFeeAmount", "PlatformMarkupAmount", "ProductDiscountAmount", "RowVersion", "SellerAcceptedAt", "SellerId", "SellerReceiveAmount", "SellerRespondDeadlineAt", "ShippedAt", "ShippingAddress", "ShippingFeeAmount", "ShopDiscountAmount", "Status", "SubOrderNo", "SystemDiscountAmount", "TotalAmount", "UpdatedAt", "WalletTransactionId" },
-                values: new object[] { new Guid("02000000-0000-0000-0000-000000000001"), new Guid("dddddddd-4444-4444-4444-444444444444"), null, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), "0900000004", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), false, 850000m, new Guid("01000000-0000-0000-0000-000000000001"), new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), new DateTimeOffset(new DateTime(2026, 1, 2, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), "Wallet", 42500m, 0m, 0m, 1L, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), new Guid("cccccccc-3333-3333-3333-333333333333"), 807500m, null, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), "{\"fullName\":\"John Buyer\",\"phone\":\"0900000004\",\"address\":\"123 Nguyen Trai, Thanh Xuan, Ha Noi\"}", 0m, 0m, "Completed", "SUB-20260101-0001", 0m, 850000m, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null });
+                values: new object[] { new Guid("02000000-0000-0000-0000-000000000001"), new Guid("dddddddd-4444-4444-4444-444444444444"), null, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), "0900000004", new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), false, 850000m, new Guid("01000000-0000-0000-0000-000000000001"), new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), new DateTimeOffset(new DateTime(2026, 1, 2, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), 0, 42500m, 0m, 0m, 1L, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), new Guid("cccccccc-3333-3333-3333-333333333333"), 807500m, null, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), "{\"fullName\":\"John Buyer\",\"phone\":\"0900000004\",\"address\":\"123 Nguyen Trai, Thanh Xuan, Ha Noi\"}", 0m, 0m, 5, "SUB-20260101-0001", 0m, 850000m, new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)), null });
 
             migrationBuilder.InsertData(
                 table: "SubOrderItems",

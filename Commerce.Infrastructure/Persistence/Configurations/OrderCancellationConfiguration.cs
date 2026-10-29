@@ -9,8 +9,6 @@ public class OrderCancellationConfiguration : IEntityTypeConfiguration<OrderCanc
     public void Configure(EntityTypeBuilder<OrderCancellation> builder)
     {
         builder.HasKey(x => x.Id);
-        builder.Property(x => x.ActorRole).HasConversion<string>();
-        builder.Property(x => x.ReasonCode).HasConversion<string>();
         builder.Property(x => x.ReasonNote).HasMaxLength(1000);
 
         builder.HasOne(c => c.SubOrder)

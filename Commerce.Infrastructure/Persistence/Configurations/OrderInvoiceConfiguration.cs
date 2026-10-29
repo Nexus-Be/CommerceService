@@ -13,7 +13,6 @@ public class OrderInvoiceConfiguration : IEntityTypeConfiguration<OrderInvoice>
         builder.HasIndex(x => x.InvoiceNo).IsUnique();
         builder.Property(x => x.TotalAmount).HasPrecision(18, 2);
         builder.Property(x => x.FileUrl).HasMaxLength(1000);
-        builder.Property(x => x.Status).HasConversion<string>();
 
         builder.HasOne(inv => inv.Order)
             .WithOne(o => o.Invoice)

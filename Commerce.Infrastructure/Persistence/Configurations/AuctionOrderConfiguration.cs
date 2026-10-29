@@ -21,8 +21,6 @@ public class AuctionOrderConfiguration : IEntityTypeConfiguration<AuctionOrder>
         builder.Property(x => x.TotalAmount).HasPrecision(18, 2);
         builder.Property(x => x.SellerReceiveAmount).HasPrecision(18, 2);
         builder.Property(x => x.PlatformFeeAmount).HasPrecision(18, 2);
-        builder.Property(x => x.Status).HasConversion<string>();
-        builder.Property(x => x.PaymentMethod).HasConversion<string>();
         builder.Property(x => x.RowVersion).IsConcurrencyToken();
 
         builder.HasMany(ao => ao.StatusHistories)

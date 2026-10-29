@@ -9,9 +9,6 @@ public class OrderRefundConfiguration : IEntityTypeConfiguration<OrderRefund>
     public void Configure(EntityTypeBuilder<OrderRefund> builder)
     {
         builder.HasKey(x => x.Id);
-        builder.Property(x => x.RefundType).HasConversion<string>();
-        builder.Property(x => x.Status).HasConversion<string>();
-        builder.Property(x => x.ActorRole).HasConversion<string>();
         builder.Property(x => x.Amount).HasPrecision(18, 2);
         builder.Property(x => x.ReasonCode).HasMaxLength(100).IsRequired();
         builder.Property(x => x.ReasonNote).HasMaxLength(1000);

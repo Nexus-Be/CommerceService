@@ -1,7 +1,11 @@
+namespace Commerce.Domain.Entities;
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using Commerce.Domain.Base;
 using Commerce.Domain.Enums;
-
-namespace Commerce.Domain.Entities;
+using Commerce.Domain.Exceptions;
 
 public class SubOrder : BaseEntity<Guid>
 {
@@ -41,4 +45,28 @@ public class SubOrder : BaseEntity<Guid>
     public OrderCancellation? Cancellation { get; set; }
     public ICollection<OrderRefund> Refunds { get; set; } = new List<OrderRefund>();
     public ICollection<DiscountCodeUsage> DiscountCodeUsages { get; set; } = new List<DiscountCodeUsage>();
+
+    public void CalculateFinancials(
+        decimal shippingFee,
+        decimal shopDiscount,
+        decimal systemDiscount,
+        decimal platformMarkupPercent = 0m)
+    {
+        ItemsAmount = Items.Sum(i => i.Quantity * i.UnitPrice);
+        ProductDiscountAmount = Items.Sum(i => i.Quantity * (i.UnitPrice - i.UnitPriceAfterDiscount));
+        ShopDiscountAmount = shopDiscount;
+
+        SellerReceiveAmount = ItemsAmount - ProductDiscountAmount - ShopDiscountAmount;
+        PlatformMarkupAmount = Math.Round(SellerReceiveAmount * (platformMarkupPercent / 100m), 2, MidpointRounding.AwayFromZero);
+        SystemDiscountAmount = systemDiscount;
+        PlatformFeeAmount = PlatformMarkupAmount - SystemDiscountAmount;
+
+        ShippingFeeAmount = shippingFee;
+        TotalAmount = SellerReceiveAmount + PlatformFeeAmount + ShippingFeeAmount;
+
+        if (TotalAmount != (SellerReceiveAmount + PlatformFeeAmount + ShippingFeeAmount))
+        {
+            throw new DomainException("TotalAmount invariant violated: total must equal seller_receive + platform_fee + shipping_fee");
+        }
+    }
 }

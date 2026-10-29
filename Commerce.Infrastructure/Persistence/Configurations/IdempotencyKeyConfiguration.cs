@@ -1,0 +1,21 @@
+namespace Commerce.Infrastructure.Persistence.Configurations;
+
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Commerce.Domain.Entities;
+
+public class IdempotencyKeyConfiguration : IEntityTypeConfiguration<IdempotencyKey>
+{
+    public void Configure(EntityTypeBuilder<IdempotencyKey> builder)
+    {
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Key).HasMaxLength(255).IsRequired();
+        builder.Property(x => x.Scope).HasMaxLength(100).IsRequired();
+        builder.Property(x => x.ResponseBody).HasColumnType("text");
+
+        builder.HasIndex(x => new { x.Key, x.Scope }).IsUnique();
+        builder.HasIndex(x => x.ExpiresAt);
+
+        builder.HasQueryFilter(x => !x.IsDeleted);
+    }
+}

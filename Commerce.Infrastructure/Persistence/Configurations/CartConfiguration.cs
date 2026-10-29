@@ -9,7 +9,6 @@ public class CartConfiguration : IEntityTypeConfiguration<Cart>
     public void Configure(EntityTypeBuilder<Cart> builder)
     {
         builder.HasKey(x => x.Id);
-        builder.Property(x => x.Status).HasConversion<string>();
         builder.Property(x => x.SubtotalAmount).HasPrecision(18, 2);
         builder.Property(x => x.RowVersion).IsConcurrencyToken();
 

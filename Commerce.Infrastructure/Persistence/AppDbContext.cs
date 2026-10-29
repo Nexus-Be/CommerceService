@@ -27,6 +27,7 @@ public class AppDbContext : DbContext, ICommerceDbContext
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<DailyOrderSequence> DailyOrderSequences => Set<DailyOrderSequence>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<IdempotencyKey> IdempotencyKeys => Set<IdempotencyKey>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -38,12 +39,5 @@ public class AppDbContext : DbContext, ICommerceDbContext
         modelBuilder.AddInboxStateEntity();
         modelBuilder.AddOutboxMessageEntity();
         modelBuilder.AddOutboxStateEntity();
-    }
-}
-
-public class CommerceDbContext : AppDbContext
-{
-    public CommerceDbContext(DbContextOptions<AppDbContext> options) : base(options)
-    {
     }
 }

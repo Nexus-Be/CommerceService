@@ -9,7 +9,6 @@ public class DailyOrderSequenceConfiguration : IEntityTypeConfiguration<DailyOrd
     public void Configure(EntityTypeBuilder<DailyOrderSequence> builder)
     {
         builder.HasKey(x => new { x.SeqDate, x.SeqType });
-        builder.Property(x => x.SeqType).HasConversion<string>();
         builder.Property(x => x.LastValue).IsRequired();
     }
 }
