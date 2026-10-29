@@ -9,9 +9,7 @@ name: nexus-commerce
 
 services:
   commerce-service:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: oaktree293/commerceservice
     container_name: nexus-commerce-service
     ports:
       - "${COMMERCE_SERVICE_PORT:-8003}:8003"
