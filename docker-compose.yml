@@ -10,7 +10,9 @@ services:
 
   # 1. Ứng dụng Commerce Service RESTful Web API (Port 8003)
   commerce-service:
-    image: oaktree293/commerceservice
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: nexus-commerce-service
     ports:
       - "${COMMERCE_SERVICE_PORT:-8003}:8003"
