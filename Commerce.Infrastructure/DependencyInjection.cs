@@ -1,12 +1,13 @@
 namespace Commerce.Infrastructure;
 
-using MassTransit;
+using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Commerce.Application.Consumers;
 using Commerce.Application.Interfaces;
 using Commerce.Infrastructure.Persistence;
+using Commerce.Infrastructure.Services.Catalog;
+using Commerce.Infrastructure.Services.Wallet;
 
 public static class DependencyInjection
 {
@@ -22,34 +23,26 @@ public static class DependencyInjection
 
         services.AddScoped<ICommerceDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
-        // MassTransit + RabbitMQ + Transactional Outbox
-        services.AddMassTransit(x =>
+        // REST Wallet Client
+        var walletBaseUrl = configuration["Services:Wallet:BaseUrl"]
+            ?? configuration["WalletService:BaseUrl"]
+            ?? "http://localhost:8008/";
+
+        services.AddHttpClient<IWalletClient, WalletClient>(client =>
         {
-            x.SetKebabCaseEndpointNameFormatter();
+            client.BaseAddress = new Uri(walletBaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(10);
+        });
 
-            x.AddApplicationConsumers();
+        // REST Catalog Client
+        var catalogBaseUrl = configuration["Services:Catalog:BaseUrl"]
+            ?? configuration["CatalogService:BaseUrl"]
+            ?? "http://localhost:8002/";
 
-            x.AddEntityFrameworkOutbox<AppDbContext>(o =>
-            {
-                o.UsePostgres();
-                o.UseBusOutbox();
-            });
-
-            x.UsingRabbitMq((context, cfg) =>
-            {
-                var rabbitHost = configuration["RabbitMq:Host"] ?? "localhost";
-                var rabbitPort = ushort.TryParse(configuration["RabbitMq:Port"], out var port) ? port : (ushort)5672;
-                var rabbitUser = configuration["RabbitMq:User"] ?? "guest";
-                var rabbitPass = configuration["RabbitMq:Password"] ?? "guest";
-
-                cfg.Host(rabbitHost, rabbitPort, "/", h =>
-                {
-                    h.Username(rabbitUser);
-                    h.Password(rabbitPass);
-                });
-
-                cfg.ConfigureEndpoints(context);
-            });
+        services.AddHttpClient<ICatalogClient, CatalogClient>(client =>
+        {
+            client.BaseAddress = new Uri(catalogBaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(10);
         });
 
         return services;

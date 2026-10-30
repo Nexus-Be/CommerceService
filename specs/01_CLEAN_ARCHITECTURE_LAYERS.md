@@ -61,12 +61,12 @@ Luật này **đang được tuân thủ trong code** (đối chiếu `*.csproj`
 1. **Giao tiếp đồng bộ (RESTful)**:
    - `Commerce.Api/Controllers/`: Thin Dispatcher Controller, chỉ nhận request, gọi Service Interface trong Application, trả về `IActionResult`. Tuyệt đối cấm logic nghiệp vụ, cấm map anonymous object, cấm khai báo class DTO trong file controller.
    - `Commerce.Application/Services/{Feature}/`: Mỗi feature (`Cart`, `Order`, `Checkout`...) chứa `I{Feature}Service.cs`, `{Feature}Service.cs`, và Request/Response DTOs dùng chung cho Controller.
-2. **Giao tiếp bất đồng bộ (RabbitMQ MassTransit)**:
-   - `Commerce.Application/Contracts/`: Chứa các Integration Events (ví dụ: `OrderCreatedIntegrationEvent`, `OrderCancelledIntegrationEvent`).
-   - `Commerce.Infrastructure/Consumers/`: Chứa các MassTransit Consumer và Saga State Machine xử lý luồng checkout phân tán.
+2. **Bãi bỏ hoàn toàn gRPC, Saga & Message Broker**:
+   - Bãi bỏ hoàn toàn Saga State Machine, Outbox tables, Event Consumers, và RabbitMQ / MassTransit.
+   - Quá trình checkout và đơn hàng được điều phối trực tiếp qua các cuộc gọi REST API đồng bộ có xử lý bù trừ và timeout (`ICatalogClient`, `IWalletClient`).
 3. **Quản lý Dependency Injection**:
    - `Commerce.Application/DependencyInjection.cs`: Đăng ký toàn bộ Application Services.
-   - `Commerce.Infrastructure/DependencyInjection.cs`: Đăng ký `CommerceDbContext`, MassTransit Bus, Outbox, Consumers.
+   - `Commerce.Infrastructure/DependencyInjection.cs`: Đăng ký `AppDbContext` (hiện thực `ICommerceDbContext`), Typed REST Clients (`CatalogClient`, `WalletClient`).
 4. **Validation**:
    - Input format validation đặt tại Request DTOs qua Data Annotations (`[Required]`, `[Range]`...).
    - Business validation đặt tại Application Services hoặc Domain Exceptions.

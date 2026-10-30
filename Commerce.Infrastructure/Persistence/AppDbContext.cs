@@ -1,6 +1,5 @@
 namespace Commerce.Infrastructure.Persistence;
 
-using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Commerce.Application.Interfaces;
 using Commerce.Domain.Entities;
@@ -33,10 +32,5 @@ public class AppDbContext : DbContext, ICommerceDbContext
         base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
         Seeds.CommerceSeedData.SeedAll(modelBuilder);
-
-        // MassTransit Transactional Outbox entities
-        modelBuilder.AddInboxStateEntity();
-        modelBuilder.AddOutboxMessageEntity();
-        modelBuilder.AddOutboxStateEntity();
     }
 }

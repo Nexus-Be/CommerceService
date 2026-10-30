@@ -12,6 +12,7 @@ public static class CommerceSeedData
         SeedSystemSettings(modelBuilder);
         SeedCarts(modelBuilder);
         SeedOrders(modelBuilder);
+        SeedOperationsAndAudit(modelBuilder);
     }
 
     public static void SeedDiscountCodes(ModelBuilder modelBuilder)
@@ -266,13 +267,13 @@ public static class CommerceSeedData
             }
         );
 
-        // 3. SubOrderItem (Product 3: Ấm Siêu Tốc Thông Minh Nexus 1.7L)
+        // 3. SubOrderItem (Product 3: Smart Kettle 1.7L)
         modelBuilder.Entity<SubOrderItem>().HasData(
             new SubOrderItem
             {
                 Id = Guid.Parse("03000000-0000-0000-0000-000000000001"),
                 SubOrderId = subOrderId,
-                ProductId = Guid.Parse("33000000-0000-0000-0000-000000000003"), // Ấm Siêu Tốc
+                ProductId = Guid.Parse("33000000-0000-0000-0000-000000000003"), // Smart Kettle
                 SkuId = Guid.Parse("33100000-0000-0000-0000-000000000003"),     // NX-KETTLE-17
                 SellerId = sellerUserId,
                 ProductNameSnapshot = "Ấm Siêu Tốc Thông Minh Nexus 1.7L Trắng Tinh Khôi",
@@ -286,6 +287,113 @@ public static class CommerceSeedData
                 CreatedAt = seedDate,
                 UpdatedAt = seedDate,
                 IsDeleted = false
+            }
+        );
+    }
+
+    public static void SeedOperationsAndAudit(ModelBuilder modelBuilder)
+    {
+        var seedDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var buyerUserId = Guid.Parse("dddddddd-4444-4444-4444-444444444444");
+        var welcomeVoucherId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        var orderId = Guid.Parse("01000000-0000-0000-0000-000000000001");
+        var subOrderId = Guid.Parse("02000000-0000-0000-0000-000000000001");
+
+        // 1. Discount Code Scope (All items applicable)
+        modelBuilder.Entity<DiscountCodeScope>().HasData(
+            new DiscountCodeScope
+            {
+                Id = Guid.Parse("d1000000-0000-0000-0000-000000000001"),
+                DiscountCodeId = welcomeVoucherId,
+                ScopeRefType = DiscountScopeRefType.All,
+                ScopeRefId = null,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
+                IsDeleted = false
+            }
+        );
+
+        // 2. Discount Code Usage
+        modelBuilder.Entity<DiscountCodeUsage>().HasData(
+            new DiscountCodeUsage
+            {
+                Id = Guid.Parse("d2000000-0000-0000-0000-000000000001"),
+                DiscountCodeId = welcomeVoucherId,
+                UserId = buyerUserId,
+                OrderId = orderId,
+                SubOrderId = subOrderId,
+                Status = DiscountUsageStatus.Used,
+                DiscountAmount = 50000m,
+                ReservedAt = seedDate,
+                UsedAt = seedDate,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
+                IsDeleted = false
+            }
+        );
+
+        // 3. Order Status History
+        modelBuilder.Entity<OrderStatusHistory>().HasData(
+            new OrderStatusHistory
+            {
+                Id = Guid.Parse("04000000-0000-0000-0000-000000000001"),
+                SubOrderId = subOrderId,
+                FromStatus = SubOrderStatus.Shipped,
+                ToStatus = SubOrderStatus.Completed,
+                ChangedBy = buyerUserId,
+                ActorRole = OrderActorRole.Buyer,
+                Reason = "Khách hàng xác nhận đã nhận hàng thành công",
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
+                IsDeleted = false
+            }
+        );
+
+        // 4. Order Invoice
+        modelBuilder.Entity<OrderInvoice>().HasData(
+            new OrderInvoice
+            {
+                Id = Guid.Parse("05000000-0000-0000-0000-000000000001"),
+                InvoiceNo = "INV-20260101-0001",
+                OrderId = orderId,
+                SubOrderId = subOrderId,
+                TotalAmount = 850000m,
+                FileUrl = "https://invoices.nexus.local/INV-20260101-0001.pdf",
+                Status = InvoiceStatus.Generated,
+                IssuedAt = seedDate,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate,
+                IsDeleted = false
+            }
+        );
+
+        // 5. Daily Order Sequence
+        modelBuilder.Entity<DailyOrderSequence>().HasData(
+            new DailyOrderSequence
+            {
+                SeqDate = new DateOnly(2026, 1, 1),
+                SeqType = SequenceType.OrderNo,
+                LastValue = 1,
+                CreatedAt = seedDate,
+                UpdatedAt = seedDate
+            }
+        );
+
+        // 6. Audit Log
+        modelBuilder.Entity<AuditLog>().HasData(
+            new AuditLog
+            {
+                Id = Guid.Parse("70000000-cccc-dddd-eeee-000000000001"),
+                ServiceName = "Commerce",
+                TraceId = "trace-seed-commerce-001",
+                UserId = buyerUserId.ToString(),
+                UserName = "buyer@nexus.com",
+                Action = AuditAction.OrderPay,
+                EntityName = "SubOrder",
+                EntityId = subOrderId.ToString(),
+                NewValues = "{\"SubOrderNo\": \"SUB-20260101-0001\", \"Status\": \"Completed\"}",
+                CreatedAt = seedDate,
+                IsSynced = true
             }
         );
     }
