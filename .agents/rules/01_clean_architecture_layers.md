@@ -9,7 +9,7 @@
 * `Commerce.Domain`: Entities (`Cart`, `CartItem`, `Order`, `SubOrder`, `OrderItem`), Enums (`OrderStatus`, `PaymentStatus`), Exceptions (`CommerceDomainException`).
 * `Commerce.Application`: Use cases in `Services/{Feature}/`, interface `ICommerceDbContext`, request/response records, typed client interfaces (`Interfaces/IWalletClient.cs`, `ICatalogClient.cs`).
 * `Commerce.Infrastructure`: `AppDbContext`, EF Core configurations, migrations, and typed REST client `WalletClient`.
-* `Commerce.Api`: Thin controllers in `Controllers/Public/` and `Controllers/Internal/`, middlewares, extensions, composition root (`Program.cs`).
+* `Commerce.Api`: Thin controllers in `Controllers/Public/`, middlewares, extensions, composition root (`Program.cs`).
 
 ## 3. Feature Co-Location (Mandatory)
 * `Services/Cart/`: `ICartService.cs`, `CartService.cs`, `CartRequests.cs`, `CartResponses.cs`.

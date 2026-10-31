@@ -25,6 +25,12 @@ This project is indexed by GitNexus as **CommerceService** (636 symbols, 799 rel
 
 ---
 
+## Endpoint Workflow
+
+Before adding or changing any REST endpoint, follow the local checklist at `.agents/skills/new-feature-endpoint/SKILL.md`. It covers contract, persistence, Application, Api, tests, documentation handoff, and verification. This repository is Inward-Only, so the checklist is self-contained.
+
+---
+
 ## 🛑 NGUYÊN TẮC 1: BẮT BUỘC LẬP KẾ HOẠCH TRƯỚC KHI HÀNH ĐỘNG (PLAN-FIRST RULE)
 
 Mọi AI Agent khi nhận nhiệm vụ kỹ thuật tại CommerceService **BẮT BUỘC PHẢI LẬP VÀ TRÌNH BÀY PLAN** trước khi thực hiện bất kỳ hành động sửa đổi mã nguồn, thêm/xóa file, refactor, tạo migration database hay thay đổi cấu hình nào.
@@ -76,10 +82,9 @@ Khi bắt đầu làm việc tại CommerceService, AI Agent **BẮT BUỘC PH�
    - Toàn bộ thao tác phân trang đơn hàng, lịch sử giỏ hàng bắt buộc thực hiện trực tiếp tại Database qua `.Skip((page - 1) * pageSize).Take(pageSize)` và `.CountAsync()`.
    - Đóng gói dữ liệu trả về theo cấu trúc phân trang chuẩn `PagedData<T>` (`items` và metadata `pagination: { pageIndex, pageSize, totalCount, totalPages, hasPreviousPage, hasNextPage }`).
    - TUYỆT ĐỐI CẤM trả về danh sách thô lớn không giới hạn để Gateway tự phân trang.
-7. **QUY CHUẨN PHÂN TÁCH PUBLIC VÀ INTERNAL REST API (INTERNAL API SEGREGATION)**:
-   - Cấu trúc thư mục Controller tại `Commerce.Api/Controllers/` bắt buộc chia thành `Controllers/Public/` (`/api/v1/carts`, `/api/v1/orders`) và `Controllers/Internal/` (nếu có endpoint liên service).
-   - Tầng Api kích hoạt `InternalServiceAuthMiddleware` chặn mọi request `/api/v1/internal/*` không có header `X-Internal-Service-Key` hợp lệ.
-   - Khi gọi thanh toán sang Wallet Service (`WalletClient`), bắt buộc đi qua `InternalServiceAuthHandler` và gọi endpoint nội bộ `POST /api/v1/internal/wallets/checkout/direct`.
+7. **INTERNAL API ĐANG TẠM KHÓA (2026-10-31)**:
+   - Route liên service dùng đường dẫn công khai, không còn `/api/v1/internal`.
+   - `InternalServiceAuthMiddleware` và `InternalServiceAuthHandler` đã comment đăng ký; không yêu cầu `X-Internal-Service-Key`.
 8. **QUY CHUẨN BẢO VỆ QUYỀN SỞ HỮU TÀI NGUYÊN (RESOURCE OWNERSHIP GOVERNANCE)**:
    - Controller bắt buộc lấy `currentUserId` từ `HttpContext.GetUserId()` và kiểm tra quyền sở hữu trước khi trả về dữ liệu đơn hàng hoặc giỏ hàng.
    - Cấm tin tưởng tham số `buyerId` từ query string hoặc route; nếu `currentUserId != buyerId` và không phải `admin`/`staff`, trả về HTTP 403 `FORBIDDEN`.

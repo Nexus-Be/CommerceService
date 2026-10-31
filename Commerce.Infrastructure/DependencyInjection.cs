@@ -38,12 +38,13 @@ public static class DependencyInjection
             ?? configuration["WalletService:BaseUrl"]
             ?? "http://localhost:8008/";
 
-        services.AddTransient<Services.Common.InternalServiceAuthHandler>();
+        // Internal service key handler is temporarily disabled. Inter-service calls use plain REST routes.
+        // services.AddTransient<Services.Common.InternalServiceAuthHandler>();
         services.AddHttpClient<IWalletClient, WalletClient>(client =>
         {
             client.BaseAddress = new Uri(walletBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
-        }).AddHttpMessageHandler<Services.Common.InternalServiceAuthHandler>();
+        });
 
         // REST Catalog Client
         var catalogBaseUrl = Environment.GetEnvironmentVariable("CATALOG_SERVICE_URL")
@@ -56,7 +57,7 @@ public static class DependencyInjection
         {
             client.BaseAddress = new Uri(catalogBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
-        }).AddHttpMessageHandler<Services.Common.InternalServiceAuthHandler>();
+        });
 
         return services;
     }
