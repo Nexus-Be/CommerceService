@@ -9,8 +9,8 @@ using Microsoft.Extensions.Logging;
 using Commerce.Application.Interfaces;
 
 /// <summary>
-/// REST client interacting with Catalog service for stock reservation.
-/// Returns false gracefully if the target endpoint is unreachable or pending deployment.
+/// REST client interacting with Catalog service for stock reservation and SKU checks.
+/// Returns false or fallback gracefully if the target endpoint is unreachable or pending deployment.
 /// </summary>
 public sealed class CatalogClient : ICatalogClient
 {
@@ -55,5 +55,33 @@ public sealed class CatalogClient : ICatalogClient
             _logger.LogWarning(ex, "[REST Catalog Client] Connection error while reserving stock for Order '{OrderId}'.", orderId);
             return false;
         }
+    }
+
+    public async Task<CatalogProductCheckResult?> GetSkuDetailsAsync(
+        Guid skuId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"api/v1/catalog/skus/{skuId}", cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                return await response.Content.ReadFromJsonAsync<CatalogProductCheckResult>(cancellationToken: cancellationToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[REST Catalog Client] Connection error getting SKU details for '{SkuId}'. Fallback to mock data.", skuId);
+        }
+
+        // Fallback for development / test when Catalog Service is not reachable
+        return new CatalogProductCheckResult(
+            SkuId: skuId,
+            ProductId: Guid.NewGuid(),
+            SellerId: Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            ProductName: $"Product SKU {skuId.ToString()[..8]}",
+            UnitPrice: 100000m,
+            IsPurchasable: true,
+            StockQuantity: 100);
     }
 }

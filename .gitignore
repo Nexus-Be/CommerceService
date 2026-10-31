@@ -52,3 +52,6 @@ appsettings*.json
 !appsettings*.example.json
 !appsettings.example.json
 !appsettings.*.example.json
+
+# Personal learning and engineering handbook
+docs/ENGINEERING_HANDBOOK.md
