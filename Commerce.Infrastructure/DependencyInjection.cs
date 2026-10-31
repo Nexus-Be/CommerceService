@@ -15,7 +15,15 @@ public static class DependencyInjection
     {
         var rawConnection = configuration.GetConnectionString("DefaultConnection")
             ?? configuration["CONNECTION_STRING"]
-            ?? "Host=localhost;Port=5435;Database=commerce_db;Username=postgres;Password=postgres";
+            ?? configuration["COMMERCE_CONNECTION_STRING"]
+            ?? configuration["COMMERCE_DB_CONNECTION"]
+            ?? Environment.GetEnvironmentVariable("COMMERCE_CONNECTION_STRING")
+            ?? Environment.GetEnvironmentVariable("CONNECTION_STRING");
+
+        if (string.IsNullOrWhiteSpace(rawConnection) || rawConnection.Contains("REPLACE_WITH"))
+        {
+            throw new InvalidOperationException("Database connection string for CommerceService is not configured. Set 'ConnectionStrings:DefaultConnection' or environment variable 'COMMERCE_CONNECTION_STRING'.");
+        }
         var connectionString = NormalizeConnectionString(rawConnection);
 
         services.AddDbContext<AppDbContext>(options =>
@@ -24,18 +32,23 @@ public static class DependencyInjection
         services.AddScoped<ICommerceDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
         // REST Wallet Client
-        var walletBaseUrl = configuration["Services:Wallet:BaseUrl"]
+        var walletBaseUrl = Environment.GetEnvironmentVariable("WALLET_SERVICE_URL")
+            ?? configuration["WALLET_SERVICE_URL"]
+            ?? configuration["Services:Wallet:BaseUrl"]
             ?? configuration["WalletService:BaseUrl"]
             ?? "http://localhost:8008/";
 
+        services.AddTransient<Services.Common.InternalServiceAuthHandler>();
         services.AddHttpClient<IWalletClient, WalletClient>(client =>
         {
             client.BaseAddress = new Uri(walletBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
-        });
+        }).AddHttpMessageHandler<Services.Common.InternalServiceAuthHandler>();
 
         // REST Catalog Client
-        var catalogBaseUrl = configuration["Services:Catalog:BaseUrl"]
+        var catalogBaseUrl = Environment.GetEnvironmentVariable("CATALOG_SERVICE_URL")
+            ?? configuration["CATALOG_SERVICE_URL"]
+            ?? configuration["Services:Catalog:BaseUrl"]
             ?? configuration["CatalogService:BaseUrl"]
             ?? "http://localhost:8002/";
 
@@ -43,7 +56,7 @@ public static class DependencyInjection
         {
             client.BaseAddress = new Uri(catalogBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
-        });
+        }).AddHttpMessageHandler<Services.Common.InternalServiceAuthHandler>();
 
         return services;
     }

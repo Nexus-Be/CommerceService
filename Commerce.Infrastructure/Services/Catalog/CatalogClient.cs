@@ -8,6 +8,10 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Commerce.Application.Interfaces;
 
+/// <summary>
+/// REST client interacting with Catalog service for stock reservation.
+/// Returns false gracefully if the target endpoint is unreachable or pending deployment.
+/// </summary>
 public sealed class CatalogClient : ICatalogClient
 {
     private readonly HttpClient _httpClient;

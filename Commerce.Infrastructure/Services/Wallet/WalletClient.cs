@@ -35,7 +35,7 @@ public sealed class WalletClient : IWalletClient
                 amount
             };
 
-            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, "api/v1/wallets/checkout/direct")
+            using var requestMessage = new HttpRequestMessage(HttpMethod.Post, "api/v1/internal/wallets/checkout/direct")
             {
                 Content = JsonContent.Create(payload)
             };

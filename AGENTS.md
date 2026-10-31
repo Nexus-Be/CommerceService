@@ -64,7 +64,7 @@ Khi bắt đầu làm việc tại CommerceService, AI Agent **BẮT BUỘC PH�
 1. **TUYỆT ĐỐI KHÔNG DÙNG REPOSITORY PATTERN BỌC NGOÀI EF CORE**: Sử dụng trực tiếp `AppDbContext` và `DbSet<T>` (hoặc interface `ICommerceDbContext`) trong tầng Application. Cấm tạo `IOrderRepository`, `ICartRepository`, `UnitOfWork`.
 2. **CẤU HÌNH PORT 8003 VÀ DATABASE 5435 LÀ BẤT BIẾN**.
 3. **CẤM SỬ DỤNG gRPC VÀ BÃI BỎ SAGA & MESSAGE BROKER — BẮT BUỘC DÙNG 100% RESTFUL API**:
-   - Toàn bộ giao tiếp đồng bộ sử dụng chuẩn **RESTful Web API** (JSON qua HTTP/1.1 hoặc HTTP/2).
+   - Toàn bộ giao tiếp đồng bộ sử dụng chuẩn **RESTful Web API** (JSON qua HTTP/1.1 hoặc HTTP/2) với quy chuẩn 100% số nhiều cho collections: `/api/v1/carts`, `/api/v1/orders`, `/api/v1/sub-orders`, `/api/v1/checkouts`.
    - Tuyệt đối cấm gRPC, Saga state machine, RabbitMQ và MassTransit.
 4. **FEATURE CO-LOCATION & 1-TO-1 CONTROLLER PAIRING**:
    - Tầng Application: Toàn bộ use cases đặt tại `Commerce.Application/Services/{Feature}/` gồm `I{Feature}Service.cs`, `{Feature}Service.cs`, `{Feature}Requests.cs`, `{Feature}Responses.cs`, `{Feature}Dtos.cs`.
@@ -72,14 +72,35 @@ Khi bắt đầu làm việc tại CommerceService, AI Agent **BẮT BUỘC PH�
 5. **GIAO TIẾP LIÊN DỊCH VỤ QUA TYPED REST CLIENT**:
    - Định nghĩa interface `IWalletClient`, `ICatalogClient` trong `Commerce.Application/Interfaces/`.
    - Triển khai `HttpClient` trong `Commerce.Infrastructure/Services/`.
+6. **QUY CHUẨN PHÂN TRANG (PAGINATION GOVERNANCE)**:
+   - Toàn bộ thao tác phân trang đơn hàng, lịch sử giỏ hàng bắt buộc thực hiện trực tiếp tại Database qua `.Skip((page - 1) * pageSize).Take(pageSize)` và `.CountAsync()`.
+   - Đóng gói dữ liệu trả về theo cấu trúc phân trang chuẩn `PagedData<T>` (`items` và metadata `pagination: { pageIndex, pageSize, totalCount, totalPages, hasPreviousPage, hasNextPage }`).
+   - TUYỆT ĐỐI CẤM trả về danh sách thô lớn không giới hạn để Gateway tự phân trang.
+7. **QUY CHUẨN PHÂN TÁCH PUBLIC VÀ INTERNAL REST API (INTERNAL API SEGREGATION)**:
+   - Cấu trúc thư mục Controller tại `Commerce.Api/Controllers/` bắt buộc chia thành `Controllers/Public/` (`/api/v1/carts`, `/api/v1/orders`) và `Controllers/Internal/` (nếu có endpoint liên service).
+   - Tầng Api kích hoạt `InternalServiceAuthMiddleware` chặn mọi request `/api/v1/internal/*` không có header `X-Internal-Service-Key` hợp lệ.
+   - Khi gọi thanh toán sang Wallet Service (`WalletClient`), bắt buộc đi qua `InternalServiceAuthHandler` và gọi endpoint nội bộ `POST /api/v1/internal/wallets/checkout/direct`.
+8. **QUY CHUẨN BẢO VỆ QUYỀN SỞ HỮU TÀI NGUYÊN (RESOURCE OWNERSHIP GOVERNANCE)**:
+   - Controller bắt buộc lấy `currentUserId` từ `HttpContext.GetUserId()` và kiểm tra quyền sở hữu trước khi trả về dữ liệu đơn hàng hoặc giỏ hàng.
+   - Cấm tin tưởng tham số `buyerId` từ query string hoặc route; nếu `currentUserId != buyerId` và không phải `admin`/`staff`, trả về HTTP 403 `FORBIDDEN`.
 
 ---
 
-## 💬 NGUYÊN TẮC 5: QUY CHUẨN THÔNG BÁO LỖI TOÀN HỆ THỐNG
+## 💬 NGUYÊN TẮC 5: QUY CHUẨN THÔNG BÁO LỖI TOÀN HỆ THỐNG (MANDATORY ERROR & ENUM RULES)
 
-1. **Ngôn ngữ (100% English)**: Toàn bộ thông báo lỗi viết bằng tiếng Anh. Tuyệt đối không dùng tiếng Việt.
-2. **Quy cách viết hoa (Sentence case)**: Viết hoa duy nhất chữ cái đầu câu: `"Order cannot be cancelled in its current status."`
-3. **Mã lỗi (SCREAMING_SNAKE_CASE)**: `CART_NOT_FOUND`, `ORDER_NOT_FOUND`, `VAL_INVALID_INPUT`, `UNAUTHORIZED`, `FORBIDDEN`.
+1. **Ngôn ngữ (100% English)**: Toàn bộ thông báo lỗi viết bằng 100% tiếng Anh. Tuyệt đối CẤM dùng tiếng Việt trong response và runtime exception.
+2. **Quy cách viết hoa thông báo lỗi (100% Sentence case)**:
+   - Viết hoa DUY NHẤT chữ cái đầu tiên của câu thông báo.
+   - Toàn bộ các từ tiếp theo viết thường, TRỪ các từ viết tắt kỹ thuật hoặc tên riêng: `ID`, `OTP`, `JWT`, `URL`, `UUID`, `Email`, `API`, `HTTP`.
+   - TUYỆT ĐỐI CẤM viết hoa toàn bộ thông báo lỗi (ví dụ cấm: `"ORDER NOT FOUND"`).
+   - Ví dụ đúng: `"Order cannot be cancelled in its current status."`, `"Cart item not found."`
+3. **Mã lỗi (100% SCREAMING_SNAKE_CASE)**:
+   - Viết hoa toàn bộ và nối bằng gạch dưới: `CART_NOT_FOUND`, `ORDER_NOT_FOUND`, `VAL_INVALID_INPUT`, `UNAUTHORIZED`, `FORBIDDEN`.
+   - CẤM tiền tố `ERR_`. Tiền tố `VAL_` chỉ dành riêng cho validation.
+4. **Quy chuẩn Tuần tự hóa Enum đầu ra REST API (PascalCase Serialization)**:
+   - 100% Enum trả về trong JSON envelope phải là chuỗi `PascalCase` (`"PendingPayment"`, `"Paid"`, `"Delivered"`), cấm chuỗi in hoa toàn bộ hoặc số nguyên.
+5. **Cơ chế Duy trì Rule Bền vững ("Ghi vào Rule")**:
+   - Khi Người dùng (Sếp) chỉ thị "ghi vào rule", AI Agent bắt buộc phải lập tức ghi nhận và đồng bộ vào file này, `.agents/AGENTS.md`, root `AGENTS.md` và `.cursor/rules/`.
 
 ---
 

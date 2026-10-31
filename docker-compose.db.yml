@@ -1,3 +1,5 @@
+name: nexus-db-commerce
+
 services:
   postgres-commerce:
     image: postgres:16-alpine

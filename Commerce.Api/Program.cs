@@ -1,3 +1,4 @@
+using Commerce.Api.Common;
 using Commerce.Api.Extensions;
 using Commerce.Application;
 using Commerce.Infrastructure;
@@ -23,7 +24,11 @@ builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
 
 // 3. REST Services
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = ApiValidationProblemFactory.Create;
+    });
 
 var app = builder.Build();
 

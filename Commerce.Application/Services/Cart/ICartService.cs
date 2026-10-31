@@ -6,5 +6,5 @@ using System.Threading.Tasks;
 
 public interface ICartService
 {
-    Task<CartDto?> GetActiveCartByBuyerIdAsync(Guid buyerId, CancellationToken cancellationToken = default);
+    Task<CartDto> GetActiveCartByBuyerIdAsync(Guid buyerId, CancellationToken cancellationToken = default);
 }

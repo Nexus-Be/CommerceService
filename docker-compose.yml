@@ -1,14 +1,13 @@
 # =============================================================================
 # NEXUS COMMERCE SERVICE - DOCKER COMPOSE
 # =============================================================================
-# Khởi chạy độc lập Commerce Service:
-#   CSDL chính lưu trên Neon Cloud (PostgreSQL)
-#   docker compose up -d
+# Chạy độc lập service này. Database dùng Neon Cloud, hạ tầng dùng chung nexus-network.
+# Lệnh: docker compose up -d --build
 # =============================================================================
 
-services:
+name: nexus-commerce
 
-  # 1. Ứng dụng Commerce Service RESTful Web API (Port 8003)
+services:
   commerce-service:
     build:
       context: .
@@ -19,9 +18,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Development}
-      - ConnectionStrings__DefaultConnection=${COMMERCE_CONNECTION_STRING:-${CONNECTION_STRING}}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
+      ASPNETCORE_ENVIRONMENT: "${ASPNETCORE_ENVIRONMENT:-Development}"
+      ConnectionStrings__DefaultConnection: "${COMMERCE_DB_CONNECTION:?COMMERCE_DB_CONNECTION is required}"
+      WALLET_SERVICE_URL: "${WALLET_SERVICE_URL:-http://wallet-service:8008}"
+      CATALOG_SERVICE_URL: "${CATALOG_SERVICE_URL:-http://catalog-service:8002}"
+      InternalSecurity__ServiceKey: "${INTERNAL_SERVICE_SECRET:-eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}"
     restart: unless-stopped
 
 networks:
