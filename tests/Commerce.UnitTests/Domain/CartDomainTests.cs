@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
 using Commerce.Domain.Exceptions;
@@ -150,5 +151,51 @@ public class CartDomainTests
         cart.ItemCount.Should().Be(0);
         cart.SubtotalAmount.Should().Be(0m);
         cart.Items.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ChangeItemVariant_ShouldUpdateVariant_WhenNewSkuNotInCart()
+    {
+        var cart = CreateEmptyCart();
+        var item = cart.AddOrUpdateItem(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Shirt Red M", 2, 100000m);
+        var newSkuId = Guid.NewGuid();
+
+        var updated = cart.ChangeItemVariant(item.Id, newSkuId, "Shirt Blue L", 120000m);
+
+        updated.SkuId.Should().Be(newSkuId);
+        updated.ProductNameSnapshot.Should().Be("Shirt Blue L");
+        updated.UnitPriceSnapshot.Should().Be(120000m);
+        cart.SubtotalAmount.Should().Be(240000m);
+        cart.ItemCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void ChangeItemVariant_ShouldMergeQuantities_WhenNewSkuAlreadyExistsInCart()
+    {
+        var cart = CreateEmptyCart();
+        var sellerId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var sku1 = Guid.NewGuid();
+        var sku2 = Guid.NewGuid();
+
+        var item1 = cart.AddOrUpdateItem(productId, sku1, sellerId, "Shirt Red M", 2, 100000m);
+        cart.AddOrUpdateItem(productId, sku2, sellerId, "Shirt Blue L", 3, 120000m);
+
+        var merged = cart.ChangeItemVariant(item1.Id, sku2, "Shirt Blue L", 120000m);
+
+        merged.SkuId.Should().Be(sku2);
+        merged.Quantity.Should().Be(5); // 2 + 3
+        cart.ItemCount.Should().Be(1); // Gộp còn 1 dòng duy nhất
+        cart.SubtotalAmount.Should().Be(600000m);
+    }
+
+    [Fact]
+    public void ChangeItemVariant_ShouldThrow_WhenCartItemIdNotFound()
+    {
+        var cart = CreateEmptyCart();
+        var act = () => cart.ChangeItemVariant(Guid.NewGuid(), Guid.NewGuid(), "Unknown", 50000m);
+
+        act.Should().Throw<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "CART_ITEM_NOT_FOUND");
     }
 }

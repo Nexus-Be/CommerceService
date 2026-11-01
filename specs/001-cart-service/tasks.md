@@ -78,3 +78,22 @@
 - [x] T022 Triển khai `CART-06` Pre-checkout validation và kiểm tra giá/kho `POST /api/v1/carts/me/validate`.
 - [x] T023 Triển khai `CART-10` Gộp giỏ hàng khách vãng lai khi đăng nhập `POST /api/v1/carts/me/merge`.
 - [x] T024 Kiểm chứng toàn diện: `dotnet test` 100% pass (16/16 tests passed).
+
+
+---
+
+## Phase 8: Group by Seller, Variant Switching & Checkout Cleanup (CART-11, 12, 15)
+
+**Goal**: Triển khai các tính năng phân nhóm Shop, đổi phân loại hàng, và dọn dẹp giỏ sau checkout.
+
+- [x] T025 [P] [CART-12] Viết Unit Test kiểm tra Rich Domain method `ChangeItemVariant` trong `tests/Commerce.UnitTests/Domain/CartDomainTests.cs` (cập nhật SKU mới, cộng dồn khi trùng SKU, ném lỗi khi không tìm thấy item).
+- [x] T026 [CART-12] Triển khai phương thức Rich Domain `ChangeItemVariant` trong `Commerce.Domain/Entities/Cart.cs`.
+- [x] T027 [CART-11, 12, 15] Thêm DTOs vào `Commerce.Application/Services/Cart/CartRequests.cs` (`ChangeCartItemVariantRequest`, `CleanupCheckedOutItemsRequest`) và `Commerce.Application/Services/Cart/CartResponses.cs` (`ShopCartGroupResponse`, `GroupedCartResponse`).
+- [x] T028 [CART-11, 12, 15] Khai báo 3 phương thức mới trong interface `Commerce.Application/Services/Cart/ICartService.cs`.
+- [x] T029 [P] [CART-11, 15] Viết Unit Test cho Service methods trong `tests/Commerce.UnitTests/Application/CartServiceTests.cs` (`GetGroupedCartAsync`, `CleanupCheckedOutItemsAsync`, `ChangeItemVariantAsync`).
+- [x] T030 [CART-11] Triển khai phương thức `GetGroupedCartAsync` trong `Commerce.Application/Services/Cart/CartService.cs` gom nhóm theo `SellerId`.
+- [x] T031 [CART-12] Triển khai phương thức `ChangeItemVariantAsync` trong `Commerce.Application/Services/Cart/CartService.cs` tích hợp `_catalogClient.GetSkuDetailsAsync`.
+- [x] T032 [CART-15] Triển khai phương thức `CleanupCheckedOutItemsAsync` trong `Commerce.Application/Services/Cart/CartService.cs` xóa sạch các món đã mua thành công.
+- [x] T033 [CART-11, 12, 15] Triển khai 3 endpoints mới trong `Commerce.Api/Controllers/Public/CartsController.cs` (`GET /me/grouped`, `PATCH /me/items/{cartItemId}/variant`, `POST /me/cleanup-checked-out`).
+- [x] T034 [Tooling] Cập nhật file kịch bản `Commerce.Api/Commerce.Api.http` với các request mẫu cho 3 tính năng mới.
+- [x] T035 [Verification] Kiểm chứng toàn diện: `dotnet build Commerce.sln` 0 lỗi và `dotnet test` 100% pass (21/21 tests passed).

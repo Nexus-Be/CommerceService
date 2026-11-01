@@ -117,6 +117,37 @@ public class Cart : BaseEntity<Guid>
         RecalculateTotals();
     }
 
+    public CartItem ChangeItemVariant(Guid cartItemId, Guid newSkuId, string newProductName, decimal newUnitPrice)
+    {
+        var currentItem = Items.FirstOrDefault(i => i.Id == cartItemId)
+            ?? throw new CommerceDomainException("CART_ITEM_NOT_FOUND", "Cart item not found in the current cart.", 404);
+
+        if (currentItem.SkuId == newSkuId)
+        {
+            return currentItem;
+        }
+
+        var existingDuplicate = Items.FirstOrDefault(i => i.SkuId == newSkuId && i.Id != cartItemId);
+        if (existingDuplicate != null)
+        {
+            var mergedQuantity = existingDuplicate.Quantity + currentItem.Quantity;
+            if (mergedQuantity > 99) mergedQuantity = 99;
+
+            existingDuplicate.Quantity = mergedQuantity;
+            existingDuplicate.UnitPriceSnapshot = newUnitPrice;
+            existingDuplicate.ProductNameSnapshot = newProductName;
+            Items.Remove(currentItem);
+            RecalculateTotals();
+            return existingDuplicate;
+        }
+
+        currentItem.SkuId = newSkuId;
+        currentItem.ProductNameSnapshot = newProductName;
+        currentItem.UnitPriceSnapshot = newUnitPrice;
+        RecalculateTotals();
+        return currentItem;
+    }
+
     public void RecalculateTotals()
     {
         ItemCount = Items.Count;

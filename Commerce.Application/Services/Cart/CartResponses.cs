@@ -58,3 +58,19 @@ public sealed record ValidateCartResponse(
     bool HasPriceChanges,
     bool HasStockIssues,
     IReadOnlyList<CartItemIssue> Issues);
+
+public sealed record ShopCartGroupResponse(
+    Guid SellerId,
+    string ShopName,
+    int DistinctItemCount,
+    int TotalQuantity,
+    decimal ShopSubtotal,
+    IReadOnlyList<CartItemResponse> Items);
+
+public sealed record GroupedCartResponse(
+    Guid CartId,
+    Guid BuyerId,
+    int TotalDistinctItems,
+    int TotalQuantity,
+    decimal SubtotalAmount,
+    IReadOnlyList<ShopCartGroupResponse> Shops);

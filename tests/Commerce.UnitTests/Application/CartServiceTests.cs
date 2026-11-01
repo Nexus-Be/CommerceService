@@ -90,4 +90,28 @@ public class CartServiceTests
         result.SelectedItemCount.Should().Be(0);
         result.SubtotalAmount.Should().Be(0m);
     }
+
+    [Fact]
+    public async Task ChangeItemVariantAsync_ShouldThrow_WhenCartNotFound()
+    {
+        var service = CreateService();
+        var request = new ChangeCartItemVariantRequest(Guid.NewGuid());
+
+        var act = () => service.ChangeItemVariantAsync(Guid.NewGuid(), Guid.NewGuid(), request, CancellationToken.None);
+
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "CART_NOT_FOUND");
+    }
+
+    [Fact]
+    public async Task CleanupCheckedOutItemsAsync_ShouldThrow_WhenCartNotFound()
+    {
+        var service = CreateService();
+        var request = new CleanupCheckedOutItemsRequest(new List<Guid> { Guid.NewGuid() });
+
+        var act = () => service.CleanupCheckedOutItemsAsync(Guid.NewGuid(), request, CancellationToken.None);
+
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "CART_NOT_FOUND");
+    }
 }

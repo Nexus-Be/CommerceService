@@ -100,6 +100,37 @@ Là một khách vãng lai đã thêm vài món vào giỏ hàng (lưu tại tr�
 
 ---
 
+### User Story 10 - Phân Nhóm Giỏ Hàng Theo Shop (CART-11 - Priority: P1)
+Là một người mua tại trang giỏ hàng của sàn đa người bán, tôi muốn nhìn thấy các sản phẩm được gom theo từng Shop riêng biệt kèm tổng tiền của từng Shop, để tôi có thể tick chọn toàn bộ sản phẩm của Shop đó hoặc áp mã giảm giá của Shop.
+
+* **Independent Test**: Gửi `GET /api/v1/carts/me/grouped`.
+* **Acceptance Scenarios**:
+  1. **Given** Giỏ hàng chứa 3 món từ 2 Shop khác nhau (Shop A có 2 món, Shop B có 1 món), **When** gọi API phân nhóm, **Then** trả về danh sách 2 Shop, mỗi Shop có `seller_id`, `shop_subtotal` bằng tổng tiền các món của Shop đó, và mảng `items` thuộc về Shop.
+  2. **Given** Giỏ hàng trống, **When** gọi API phân nhóm, **Then** trả về danh sách shops rỗng, `total_distinct_items = 0`, `subtotal_amount = 0`.
+
+---
+
+### User Story 11 - Đổi Phân Loại Hàng Trực Tiếp Trong Giỏ (CART-12 - Priority: P1)
+Là một người mua, tôi muốn thay đổi phân loại (Màu sắc / Kích cỡ) của một món đồ ngay trong giỏ hàng mà không cần phải xóa đi rồi tìm lại trang sản phẩm.
+
+* **Independent Test**: Gửi `PATCH /api/v1/carts/me/items/{cartItemId}/variant` với `{ newSkuId }`.
+* **Acceptance Scenarios**:
+  1. **Given** `cartItemId` tồn tại và `newSkuId` hợp lệ từ Catalog (còn hàng, có giá), **When** gọi API đổi phân loại, **Then** cập nhật `sku_id`, `product_name_snapshot`, `unit_price_snapshot` mới và tính lại tổng tiền giỏ hàng.
+  2. **Given** `newSkuId` này đã tình cờ có sẵn trong giỏ hàng, **When** đổi sang SKU đó, **Then** hệ thống tự động cộng dồn số lượng vào dòng đã có và xóa dòng hiện tại (đảm bảo không bị trùng SKU).
+  3. **Given** `newSkuId` không tồn tại hoặc hết hàng, **When** gọi API đổi, **Then** trả về `400 Bad Request` hoặc `404 Not Found` kèm mã lỗi thích hợp.
+
+---
+
+### User Story 12 - Dọn Dẹp Món Đã Thanh Toán Sau Checkout (CART-15 - Priority: P0)
+Là hệ thống sau khi người mua đã hoàn tất đặt hàng và thanh toán thành công (`PAID`), tôi muốn dọn dẹp chính xác các món hàng đã mua ra khỏi giỏ, giữ lại các món chưa mua để khách hàng tiếp tục mua sắm sau.
+
+* **Independent Test**: Gửi `POST /api/v1/carts/me/cleanup-checked-out` với `{ purchasedCartItemIds: [...] }`.
+* **Acceptance Scenarios**:
+  1. **Given** Giỏ hàng có 5 món, khách thanh toán thành công 3 món, **When** gọi cleanup với 3 ID đó, **Then** 3 món bị xóa khỏi DB, 2 món còn lại được giữ nguyên, `item_count` và `subtotal_amount` tính lại chính xác theo 2 món còn lại.
+  2. **Given** Khách thanh toán tất cả các món trong giỏ, **When** gọi cleanup, **Then** giỏ trở về trạng thái trống `item_count = 0`, `subtotal_amount = 0`.
+
+---
+
 ## 2. Requirements & Success Criteria
 
 - **SC-001**: 100% các endpoint tuân thủ chuẩn RESTful, `[RequireRole("buyer", "admin", "staff")]`, kiểm tra quyền sở hữu giỏ qua `this.TryGetUserId()`.

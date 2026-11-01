@@ -41,3 +41,9 @@ public sealed record GuestCartItem(
 
 public sealed record MergeGuestCartRequest(
     List<GuestCartItem> GuestItems);
+
+public sealed record ChangeCartItemVariantRequest(
+    Guid NewSkuId);
+
+public sealed record CleanupCheckedOutItemsRequest(
+    List<Guid> PurchasedCartItemIds);

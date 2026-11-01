@@ -7,7 +7,7 @@
 GET {{Host}}/health
 Accept: application/json
 
-### 2. Swagger OpenAPI
+### 2. Swagger OpenAPI Specification
 GET {{Host}}/swagger/v1/swagger.json
 Accept: application/json
 
@@ -17,7 +17,19 @@ X-User-Id: {{BuyerId}}
 X-User-Roles: buyer
 Accept: application/json
 
-### 4. Add Item to Cart (CART-02)
+### 4. Get Cart Summary & Badge Count (CART-02)
+GET {{Host}}/api/v1/carts/me/summary
+X-User-Id: {{BuyerId}}
+X-User-Roles: buyer
+Accept: application/json
+
+### 5. Get Grouped Cart by Seller (CART-03)
+GET {{Host}}/api/v1/carts/me/grouped
+X-User-Id: {{BuyerId}}
+X-User-Roles: buyer
+Accept: application/json
+
+### 6. Add Item to Cart (CART-04)
 POST {{Host}}/api/v1/carts/me/items
 X-User-Id: {{BuyerId}}
 X-User-Roles: buyer
@@ -28,13 +40,53 @@ Content-Type: application/json
   "quantity": 2
 }
 
-### 5. Get Cart Summary & Badge Count (CART-08)
-GET {{Host}}/api/v1/carts/me/summary
+### 7. Update Cart Item Quantity (CART-05)
+PATCH {{Host}}/api/v1/carts/me/items/00000000-0000-0000-0000-000000000000
+X-User-Id: {{BuyerId}}
+X-User-Roles: buyer
+Content-Type: application/json
+
+{
+  "cartItemId": "00000000-0000-0000-0000-000000000000",
+  "quantity": 3
+}
+
+### 8. Change SKU Variant (CART-06)
+PATCH {{Host}}/api/v1/carts/me/items/00000000-0000-0000-0000-000000000000/variant
+X-User-Id: {{BuyerId}}
+X-User-Roles: buyer
+Content-Type: application/json
+
+{
+  "newSkuId": "{{SkuId2}}"
+}
+
+### 9. Remove Single Item (CART-07)
+DELETE {{Host}}/api/v1/carts/me/items/00000000-0000-0000-0000-000000000000
 X-User-Id: {{BuyerId}}
 X-User-Roles: buyer
 Accept: application/json
 
-### 6. Calculate Selected Items (CART-09)
+### 10. Bulk Remove Selected Items (CART-08)
+POST {{Host}}/api/v1/carts/me/items:bulk-remove
+X-User-Id: {{BuyerId}}
+X-User-Roles: buyer
+Content-Type: application/json
+
+{
+  "cartItemIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "clearAll": false
+}
+
+### 11. Clear Entire Cart (CART-09)
+DELETE {{Host}}/api/v1/carts/me/clear
+X-User-Id: {{BuyerId}}
+X-User-Roles: buyer
+Accept: application/json
+
+### 12. Calculate Selected Items (CART-10)
 POST {{Host}}/api/v1/carts/me/calculate
 X-User-Id: {{BuyerId}}
 X-User-Roles: buyer
@@ -44,7 +96,7 @@ Content-Type: application/json
   "selectedItemIds": []
 }
 
-### 7. Pre-checkout Validation (CART-06)
+### 13. Pre-checkout Validation (CART-11)
 POST {{Host}}/api/v1/carts/me/validate
 X-User-Id: {{BuyerId}}
 X-User-Roles: buyer
@@ -54,7 +106,7 @@ Content-Type: application/json
   "selectedItemIds": []
 }
 
-### 8. Merge Guest Cart (CART-10)
+### 14. Merge Guest Cart (CART-12)
 POST {{Host}}/api/v1/carts/me/merge
 X-User-Id: {{BuyerId}}
 X-User-Roles: buyer
@@ -69,8 +121,20 @@ Content-Type: application/json
   ]
 }
 
-### 9. Clear Cart (CART-05)
-DELETE {{Host}}/api/v1/carts/me/clear
+### 15. Cleanup Checked Out Items (CART-13)
+POST {{Host}}/api/v1/carts/me/cleanup-checked-out
 X-User-Id: {{BuyerId}}
 X-User-Roles: buyer
+Content-Type: application/json
+
+{
+  "purchasedCartItemIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ]
+}
+
+### 16. Admin/Staff Get Active Cart by Buyer ID (CART-14)
+GET {{Host}}/api/v1/carts/active?buyerId={{BuyerId}}
+X-User-Id: {{BuyerId}}
+X-User-Roles: admin
 Accept: application/json

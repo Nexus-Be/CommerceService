@@ -296,8 +296,96 @@ public sealed class CartService : ICartService
         return MapToDto(cart);
     }
 
+    public async Task<GroupedCartResponse> GetGroupedCartAsync(Guid buyerId, CancellationToken cancellationToken = default)
+    {
+        var cart = await GetActiveCartEntityAsync(buyerId, asNoTracking: true, cancellationToken);
+        if (cart == null || cart.Items.Count == 0)
+        {
+            return new GroupedCartResponse(
+                CartId: cart?.Id ?? Guid.Empty,
+                BuyerId: buyerId,
+                TotalDistinctItems: 0,
+                TotalQuantity: 0,
+                SubtotalAmount: 0m,
+                Shops: Array.Empty<ShopCartGroupResponse>());
+        }
+
+        var shopGroups = cart.Items
+            .GroupBy(i => i.SellerId)
+            .Select(g => new ShopCartGroupResponse(
+                SellerId: g.Key,
+                ShopName: $"Shop {g.Key.ToString()[..8].ToUpperInvariant()}",
+                DistinctItemCount: g.Count(),
+                TotalQuantity: g.Sum(x => x.Quantity),
+                ShopSubtotal: g.Sum(x => x.Quantity * x.UnitPriceSnapshot),
+                Items: g.Select(i => new CartItemResponse(
+                    i.Id,
+                    i.ProductId,
+                    i.SkuId,
+                    i.SellerId,
+                    i.ProductNameSnapshot,
+                    i.Quantity,
+                    i.UnitPriceSnapshot,
+                    i.Quantity * i.UnitPriceSnapshot,
+                    i.AddedAt)).ToList()))
+            .ToList();
+
+        return new GroupedCartResponse(
+            CartId: cart.Id,
+            BuyerId: cart.BuyerId,
+            TotalDistinctItems: cart.ItemCount,
+            TotalQuantity: cart.Items.Sum(i => i.Quantity),
+            SubtotalAmount: cart.SubtotalAmount,
+            Shops: shopGroups);
+    }
+
+    public async Task<CartDto> ChangeItemVariantAsync(Guid buyerId, Guid cartItemId, ChangeCartItemVariantRequest request, CancellationToken cancellationToken = default)
+    {
+        var cart = await GetActiveCartEntityAsync(buyerId, asNoTracking: false, cancellationToken)
+            ?? throw new CommerceDomainException("CART_NOT_FOUND", "Active cart not found for the user.", 404);
+
+        var skuInfo = await _catalogClient.GetSkuDetailsAsync(request.NewSkuId, cancellationToken);
+        if (skuInfo == null)
+        {
+            throw new CommerceDomainException("CATALOG_SKU_NOT_FOUND", "The specified product SKU was not found in catalog.", 404);
+        }
+
+        if (!skuInfo.IsPurchasable)
+        {
+            throw new CommerceDomainException("CATALOG_SKU_INACTIVE", skuInfo.ErrorReason ?? "The specified product SKU is unavailable or out of stock.", 400);
+        }
+
+        cart.ChangeItemVariant(
+            cartItemId: cartItemId,
+            newSkuId: skuInfo.SkuId,
+            newProductName: skuInfo.ProductName,
+            newUnitPrice: skuInfo.UnitPrice);
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return MapToDto(cart);
+    }
+
+    public async Task<CartDto> CleanupCheckedOutItemsAsync(Guid buyerId, CleanupCheckedOutItemsRequest request, CancellationToken cancellationToken = default)
+    {
+        var cart = await GetActiveCartEntityAsync(buyerId, asNoTracking: false, cancellationToken)
+            ?? throw new CommerceDomainException("CART_NOT_FOUND", "Active cart not found for the user.", 404);
+
+        if (request.PurchasedCartItemIds != null && request.PurchasedCartItemIds.Count > 0)
+        {
+            cart.BulkRemoveItems(request.PurchasedCartItemIds);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        return MapToDto(cart);
+    }
+
     private async Task<Cart?> GetActiveCartEntityAsync(Guid buyerId, bool asNoTracking, CancellationToken cancellationToken)
     {
+        if (_dbContext.Carts == null)
+        {
+            return null;
+        }
+
         IQueryable<Cart> query = _dbContext.Carts.Include(c => c.Items);
         if (asNoTracking)
         {

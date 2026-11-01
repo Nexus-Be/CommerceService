@@ -25,4 +25,10 @@ public interface ICartService
     Task<ValidateCartResponse> ValidateCartAsync(Guid buyerId, ValidateCartRequest request, CancellationToken cancellationToken = default);
 
     Task<CartDto> MergeGuestCartAsync(Guid buyerId, MergeGuestCartRequest request, CancellationToken cancellationToken = default);
+
+    Task<GroupedCartResponse> GetGroupedCartAsync(Guid buyerId, CancellationToken cancellationToken = default);
+
+    Task<CartDto> ChangeItemVariantAsync(Guid buyerId, Guid cartItemId, ChangeCartItemVariantRequest request, CancellationToken cancellationToken = default);
+
+    Task<CartDto> CleanupCheckedOutItemsAsync(Guid buyerId, CleanupCheckedOutItemsRequest request, CancellationToken cancellationToken = default);
 }
