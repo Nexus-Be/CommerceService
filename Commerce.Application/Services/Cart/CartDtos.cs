@@ -12,7 +12,9 @@ public sealed record CartItemDto(
     int Quantity,
     decimal UnitPriceSnapshot,
     decimal LineTotal = 0,
-    DateTimeOffset AddedAt = default);
+    DateTimeOffset AddedAt = default,
+    bool IsAvailable = true,
+    string? DisabledReason = null);
 
 public sealed record CartDto(
     Guid Id,

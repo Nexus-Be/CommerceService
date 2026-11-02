@@ -1,6 +1,6 @@
 # Commerce Service REST API Catalog
 
-> **Nguồn:** Trích xuất từ `Commerce_Function_API_Backlog.xlsx` (Sheet `API_Catalog`). Chuẩn REST API đối chiếu Gateway.
+> **Nguồn:** Trích xuất từ `Commerce_Function_API_Backlog.xlsx` và `docs/COMMERCE_API_RECONCILIATION_REPORT.md`. Chuẩn REST API đối chiếu Gateway.
 
 | ID | Kind | Method | Path | Name | Permission | Idempotency-Key |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -18,26 +18,23 @@
 | CART-12 | Public API | POST | /api/v1/carts/me/merge | Merge guest cart on login / Gộp giỏ khách vãng lai | CART.UPDATE / Buyer | - |
 | CART-13 | Public API | POST | /api/v1/carts/me/cleanup-checked-out | Cleanup checked out items / Dọn dẹp món đã thanh toán | CART.UPDATE / Buyer, System | - |
 | CART-14 | Public API | GET | /api/v1/carts/active?buyerId= | Get active cart / Quản trị tra cứu giỏ hàng | CART.VIEW / Admin, Staff | - |
-| CHK-01 | Public API | POST | /api/v1/checkout/preview | Checkout preview / Xem trước thanh toán | CHECKOUT.START / Buyer | - |
-| CHK-02 | Public API | POST | /api/v1/checkout | Create checkout (group + orders) / Tạo checkout và đơn hàng | CHECKOUT.START + ORDER.CREATE / Buyer | Required |
-| CHK-03 | Public API | POST | /api/v1/checkout-groups/{checkoutGroupId}/pay | Pay checkout group / Thanh toán nhóm đơn | CHECKOUT.PAY (NEW) / Buyer | Required |
-| CHK-04 | Public API | GET | /api/v1/checkout-groups/{checkoutGroupId} | Get checkout group / Xem trạng thái checkout | ORDER.VIEW / Buyer (own) | - |
-| CHK-05 | Public API | POST | /api/v1/checkout-groups/{checkoutGroupId}/cancel | Cancel checkout group / Huỷ checkout chưa thanh toán | ORDER.CANCEL / Buyer | - |
+| CHK-01 | Public API | POST | /api/v1/checkouts/quote | Checkout quote / Xem trước báo giá giỏ hàng (R75) | CHECKOUT.START / Buyer | - |
+| CHK-02 | Public API | POST | /api/v1/orders | Create order from quote / Tạo đơn hàng từ quoteId (R76) | CHECKOUT.START + ORDER.CREATE / Buyer | Required |
+| ORD-01 | Public API | GET | /api/v1/orders | List my orders / Lịch sử đơn hàng của tôi (R78) | ORDER.LIST / Buyer (own) | - |
+| ORD-02 | Public API | GET | /api/v1/orders/{orderId} | Get order detail / Chi tiết đơn hàng cha (R77) | ORDER.VIEW / Buyer (own), Admin, Support | - |
+| ORD-02B| Public API | GET | /api/v1/sub-orders/{subOrderId} | Get sub-order detail / Chi tiết đơn con của Shop (R79) | ORDER.VIEW / Buyer (own), Seller (own), Admin, Support | - |
+| ORD-04 | Public API | POST | /api/v1/orders/{orderId}/accept | Seller accept order / Seller xác nhận đơn con (R83) | ORDER.CONFIRM / Seller | - |
+| ORD-05 | Public API | POST | /api/v1/orders/{orderId}/reject | Seller reject order / Seller từ chối đơn con (R84) | ORDER.REJECT / Seller | - |
+| ORD-06 | Public API | POST | /api/v1/orders/{orderId}/cancel | Cancel order / Huỷ đơn (Buyer, Support, Admin) (R80) | ORDER.CANCEL / Buyer (own), Support, Admin | Required |
+| ORD-08 | Public API | GET | /api/v1/shipments/order/{orderId} | Track shipment / Theo dõi tiến độ vận chuyển (R87) | ORDER.VIEW / Buyer (own), Seller (own) | - |
+| ORD-13 | Public API | POST | /api/v1/sub-orders/{subOrderId}/refund | Refund sub-order / Yêu cầu hoàn tiền đơn con (R99) | ORDER.REFUND / Buyer (own), Admin, Support | Required |
 | DSC-01 | Public API | GET | /api/v1/vouchers/available?cartItemIds=&sellerId=&page=&size= | List available vouchers / Danh sách voucher khả dụng | CART.VIEW / Buyer | - |
 | DSC-05 | Public API | POST | /api/v1/vouchers | Create voucher / Tạo voucher | DISCOUNT.CREATE (NEW) / Admin, Seller | - |
 | DSC-06 | Public API | PATCH | /api/v1/vouchers/{voucherId} | Update / activate / delete voucher / Sửa, bật tắt, xoá voucher | DISCOUNT.UPDATE (NEW) / Admin, Seller (own) | - |
 | DSC-07 | Public API | GET | /api/v1/vouchers | List vouchers for management / Quản lý danh sách voucher | DISCOUNT.VIEW (NEW) / Admin, Seller (own) | - |
-| ORD-01 | Public API | GET | /api/v1/orders | List my orders / Lịch sử đơn hàng của tôi | ORDER.LIST / Buyer (own) | - |
-| ORD-02 | Public API | GET | /api/v1/orders/{orderId}?orderType=REGULAR/AUCTION | Get order detail / Chi tiết & theo dõi đơn hàng | ORDER.VIEW / Buyer (own), Seller (own), Admin, Support | - |
-| ORD-03 | Public API | GET | /api/v1/seller/orders | Seller order list / Danh sách đơn của seller | ORDER.LIST / Seller (own) | - |
-| ORD-04 | Public API | POST | /api/v1/seller/orders/{orderId}/accept?orderType= | Seller accept order / Seller xác nhận đơn | ORDER.CONFIRM (SRS OQ-12) / Seller | - |
-| ORD-05 | Public API | POST | /api/v1/seller/orders/{orderId}/reject?orderType= | Seller reject order / Seller từ chối đơn | ORDER.REJECT (SRS OQ-12) / Seller | - |
-| ORD-06 | Public API | POST | /api/v1/orders/{orderId}/cancel?orderType= | Cancel order / Huỷ đơn (Buyer, Support, Admin) | ORDER.CANCEL / Buyer (own), Support, Admin | Required |
-| ORD-07 | Public API | POST | /api/v1/orders/{orderId}/confirm-received?orderType= | Confirm received / Buyer xác nhận đã nhận hàng | ORDER.CONFIRM_RECEIVED (NEW) / Buyer | - |
+| ORD-07 | Public API | POST | /api/v1/orders/{orderId}/confirm-received | Confirm received / Buyer xác nhận đã nhận hàng | ORDER.CONFIRM_RECEIVED / Buyer | - |
 | ORD-11 | Public API | GET | /api/v1/admin/orders | Admin list orders / Quản trị xem tất cả đơn | ORDER.LIST / Admin, Support | - |
-| ORD-12 | Public API | PATCH | /api/v1/admin/orders/{orderId}/status?orderType= | Admin update order status / Admin chỉnh trạng thái ngoại lệ | ORDER.UPDATE_STATUS (NEW) / Admin | - |
-| ORD-13 | Public API | POST | /api/v1/admin/orders/{orderId}/refund?orderType= | Admin/Support refund / Hoàn tiền thủ công | ORDER.REFUND / Admin, Support | Required |
-| ORD-16 | Public API | GET | /api/v1/orders/{orderId}/invoice?orderType= | Download invoice / Tải hoá đơn | ORDER.INVOICE.VIEW (NEW) / Buyer (own), Seller (own), Admin, Support | - |
-| ORD-23 | Internal API | GET | /internal/v1/orders/{orderId}/rating-eligibility?userId=&productId= | Rating eligibility check / Kiểm tra đủ điều kiện đánh giá | System (service-to-service) | - |
-| AO-02 | Public API | PUT | /api/v1/auction-orders/{auctionOrderId}/shipping | Submit shipping info & get quote / Nhập địa chỉ và báo giá ship | AUCTION.VIEW + ORDER.UPDATE (NEW) / Buyer (winner) | - |
-| AO-03 | Public API | POST | /api/v1/auction-orders/{auctionOrderId}/pay | Pay auction order / Thanh toán đơn đấu giá | CHECKOUT.PAY (NEW) / Buyer (winner) | Required |
+| ORD-12 | Public API | PATCH | /api/v1/admin/orders/{orderId}/status | Admin update order status / Admin chỉnh trạng thái ngoại lệ | ORDER.UPDATE_STATUS / Admin | - |
+| ORD-16 | Public API | GET | /api/v1/orders/{orderId}/invoice | Download invoice / Tải hoá đơn | ORDER.INVOICE.VIEW / Buyer (own), Seller (own), Admin, Support | - |
+| AO-02 | Public API | PUT | /api/v1/auction-orders/{auctionOrderId}/shipping | Submit shipping info & get quote / Nhập địa chỉ và báo giá ship | AUCTION.VIEW + ORDER.UPDATE / Buyer (winner) | - |
+| AO-03 | Public API | POST | /api/v1/auction-orders/{auctionOrderId}/pay | Pay auction order / Thanh toán đơn đấu giá | CHECKOUT.PAY / Buyer (winner) | Required |

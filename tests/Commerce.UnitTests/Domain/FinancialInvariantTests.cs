@@ -22,7 +22,7 @@ public class FinancialInvariantTests
             SellerId = Guid.NewGuid(),
             Status = SubOrderStatus.PendingPayment,
             PaymentMethod = PaymentMethod.Wallet,
-            ShippingAddress = "{}",
+            ShippingAddress = new(),
             ContactPhone = "0901234567",
             PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
             Items = new List<SubOrderItem>
@@ -81,7 +81,7 @@ public class FinancialInvariantTests
             SellerId = Guid.NewGuid(),
             Status = SubOrderStatus.PendingPayment,
             PaymentMethod = PaymentMethod.Wallet,
-            ShippingAddress = "{}",
+            ShippingAddress = new(),
             ContactPhone = "0901234567",
             PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
             Items = new List<SubOrderItem>

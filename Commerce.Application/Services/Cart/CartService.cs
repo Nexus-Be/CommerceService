@@ -15,11 +15,16 @@ public sealed class CartService : ICartService
 {
     private readonly ICommerceDbContext _dbContext;
     private readonly ICatalogClient _catalogClient;
+    private readonly IFulfillmentClient _fulfillmentClient;
 
-    public CartService(ICommerceDbContext dbContext, ICatalogClient catalogClient)
+    public CartService(
+        ICommerceDbContext dbContext,
+        ICatalogClient catalogClient,
+        IFulfillmentClient fulfillmentClient)
     {
         _dbContext = dbContext;
         _catalogClient = catalogClient;
+        _fulfillmentClient = fulfillmentClient;
     }
 
     public async Task<CartDto> GetActiveCartByBuyerIdAsync(Guid buyerId, CancellationToken cancellationToken = default)
@@ -27,7 +32,8 @@ public sealed class CartService : ICartService
         var cart = await GetActiveCartEntityAsync(buyerId, asNoTracking: true, cancellationToken)
             ?? throw new EntityNotFoundException("CART_NOT_FOUND", "Cart", buyerId);
 
-        return MapToDto(cart);
+        var stockResults = await CheckStockForCartItemsAsync(cart.Items, cancellationToken);
+        return MapToDto(cart, stockResults);
     }
 
     public async Task<CartDto> GetOrCreateActiveCartAsync(Guid buyerId, CancellationToken cancellationToken = default)
@@ -59,7 +65,8 @@ public sealed class CartService : ICartService
             }
         }
 
-        return MapToDto(cart);
+        var stockResults = await CheckStockForCartItemsAsync(cart.Items, cancellationToken);
+        return MapToDto(cart, stockResults);
     }
 
     public async Task<CartDto> AddItemAsync(Guid buyerId, AddCartItemRequest request, CancellationToken cancellationToken = default)
@@ -78,6 +85,13 @@ public sealed class CartService : ICartService
         if (!skuInfo.IsPurchasable)
         {
             throw new CommerceDomainException("CATALOG_SKU_INACTIVE", skuInfo.ErrorReason ?? "The specified product SKU is unavailable or out of stock.", 400);
+        }
+
+        // Check tồn kho tại Fulfillment Service trước khi thêm vào giỏ hàng (CART-04)
+        var isStockAvailable = await _fulfillmentClient.CheckStockAvailabilityAsync(request.SkuId, request.Quantity, cancellationToken);
+        if (!isStockAvailable)
+        {
+            throw new CommerceDomainException("INSUFFICIENT_STOCK", "Insufficient stock available in warehouse.", 400);
         }
 
         var cart = await GetActiveCartEntityAsync(buyerId, asNoTracking: false, cancellationToken);
@@ -112,6 +126,16 @@ public sealed class CartService : ICartService
     {
         var cart = await GetActiveCartEntityAsync(buyerId, asNoTracking: false, cancellationToken)
             ?? throw new CommerceDomainException("CART_NOT_FOUND", "Active cart not found for the user.", 404);
+
+        var item = cart.Items.FirstOrDefault(i => i.Id == cartItemId)
+            ?? throw new CommerceDomainException("CART_ITEM_NOT_FOUND", "Cart item not found in the current cart.", 404);
+
+        // Bắt buộc kiểm tra tồn kho Fulfillment trước khi cho phép cập nhật số lượng (BUG-C)
+        var isStockAvailable = await _fulfillmentClient.CheckStockAvailabilityAsync(item.SkuId, request.Quantity, cancellationToken);
+        if (!isStockAvailable)
+        {
+            throw new CommerceDomainException("INSUFFICIENT_STOCK", "Requested quantity exceeds available warehouse stock.", 400);
+        }
 
         cart.UpdateItemQuantity(cartItemId, request.Quantity);
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -310,6 +334,8 @@ public sealed class CartService : ICartService
                 Shops: Array.Empty<ShopCartGroupResponse>());
         }
 
+        var stockResults = await CheckStockForCartItemsAsync(cart.Items, cancellationToken);
+
         var shopGroups = cart.Items
             .GroupBy(i => i.SellerId)
             .Select(g => new ShopCartGroupResponse(
@@ -318,16 +344,25 @@ public sealed class CartService : ICartService
                 DistinctItemCount: g.Count(),
                 TotalQuantity: g.Sum(x => x.Quantity),
                 ShopSubtotal: g.Sum(x => x.Quantity * x.UnitPriceSnapshot),
-                Items: g.Select(i => new CartItemResponse(
-                    i.Id,
-                    i.ProductId,
-                    i.SkuId,
-                    i.SellerId,
-                    i.ProductNameSnapshot,
-                    i.Quantity,
-                    i.UnitPriceSnapshot,
-                    i.Quantity * i.UnitPriceSnapshot,
-                    i.AddedAt)).ToList()))
+                Items: g.Select(i =>
+                {
+                    var stock = stockResults.TryGetValue(i.SkuId, out var s) ? s : null;
+                    var isAvailable = stock?.IsAvailable ?? true;
+                    var disabledReason = !isAvailable ? (stock?.DisabledReason ?? "OUT_OF_STOCK") : null;
+
+                    return new CartItemResponse(
+                        i.Id,
+                        i.ProductId,
+                        i.SkuId,
+                        i.SellerId,
+                        i.ProductNameSnapshot,
+                        i.Quantity,
+                        i.UnitPriceSnapshot,
+                        i.Quantity * i.UnitPriceSnapshot,
+                        i.AddedAt,
+                        IsAvailable: isAvailable,
+                        DisabledReason: disabledReason);
+                }).ToList()))
             .ToList();
 
         return new GroupedCartResponse(
@@ -395,18 +430,39 @@ public sealed class CartService : ICartService
         return await query.FirstOrDefaultAsync(c => c.BuyerId == buyerId && c.Status == CartStatus.Active, cancellationToken);
     }
 
-    private static CartDto MapToDto(Cart cart)
+    private async Task<Dictionary<Guid, SkuStockCheckResult>> CheckStockForCartItemsAsync(
+        ICollection<CartItem> items, CancellationToken cancellationToken)
     {
-        var items = cart.Items.Select(i => new CartItemDto(
-            i.Id,
-            i.ProductId,
-            i.SkuId,
-            i.SellerId,
-            i.ProductNameSnapshot,
-            i.Quantity,
-            i.UnitPriceSnapshot,
-            i.Quantity * i.UnitPriceSnapshot,
-            i.AddedAt)).ToList();
+        if (items == null || items.Count == 0)
+        {
+            return new Dictionary<Guid, SkuStockCheckResult>();
+        }
+
+        var skuIds = items.Select(i => i.SkuId).Distinct().ToList();
+        return await _fulfillmentClient.BatchCheckStockAsync(skuIds, cancellationToken);
+    }
+
+    private static CartDto MapToDto(Cart cart, Dictionary<Guid, SkuStockCheckResult>? stockResults = null)
+    {
+        var items = cart.Items.Select(i =>
+        {
+            var stock = stockResults != null && stockResults.TryGetValue(i.SkuId, out var s) ? s : null;
+            var isAvailable = stock?.IsAvailable ?? true;
+            var disabledReason = !isAvailable ? (stock?.DisabledReason ?? "OUT_OF_STOCK") : null;
+
+            return new CartItemDto(
+                i.Id,
+                i.ProductId,
+                i.SkuId,
+                i.SellerId,
+                i.ProductNameSnapshot,
+                i.Quantity,
+                i.UnitPriceSnapshot,
+                i.Quantity * i.UnitPriceSnapshot,
+                i.AddedAt,
+                IsAvailable: isAvailable,
+                DisabledReason: disabledReason);
+        }).ToList();
 
         return new CartDto(
             cart.Id,

@@ -4,6 +4,7 @@ using System.Linq;
 using Commerce.Domain.Base;
 using Commerce.Domain.Enums;
 using Commerce.Domain.Exceptions;
+using Commerce.Domain.ValueObjects;
 
 namespace Commerce.Domain.Entities;
 
@@ -16,7 +17,7 @@ public class SubOrder : BaseEntity<Guid>
     public required SubOrderStatus Status { get; set; } = SubOrderStatus.PendingPayment;
     public required PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Wallet;
     public Guid? WalletTransactionId { get; set; }
-    public required string ShippingAddress { get; set; }
+    public ShippingAddressSnapshot ShippingAddress { get; set; } = new();
     public required string ContactPhone { get; set; }
     public decimal ItemsAmount { get; set; }
     public decimal ProductDiscountAmount { get; set; }
