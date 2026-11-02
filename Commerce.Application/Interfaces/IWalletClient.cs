@@ -6,10 +6,9 @@ using System.Threading.Tasks;
 
 public interface IWalletClient
 {
-    Task<bool> CheckoutDirectPaymentAsync(
+    Task<WalletPaymentResult> PayOrderAsync(
         Guid orderId,
-        string userId,
         decimal amount,
-        string? idempotencyKey = null,
+        string accessToken,
         CancellationToken cancellationToken = default);
 }

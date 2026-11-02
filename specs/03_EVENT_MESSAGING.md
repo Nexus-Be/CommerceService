@@ -13,6 +13,7 @@
    - Không còn bảng `OrderSagaState` hay các entity event trong mã nguồn.
 
 2. **Chuyển sang Điều Phối Đồng Bộ Qua Typed REST Clients**:
-   - Khi tạo đơn hàng cần thanh toán, `CommerceService` gọi trực tiếp `WalletService` qua REST client `IWalletClient` (`POST /api/v1/wallets/checkout/direct`).
+   - Sau khi giữ kho, `CommerceService` gọi trực tiếp `WalletService` qua REST client `IWalletClient` (`POST /api/v1/internal/wallet/orders/{orderId}/payment`), chuyển tiếp bearer token của người mua và chỉ gửi `amount` trong body.
+   - `orderId` là khóa idempotency của Wallet; giữ nguyên order ID, buyer token và amount khi retry. Chỉ `200 OK` xác nhận thanh toán; giữ nguyên status và error code khi Wallet trả lỗi.
    - Khi cần giữ kho, gọi trực tiếp `CatalogService` qua `ICatalogClient` (`POST /api/v1/products/reserve`).
    - Nhờ đó, hệ thống không còn rủi ro message bị thất lạc trong hàng đợi RabbitMQ hay xung đột trạng thái Saga phức tạp.
