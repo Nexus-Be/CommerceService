@@ -192,41 +192,50 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("QUOTE_EXPIRED", "Checkout quote has expired, is invalid, or is currently being processed.");
         }
 
-        // KIỂM TRA BIẾN ĐỘNG GIÁ VÀ TRẠNG THÁI SKU TỪ CATALOG (ASYMMETRIC PRICE DRIFT POLICY)
+        // BATCH KIỂM TRA BIẾN ĐỘNG GIÁ VÀ TRẠNG THÁI SKU TỪ CATALOG (ASYMMETRIC PRICE DRIFT POLICY - CHỐNG N+1)
+        var allQuoteItems = cachedQuote.Response.Shops.SelectMany(s => s.Items).ToList();
+        var allSkuIds = allQuoteItems.Select(i => i.SkuId).Distinct().ToList();
+        var batchSkuDetails = await _catalogClient.GetSkuBatchDetailsAsync(allSkuIds, ct);
+
         var priceIncreases = new List<(ShopQuoteItem QuoteItem, CatalogProductCheckResult SkuInfo)>();
         var priceDrops = new List<PriceDropDto>();
         var freshSkuPrices = new Dictionary<Guid, decimal>();
 
-        foreach (var shop in cachedQuote.Response.Shops)
+        foreach (var item in allQuoteItems)
         {
-            foreach (var item in shop.Items)
+            CatalogProductCheckResult? skuInfo = null;
+            if (batchSkuDetails != null && batchSkuDetails.TryGetValue(item.SkuId, out var foundInfo))
             {
-                var skuInfo = await _catalogClient.GetSkuDetailsAsync(item.SkuId, ct);
-                if (skuInfo == null)
-                {
-                    throw new CommerceDomainException("CATALOG_SKU_NOT_FOUND", $"Product SKU '{item.SkuId}' was not found in catalog.", 404);
-                }
-                if (!skuInfo.IsPurchasable)
-                {
-                    throw new CommerceDomainException("CATALOG_SKU_INACTIVE", $"Product '{item.ProductName}' is no longer available for purchase.", 400);
-                }
+                skuInfo = foundInfo;
+            }
 
-                freshSkuPrices[item.SkuId] = skuInfo.UnitPrice;
+            // Fallback nếu mock hoặc client chưa setup batch: gọi lẻ GetSkuDetailsAsync
+            skuInfo ??= await _catalogClient.GetSkuDetailsAsync(item.SkuId, ct);
 
-                if (skuInfo.UnitPrice > item.UnitPrice)
-                {
-                    priceIncreases.Add((item, skuInfo));
-                }
-                else if (skuInfo.UnitPrice < item.UnitPrice)
-                {
-                    priceDrops.Add(new PriceDropDto(
-                        item.SkuId,
-                        item.ProductName,
-                        item.UnitPrice,
-                        skuInfo.UnitPrice,
-                        (item.UnitPrice - skuInfo.UnitPrice) * item.Quantity
-                    ));
-                }
+            if (skuInfo == null)
+            {
+                throw new CommerceDomainException("CATALOG_SKU_NOT_FOUND", $"Product SKU '{item.SkuId}' was not found in catalog.", 404);
+            }
+            if (!skuInfo.IsPurchasable)
+            {
+                throw new CommerceDomainException("CATALOG_SKU_INACTIVE", $"Product '{item.ProductName}' is no longer available for purchase.", 400);
+            }
+
+            freshSkuPrices[item.SkuId] = skuInfo.UnitPrice;
+
+            if (skuInfo.UnitPrice > item.UnitPrice)
+            {
+                priceIncreases.Add((item, skuInfo));
+            }
+            else if (skuInfo.UnitPrice < item.UnitPrice)
+            {
+                priceDrops.Add(new PriceDropDto(
+                    item.SkuId,
+                    item.ProductName,
+                    item.UnitPrice,
+                    skuInfo.UnitPrice,
+                    (item.UnitPrice - skuInfo.UnitPrice) * item.Quantity
+                ));
             }
         }
 

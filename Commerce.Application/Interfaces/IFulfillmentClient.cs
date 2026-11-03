@@ -37,6 +37,12 @@ public sealed record ShipmentCreationResult(
     string LabelPrintUrl
 );
 
+public sealed record BatchReleaseStockResult(
+    List<Guid> SucceededOrderIds,
+    List<Guid> FailedOrderIds,
+    bool IsSuccess = true
+);
+
 public interface IFulfillmentClient
 {
     /// <summary>Check nhanh 1 SKU khi thêm món vào giỏ hàng (CART-04).</summary>
@@ -53,6 +59,9 @@ public interface IFulfillmentClient
 
     /// <summary>Nhả hàng lại cho kho khi đơn bị Hủy hoặc Quá hạn thanh toán 15 phút.</summary>
     Task<bool> ReleaseStockAsync(Guid orderId, CancellationToken ct = default);
+
+    /// <summary>Nhả hàng lại cho kho hàng loạt khi nhiều đơn bị Quá hạn thanh toán (chống N+1 HTTP calls).</summary>
+    Task<BatchReleaseStockResult> BatchReleaseStockAsync(List<Guid> orderIds, CancellationToken ct = default);
 
     /// <summary>Nhả hàng cho kho chỉ riêng các món thuộc về 1 SubOrder khi Shop từ chối đơn con.</summary>
     Task<bool> ReleaseSubOrderStockAsync(Guid subOrderId, List<StockReservationItem> items, CancellationToken ct = default);

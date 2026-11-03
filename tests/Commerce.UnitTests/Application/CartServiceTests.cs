@@ -304,4 +304,231 @@ public class CartServiceTests : IDisposable
         calcResult.TotalQuantity.Should().Be(2);
         calcResult.SubtotalAmount.Should().Be(200000m);
     }
+
+    [Fact]
+    public async Task ValidateCartAsync_ShouldReturnFulfillmentStockIssue_WhenWarehouseStockInsufficient()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuId, Guid.NewGuid(), Guid.NewGuid(), "Warehouse Item", 100000m, true, 100));
+
+        // Warehouse chỉ còn 1 sản phẩm trong khi cart có 3
+        _mockFulfillmentClient
+            .Setup(f => f.BatchCheckStockAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, SkuStockCheckResult>
+            {
+                [skuId] = new SkuStockCheckResult(skuId, IsAvailable: false, AvailableStock: 1, DisabledReason: "INSUFFICIENT_STOCK")
+            });
+
+        var service = CreateService();
+        await service.AddItemAsync(buyerId, new AddCartItemRequest(skuId, 3), CancellationToken.None);
+
+        // Act
+        var result = await service.ValidateCartAsync(buyerId, new ValidateCartRequest(), CancellationToken.None);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.HasStockIssues.Should().BeTrue();
+        result.Issues.Should().HaveCount(1);
+        result.Issues[0].SkuId.Should().Be(skuId);
+        result.Issues[0].IssueType.Should().Be("INSUFFICIENT_STOCK");
+        result.Issues[0].AvailableStock.Should().Be(1);
+        result.Issues[0].RequestedQuantity.Should().Be(3);
+        result.Issues[0].SuggestedQuantity.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ValidateCartAsync_ShouldUseParallelBatchLookup_WhenValidatingCart()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId1 = Guid.NewGuid();
+        var skuId2 = Guid.NewGuid();
+
+        var item1 = new CatalogProductCheckResult(skuId1, Guid.NewGuid(), Guid.NewGuid(), "Item 1", 100000m, true, 100);
+        var item2 = new CatalogProductCheckResult(skuId2, Guid.NewGuid(), Guid.NewGuid(), "Item 2", 200000m, true, 100);
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(item1);
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId2, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(item2);
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, CatalogProductCheckResult>
+            {
+                [skuId1] = item1,
+                [skuId2] = item2
+            });
+
+        _mockFulfillmentClient
+            .Setup(f => f.BatchCheckStockAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, SkuStockCheckResult>
+            {
+                [skuId1] = new SkuStockCheckResult(skuId1, true, 50, null),
+                [skuId2] = new SkuStockCheckResult(skuId2, true, 50, null)
+            });
+
+        var service = CreateService();
+        await service.AddItemAsync(buyerId, new AddCartItemRequest(skuId1, 2), CancellationToken.None);
+        await service.AddItemAsync(buyerId, new AddCartItemRequest(skuId2, 1), CancellationToken.None);
+
+        // Act
+        var result = await service.ValidateCartAsync(buyerId, new ValidateCartRequest(), CancellationToken.None);
+
+        // Assert
+        result.IsValid.Should().BeTrue();
+        result.Issues.Should().BeEmpty();
+        _mockCatalogClient.Verify(c => c.GetSkuBatchDetailsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockFulfillmentClient.Verify(f => f.BatchCheckStockAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task CalculateSelectedItemsAsync_ShouldExcludeOutOfStockItemsFromSubtotal()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuAvailable = Guid.NewGuid();
+        var skuOutOfStock = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuAvailable, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuAvailable, Guid.NewGuid(), Guid.NewGuid(), "Item Available", 100000m, true, 100));
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuOutOfStock, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuOutOfStock, Guid.NewGuid(), Guid.NewGuid(), "Item Out of stock", 50000m, true, 100));
+
+        _mockFulfillmentClient
+            .Setup(f => f.BatchCheckStockAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, SkuStockCheckResult>
+            {
+                [skuAvailable] = new SkuStockCheckResult(skuAvailable, IsAvailable: true, AvailableStock: 10, DisabledReason: null),
+                [skuOutOfStock] = new SkuStockCheckResult(skuOutOfStock, IsAvailable: false, AvailableStock: 0, DisabledReason: "OUT_OF_STOCK")
+            });
+
+        var service = CreateService();
+        var cart1 = await service.AddItemAsync(buyerId, new AddCartItemRequest(skuAvailable, 2), CancellationToken.None); // 200k
+        var cart2 = await service.AddItemAsync(buyerId, new AddCartItemRequest(skuOutOfStock, 1), CancellationToken.None); // 50k (out of stock)
+
+        var allItemIds = cart2.Items.Select(i => i.Id).ToList();
+
+        // Act
+        var calcResult = await service.CalculateSelectedItemsAsync(
+            buyerId,
+            new CalculateSelectedCartItemsRequest(allItemIds),
+            CancellationToken.None);
+
+        // Assert: 2 items được chọn nhưng tổng tiền chỉ tính cho món còn hàng (200k)
+        calcResult.SelectedItemCount.Should().Be(2);
+        calcResult.TotalQuantity.Should().Be(2);
+        calcResult.SubtotalAmount.Should().Be(200000m);
+        calcResult.Items.First(i => i.SkuId == skuOutOfStock).IsAvailable.Should().BeFalse();
+        calcResult.Items.First(i => i.SkuId == skuOutOfStock).StockWarning.Should().Be("OUT_OF_STOCK");
+    }
+
+    [Fact]
+    public async Task ChangeItemVariantAsync_ShouldThrowException_WhenWarehouseStockInsufficient()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var oldSkuId = Guid.NewGuid();
+        var newSkuId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(oldSkuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(oldSkuId, Guid.NewGuid(), Guid.NewGuid(), "Old SKU", 50000m, true, 100));
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(newSkuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(newSkuId, Guid.NewGuid(), Guid.NewGuid(), "New SKU", 60000m, true, 100));
+
+        // Warehouse báo hết hàng cho newSkuId
+        _mockFulfillmentClient
+            .Setup(f => f.CheckStockAvailabilityAsync(newSkuId, It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var service = CreateService();
+        var cart = await service.AddItemAsync(buyerId, new AddCartItemRequest(oldSkuId, 2), CancellationToken.None);
+        var cartItemId = cart.Items.First().Id;
+
+        // Act
+        var act = () => service.ChangeItemVariantAsync(buyerId, cartItemId, new ChangeCartItemVariantRequest(newSkuId), CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "INSUFFICIENT_STOCK");
+    }
+
+    [Fact]
+    public async Task ChangeItemVariantAsync_ShouldThrowException_WhenCatalogRejectsVariantSwitchMismatch()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var oldSkuId = Guid.NewGuid();
+        var newSkuId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(oldSkuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(oldSkuId, Guid.NewGuid(), Guid.NewGuid(), "Old SKU", 50000m, true, 100));
+
+        _mockCatalogClient
+            .Setup(c => c.ValidateVariantSwitchAsync(oldSkuId, newSkuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogVariantSwitchResult(false, Guid.NewGuid(), Guid.NewGuid(), newSkuId, "Laptop Sku", 15000000m, true));
+
+        var service = CreateService();
+        var cart = await service.AddItemAsync(buyerId, new AddCartItemRequest(oldSkuId, 1), CancellationToken.None);
+        var cartItemId = cart.Items.First().Id;
+
+        // Act
+        var act = () => service.ChangeItemVariantAsync(buyerId, cartItemId, new ChangeCartItemVariantRequest(newSkuId), CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "CATALOG_VARIANT_MISMATCH");
+    }
+
+    [Fact]
+    public async Task ChangeItemVariantAsync_ShouldUpdateVariant_WhenCatalogSwitchValidationSucceeds()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var oldSkuId = Guid.NewGuid();
+        var newSkuId = Guid.NewGuid();
+        var parentProductId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(oldSkuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(oldSkuId, parentProductId, sellerId, "Áo Polo Đen M", 100000m, true, 100));
+
+        _mockCatalogClient
+            .Setup(c => c.ValidateVariantSwitchAsync(oldSkuId, newSkuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogVariantSwitchResult(true, parentProductId, sellerId, newSkuId, "Áo Polo Trắng L", 120000m, true, 250));
+
+        _mockFulfillmentClient
+            .Setup(f => f.CheckStockAvailabilityAsync(newSkuId, It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var service = CreateService();
+        var cart = await service.AddItemAsync(buyerId, new AddCartItemRequest(oldSkuId, 2), CancellationToken.None);
+        var cartItemId = cart.Items.First().Id;
+
+        // Act
+        var updatedCart = await service.ChangeItemVariantAsync(buyerId, cartItemId, new ChangeCartItemVariantRequest(newSkuId), CancellationToken.None);
+
+        // Assert
+        var item = updatedCart.Items.First(i => i.Id == cartItemId);
+        item.SkuId.Should().Be(newSkuId);
+        item.ProductName.Should().Be("Áo Polo Trắng L");
+        item.UnitPriceSnapshot.Should().Be(120000m);
+        updatedCart.SubtotalAmount.Should().Be(240000m);
+    }
 }

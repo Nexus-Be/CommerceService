@@ -47,7 +47,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
         _logger.LogInformation("[PaymentTimeoutWorker] Background service is stopping.");
     }
 
-    private async Task ProcessExpiredOrdersAsync(CancellationToken ct)
+    internal async Task ProcessExpiredOrdersAsync(CancellationToken ct)
     {
         using var scope = _serviceProvider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ICommerceDbContext>();
@@ -62,64 +62,73 @@ public sealed class PaymentTimeoutWorker : BackgroundService
             .Take(50)
             .ToListAsync(ct);
 
-        if (expiredOrders.Count == 0)
+        if (expiredOrders.Count > 0)
         {
-            return;
-        }
+            _logger.LogInformation("[PaymentTimeoutWorker] Found {Count} expired pending-payment orders to cancel.", expiredOrders.Count);
+            var orderIds = expiredOrders.Select(o => o.Id).ToList();
 
-        _logger.LogInformation("[PaymentTimeoutWorker] Found {Count} expired pending-payment orders to cancel.", expiredOrders.Count);
-
-        foreach (var order in expiredOrders)
-        {
             try
             {
-                order.Status = OrderStatus.Cancelled;
-
-                foreach (var so in order.SubOrders)
+                // 1. Cập nhật trạng thái Order và SubOrder trong bộ nhớ
+                foreach (var order in expiredOrders)
                 {
-                    so.Status = SubOrderStatus.Cancelled;
-                    so.CancelledAt = now;
+                    order.Status = OrderStatus.Cancelled;
 
-                    dbContext.OrderCancellations.Add(new OrderCancellation
+                    foreach (var so in order.SubOrders)
                     {
-                        Id = Guid.NewGuid(),
-                        SubOrderId = so.Id,
-                        CancelledBy = null,
-                        ActorRole = OrderActorRole.System,
-                        ReasonCode = CancellationReasonCode.PaymentTimeout,
-                        ReasonNote = "Payment timeout expired after 15 minutes.",
-                        WasPaid = false,
-                        InventoryReleased = true
-                    });
-                }
+                        so.Status = SubOrderStatus.Cancelled;
+                        so.CancelledAt = now;
 
-                // Giải phóng voucher đã giữ chỗ nếu có
-                var usages = await dbContext.DiscountCodeUsages
-                    .Where(u => u.OrderId == order.Id && u.Status == DiscountUsageStatus.Reserved)
-                    .ToListAsync(ct);
-
-                foreach (var usage in usages)
-                {
-                    usage.Status = DiscountUsageStatus.Released;
-                    usage.ReleasedAt = now;
-
-                    var code = await dbContext.DiscountCodes.FindAsync(new object[] { usage.DiscountCodeId }, ct);
-                    if (code != null)
-                    {
-                        code.ReservedCount = Math.Max(0, code.ReservedCount - 1);
+                        dbContext.OrderCancellations.Add(new OrderCancellation
+                        {
+                            Id = Guid.NewGuid(),
+                            SubOrderId = so.Id,
+                            CancelledBy = null,
+                            ActorRole = OrderActorRole.System,
+                            ReasonCode = CancellationReasonCode.PaymentTimeout,
+                            ReasonNote = "Payment timeout expired after 15 minutes.",
+                            WasPaid = false,
+                            InventoryReleased = true
+                        });
                     }
                 }
 
+                // 2. Batch giải phóng voucher đã giữ chỗ cho tất cả các đơn trong đợt quét
+                var usages = await dbContext.DiscountCodeUsages
+                    .Where(u => u.OrderId.HasValue && orderIds.Contains(u.OrderId.Value) && u.Status == DiscountUsageStatus.Reserved)
+                    .ToListAsync(ct);
+
+                if (usages.Count > 0)
+                {
+                    var discountCodeIds = usages.Select(u => u.DiscountCodeId).Distinct().ToList();
+                    var discountCodes = await dbContext.DiscountCodes
+                        .Where(d => discountCodeIds.Contains(d.Id))
+                        .ToDictionaryAsync(d => d.Id, ct);
+
+                    foreach (var usage in usages)
+                    {
+                        usage.Status = DiscountUsageStatus.Released;
+                        usage.ReleasedAt = now;
+
+                        if (discountCodes.TryGetValue(usage.DiscountCodeId, out var code))
+                        {
+                            code.ReservedCount = Math.Max(0, code.ReservedCount - 1);
+                        }
+                    }
+                }
+
+                // 3. Batch commit toàn bộ thay đổi database bằng 1 lần SaveChangesAsync duy nhất
                 await dbContext.SaveChangesAsync(ct);
+                _logger.LogInformation("[PaymentTimeoutWorker] Successfully persisted cancellations for {Count} expired orders to DB.", expiredOrders.Count);
 
-                // Nhả kho tại Fulfillment Service
-                await fulfillmentClient.ReleaseStockAsync(order.Id, ct);
-
-                _logger.LogInformation("[PaymentTimeoutWorker] Auto-cancelled Order '{OrderId}' and released reserved stock.", order.Id);
+                // 4. Batch nhả kho tại Fulfillment Service bằng 1 cuộc gọi duy nhất (Chống N+1 HTTP calls)
+                await fulfillmentClient.BatchReleaseStockAsync(orderIds, ct);
+                _logger.LogInformation("[PaymentTimeoutWorker] Batch released stock at Fulfillment for {Count} orders: [{OrderIds}].",
+                    orderIds.Count, string.Join(", ", orderIds));
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[PaymentTimeoutWorker] Failed to cancel expired Order '{OrderId}'.", order.Id);
+                _logger.LogError(ex, "[PaymentTimeoutWorker] Error during batch cancellation of expired orders.");
             }
         }
 
@@ -130,31 +139,34 @@ public sealed class PaymentTimeoutWorker : BackgroundService
             .Take(50)
             .ToListAsync(ct);
 
-        foreach (var auctionOrder in expiredAuctionOrders)
+        if (expiredAuctionOrders.Count > 0)
         {
             try
             {
-                auctionOrder.Status = SubOrderStatus.Cancelled;
-                auctionOrder.CancelledAt = now;
-
-                dbContext.OrderCancellations.Add(new OrderCancellation
+                foreach (var auctionOrder in expiredAuctionOrders)
                 {
-                    Id = Guid.NewGuid(),
-                    SubOrderId = auctionOrder.Id,
-                    CancelledBy = null,
-                    ActorRole = OrderActorRole.System,
-                    ReasonCode = CancellationReasonCode.PaymentTimeout,
-                    ReasonNote = "Auction payment deadline expired after 24 hours.",
-                    WasPaid = false,
-                    InventoryReleased = true
-                });
+                    auctionOrder.Status = SubOrderStatus.Cancelled;
+                    auctionOrder.CancelledAt = now;
+
+                    dbContext.OrderCancellations.Add(new OrderCancellation
+                    {
+                        Id = Guid.NewGuid(),
+                        SubOrderId = auctionOrder.Id,
+                        CancelledBy = null,
+                        ActorRole = OrderActorRole.System,
+                        ReasonCode = CancellationReasonCode.PaymentTimeout,
+                        ReasonNote = "Auction payment deadline expired after 24 hours.",
+                        WasPaid = false,
+                        InventoryReleased = true
+                    });
+                }
 
                 await dbContext.SaveChangesAsync(ct);
-                _logger.LogInformation("[PaymentTimeoutWorker] Auto-cancelled expired AuctionOrder '{AuctionOrderId}'.", auctionOrder.Id);
+                _logger.LogInformation("[PaymentTimeoutWorker] Auto-cancelled {Count} expired AuctionOrders in batch.", expiredAuctionOrders.Count);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[PaymentTimeoutWorker] Failed to cancel expired AuctionOrder '{AuctionOrderId}'.", auctionOrder.Id);
+                _logger.LogError(ex, "[PaymentTimeoutWorker] Failed to cancel expired AuctionOrders batch.");
             }
         }
     }

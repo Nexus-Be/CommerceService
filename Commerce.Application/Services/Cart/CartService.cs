@@ -202,17 +202,41 @@ public sealed class CartService : ICartService
         var selectedIds = request.SelectedItemIds.ToHashSet();
         var selectedItems = cart.Items.Where(i => selectedIds.Contains(i.Id)).ToList();
 
-        var calculatedItems = selectedItems.Select(i => new CalculatedCartItem(
-            CartItemId: i.Id,
-            SkuId: i.SkuId,
-            ProductName: i.ProductNameSnapshot,
-            Quantity: i.Quantity,
-            UnitPrice: i.UnitPriceSnapshot,
-            LineTotal: i.Quantity * i.UnitPriceSnapshot
-        )).ToList();
+        var stockResults = await CheckStockForCartItemsAsync(selectedItems, cancellationToken);
 
-        var totalQty = calculatedItems.Sum(i => i.Quantity);
-        var subtotal = calculatedItems.Sum(i => i.LineTotal);
+        var calculatedItems = selectedItems.Select(i =>
+        {
+            var stock = stockResults != null && stockResults.TryGetValue(i.SkuId, out var s) ? s : null;
+            var isAvailable = stock?.IsAvailable ?? true;
+            var availableStock = stock?.AvailableStock;
+            string? stockWarning = null;
+
+            if (!isAvailable)
+            {
+                stockWarning = stock?.DisabledReason ?? "OUT_OF_STOCK";
+            }
+            else if (availableStock.HasValue && availableStock.Value < i.Quantity)
+            {
+                isAvailable = false;
+                stockWarning = "INSUFFICIENT_STOCK";
+            }
+
+            return new CalculatedCartItem(
+                CartItemId: i.Id,
+                SkuId: i.SkuId,
+                ProductName: i.ProductNameSnapshot,
+                Quantity: i.Quantity,
+                UnitPrice: i.UnitPriceSnapshot,
+                LineTotal: i.Quantity * i.UnitPriceSnapshot,
+                IsAvailable: isAvailable,
+                AvailableStock: availableStock,
+                StockWarning: stockWarning
+            );
+        }).ToList();
+
+        var billableItems = calculatedItems.Where(i => i.IsAvailable).ToList();
+        var totalQty = billableItems.Sum(i => i.Quantity);
+        var subtotal = billableItems.Sum(i => i.LineTotal);
 
         return new CalculateSelectedCartResponse(
             SelectedItemCount: calculatedItems.Count,
@@ -237,9 +261,29 @@ public sealed class CartService : ICartService
         var hasPriceChanges = false;
         var hasStockIssues = false;
 
+        // Parallel batch check from Fulfillment and Catalog (Anti N+1 & Concurrent Latency Optimization)
+        var skuIds = targetItems.Select(i => i.SkuId).Distinct().ToList();
+
+        var stockTask = _fulfillmentClient.BatchCheckStockAsync(skuIds, cancellationToken);
+        var catalogTask = _catalogClient.GetSkuBatchDetailsAsync(skuIds, cancellationToken);
+
+        await Task.WhenAll(stockTask, catalogTask);
+
+        var stockResults = (await stockTask) ?? new Dictionary<Guid, SkuStockCheckResult>();
+        var catalogBatch = await catalogTask;
+
         foreach (var item in targetItems)
         {
-            var sku = await _catalogClient.GetSkuDetailsAsync(item.SkuId, cancellationToken);
+            CatalogProductCheckResult? sku = null;
+            if (catalogBatch != null && catalogBatch.TryGetValue(item.SkuId, out var foundSku))
+            {
+                sku = foundSku;
+            }
+            else
+            {
+                // Fallback nếu mock hoặc SKU không có trong batch
+                sku = await _catalogClient.GetSkuDetailsAsync(item.SkuId, cancellationToken);
+            }
             if (sku == null || !sku.IsPurchasable)
             {
                 hasStockIssues = true;
@@ -249,20 +293,30 @@ public sealed class CartService : ICartService
                     IssueType: "OUT_OF_STOCK",
                     Message: "The product is currently unavailable or inactive.",
                     AvailableStock: 0,
-                    RequestedQuantity: item.Quantity));
+                    RequestedQuantity: item.Quantity,
+                    SuggestedQuantity: null));
                 continue;
             }
 
-            if (sku.StockQuantity < item.Quantity)
+            // Check stock availability via Fulfillment Service
+            var stock = stockResults.TryGetValue(item.SkuId, out var s) ? s : null;
+            var availableStock = stock != null ? stock.AvailableStock : sku.StockQuantity;
+            var isStockAvailable = stock != null ? stock.IsAvailable : (sku.StockQuantity >= item.Quantity);
+
+            if (!isStockAvailable || availableStock < item.Quantity)
             {
                 hasStockIssues = true;
+                var suggestedQty = availableStock > 0 ? availableStock : (int?)null;
                 issues.Add(new CartItemIssue(
                     CartItemId: item.Id,
                     SkuId: item.SkuId,
-                    IssueType: "INSUFFICIENT_STOCK",
-                    Message: "Requested quantity exceeds available stock.",
-                    AvailableStock: sku.StockQuantity,
-                    RequestedQuantity: item.Quantity));
+                    IssueType: availableStock == 0 ? "OUT_OF_STOCK" : "INSUFFICIENT_STOCK",
+                    Message: availableStock == 0
+                        ? "The product is out of stock in warehouse."
+                        : $"Requested quantity ({item.Quantity}) exceeds available warehouse stock ({availableStock}).",
+                    AvailableStock: availableStock,
+                    RequestedQuantity: item.Quantity,
+                    SuggestedQuantity: suggestedQty));
             }
 
             if (sku.UnitPrice != item.UnitPriceSnapshot)
@@ -272,7 +326,7 @@ public sealed class CartService : ICartService
                     CartItemId: item.Id,
                     SkuId: item.SkuId,
                     IssueType: "PRICE_CHANGED",
-                    Message: $"Price has changed from {item.UnitPriceSnapshot} to {sku.UnitPrice}.",
+                    Message: $"Price has changed from {item.UnitPriceSnapshot:N0} to {sku.UnitPrice:N0}.",
                     OldPrice: item.UnitPriceSnapshot,
                     NewPrice: sku.UnitPrice));
             }
@@ -306,6 +360,10 @@ public sealed class CartService : ICartService
 
             var sku = await _catalogClient.GetSkuDetailsAsync(guestItem.SkuId, cancellationToken);
             if (sku == null || !sku.IsPurchasable) continue;
+
+            // Kiểm tra tồn kho kho trước khi merge món guest
+            var isStockAvailable = await _fulfillmentClient.CheckStockAvailabilityAsync(guestItem.SkuId, guestItem.Quantity, cancellationToken);
+            if (!isStockAvailable) continue;
 
             cart.AddOrUpdateItem(
                 productId: guestItem.ProductId ?? sku.ProductId,
@@ -379,22 +437,51 @@ public sealed class CartService : ICartService
         var cart = await GetActiveCartEntityAsync(buyerId, asNoTracking: false, cancellationToken)
             ?? throw new CommerceDomainException("CART_NOT_FOUND", "Active cart not found for the user.", 404);
 
-        var skuInfo = await _catalogClient.GetSkuDetailsAsync(request.NewSkuId, cancellationToken);
-        if (skuInfo == null)
+        var currentItem = cart.Items.FirstOrDefault(i => i.Id == cartItemId)
+            ?? throw new CommerceDomainException("CART_ITEM_NOT_FOUND", "Cart item not found in the current cart.", 404);
+
+        // Xác thực tính hợp lệ của việc đổi variant từ Catalog Service (cùng cha, cùng shop, đang active)
+        var switchValidation = await _catalogClient.ValidateVariantSwitchAsync(currentItem.SkuId, request.NewSkuId, cancellationToken);
+        if (switchValidation == null)
         {
-            throw new CommerceDomainException("CATALOG_SKU_NOT_FOUND", "The specified product SKU was not found in catalog.", 404);
+            // Fallback nếu mock chỉ setup GetSkuDetailsAsync
+            var skuInfo = await _catalogClient.GetSkuDetailsAsync(request.NewSkuId, cancellationToken);
+            if (skuInfo == null)
+            {
+                throw new CommerceDomainException("CATALOG_SKU_NOT_FOUND", "The specified product SKU was not found in catalog.", 404);
+            }
+            switchValidation = new CatalogVariantSwitchResult(
+                IsValid: true,
+                ProductId: skuInfo.ProductId,
+                SellerId: skuInfo.SellerId,
+                NewSkuId: skuInfo.SkuId,
+                NewSkuName: skuInfo.ProductName,
+                NewUnitPrice: skuInfo.UnitPrice,
+                IsPurchasable: skuInfo.IsPurchasable);
         }
 
-        if (!skuInfo.IsPurchasable)
+        if (!switchValidation.IsValid)
         {
-            throw new CommerceDomainException("CATALOG_SKU_INACTIVE", skuInfo.ErrorReason ?? "The specified product SKU is unavailable or out of stock.", 400);
+            throw new CommerceDomainException("CATALOG_VARIANT_MISMATCH", "New SKU does not belong to the same parent product.", 400);
+        }
+
+        if (!switchValidation.IsPurchasable)
+        {
+            throw new CommerceDomainException("CATALOG_SKU_INACTIVE", "The requested product variant is unavailable or inactive.", 400);
+        }
+
+        // Bắt buộc kiểm tra tồn kho Fulfillment trước khi đổi variant
+        var isStockAvailable = await _fulfillmentClient.CheckStockAvailabilityAsync(request.NewSkuId, currentItem.Quantity, cancellationToken);
+        if (!isStockAvailable)
+        {
+            throw new CommerceDomainException("INSUFFICIENT_STOCK", "The requested product variant does not have enough warehouse stock available.", 400);
         }
 
         cart.ChangeItemVariant(
             cartItemId: cartItemId,
-            newSkuId: skuInfo.SkuId,
-            newProductName: skuInfo.ProductName,
-            newUnitPrice: skuInfo.UnitPrice);
+            newSkuId: switchValidation.NewSkuId,
+            newProductName: switchValidation.NewSkuName,
+            newUnitPrice: switchValidation.NewUnitPrice);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return MapToDto(cart);

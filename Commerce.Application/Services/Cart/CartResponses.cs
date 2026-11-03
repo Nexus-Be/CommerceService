@@ -37,7 +37,10 @@ public sealed record CalculatedCartItem(
     string ProductName,
     int Quantity,
     decimal UnitPrice,
-    decimal LineTotal);
+    decimal LineTotal,
+    bool IsAvailable = true,
+    int? AvailableStock = null,
+    string? StockWarning = null);
 
 public sealed record CalculateSelectedCartResponse(
     int SelectedItemCount,
@@ -53,7 +56,8 @@ public sealed record CartItemIssue(
     decimal? OldPrice = null,
     decimal? NewPrice = null,
     int? AvailableStock = null,
-    int? RequestedQuantity = null);
+    int? RequestedQuantity = null,
+    int? SuggestedQuantity = null);
 
 public sealed record ValidateCartResponse(
     bool IsValid,
