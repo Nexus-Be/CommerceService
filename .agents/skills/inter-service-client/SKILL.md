@@ -27,6 +27,7 @@ description: Add or modify outbound typed REST clients in CommerceService (port 
 4. **Strict Isolation:** Never reference external assemblies or query other microservice databases directly.
 5. **No Internal API Key:** Inter-service routes use standard public paths. Do not send `X-Internal-Service-Key`.
 6. **Timeout:** Configure a strict 10-second timeout per client.
+7. **W3C Distributed Tracing:** Preserve and propagate `traceparent` headers across calls to WalletService, CatalogService, and FulfillmentService so that payment and checkout spans correlate in Grafana Tempo.
 
 ## Implementation Steps
 
