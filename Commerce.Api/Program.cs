@@ -1,5 +1,6 @@
 using Commerce.Api.Common;
 using Commerce.Api.Extensions;
+using Commerce.Api.Workers;
 using Commerce.Application;
 using Commerce.Infrastructure;
 using Commerce.Infrastructure.Persistence;
@@ -22,6 +23,7 @@ builder.WebHost.ConfigureKestrel(options =>
 // 2. Application & Infrastructure Dependency Injection
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
+builder.Services.AddHostedService<PaymentTimeoutWorker>();
 
 // 3. REST Services
 builder.Services.AddControllers()

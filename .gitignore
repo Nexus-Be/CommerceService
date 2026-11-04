@@ -53,6 +53,9 @@ appsettings*.json
 !appsettings.example.json
 !appsettings.*.example.json
 
+# Personal learning and engineering handbook
+docs/ENGINEERING_HANDBOOK.md
+
 ## AI Agents & Local Customizations
 .agents/*
 !.agents/AGENTS.md
@@ -63,4 +66,3 @@ appsettings*.json
 .agents/plan/
 .agents/history/
 .agents/review/
-
