@@ -3,7 +3,6 @@ namespace Commerce.Infrastructure.Persistence.Seeds;
 using Microsoft.EntityFrameworkCore;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
-using Commerce.Domain.ValueObjects;
 
 public static class CommerceSeedData
 {
@@ -12,7 +11,6 @@ public static class CommerceSeedData
         SeedDiscountCodes(modelBuilder);
         SeedSystemSettings(modelBuilder);
         SeedCarts(modelBuilder);
-        SeedOrders(modelBuilder);
         SeedOperationsAndAudit(modelBuilder);
     }
 
@@ -207,97 +205,11 @@ public static class CommerceSeedData
         );
     }
 
-    public static void SeedOrders(ModelBuilder modelBuilder)
-    {
-        var seedDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        var buyerUserId = Guid.Parse("dddddddd-4444-4444-4444-444444444444");
-        var sellerUserId = Guid.Parse("cccccccc-3333-3333-3333-333333333333");
-
-        var orderId = Guid.Parse("01000000-0000-0000-0000-000000000001");
-        var subOrderId = Guid.Parse("02000000-0000-0000-0000-000000000001");
-
-        // 1. Order (Paid / Completed)
-        modelBuilder.Entity<Order>().HasData(
-            new Order
-            {
-                Id = orderId,
-                BuyerId = buyerUserId,
-                Status = OrderStatus.Paid,
-                TotalAmount = 850000m,
-                PaymentAttemptCount = 1,
-                PaymentDeadlineAt = seedDate.AddDays(1),
-                RowVersion = 1,
-                CreatedAt = seedDate,
-                UpdatedAt = seedDate,
-                IsDeleted = false
-            }
-        );
-
-        // 2. SubOrder
-        modelBuilder.Entity<SubOrder>().HasData(
-            new SubOrder
-            {
-                Id = subOrderId,
-                SubOrderNo = "SUB-20260101-0001",
-                OrderId = orderId,
-                BuyerId = buyerUserId,
-                SellerId = sellerUserId,
-                Status = SubOrderStatus.Completed,
-                PaymentMethod = PaymentMethod.Wallet,
-                ShippingAddress = new ShippingAddressSnapshot("John Buyer", "0900000004", "123 Nguyen Trai", "Thanh Xuan", "Thanh Xuan", "Ha Noi", 1442, "20101", "123 Nguyen Trai, Thanh Xuan, Ha Noi"),
-                ContactPhone = "0900000004",
-                ItemsAmount = 850000m,
-                ProductDiscountAmount = 0m,
-                ShopDiscountAmount = 0m,
-                PlatformMarkupAmount = 0m,
-                SystemDiscountAmount = 0m,
-                ShippingFeeAmount = 0m,
-                TotalAmount = 850000m,
-                SellerReceiveAmount = 807500m,
-                PlatformFeeAmount = 42500m,
-                PaymentDeadlineAt = seedDate.AddDays(1),
-                PaidAt = seedDate,
-                SellerAcceptedAt = seedDate,
-                ShippedAt = seedDate,
-                DeliveredAt = seedDate,
-                CompletedAt = seedDate,
-                RowVersion = 1,
-                CreatedAt = seedDate,
-                UpdatedAt = seedDate,
-                IsDeleted = false
-            }
-        );
-
-        // 3. SubOrderItem (Product 3: Smart Kettle 1.7L)
-        modelBuilder.Entity<SubOrderItem>().HasData(
-            new SubOrderItem
-            {
-                Id = Guid.Parse("03000000-0000-0000-0000-000000000001"),
-                SubOrderId = subOrderId,
-                ProductId = Guid.Parse("33000000-0000-0000-0000-000000000003"), // Smart Kettle
-                SkuId = Guid.Parse("33100000-0000-0000-0000-000000000003"),     // NX-KETTLE-17
-                SellerId = sellerUserId,
-                ProductNameSnapshot = "Ấm Siêu Tốc Thông Minh Nexus 1.7L Trắng Tinh Khôi",
-                SkuCodeSnapshot = "NX-KETTLE-17",
-                SkuAttributesSnapshot = "{}",
-                ImageUrlSnapshot = "https://images.nexus.local/products/kettle-white.png",
-                Quantity = 1,
-                UnitPrice = 850000m,
-                UnitPriceAfterDiscount = 850000m,
-                LineTotal = 850000m,
-                CreatedAt = seedDate,
-                UpdatedAt = seedDate,
-                IsDeleted = false
-            }
-        );
-    }
-
     public static void SeedOperationsAndAudit(ModelBuilder modelBuilder)
     {
         var seedDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
         var buyerUserId = Guid.Parse("dddddddd-4444-4444-4444-444444444444");
         var welcomeVoucherId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd");
-        var orderId = Guid.Parse("01000000-0000-0000-0000-000000000001");
         var subOrderId = Guid.Parse("02000000-0000-0000-0000-000000000001");
 
         // 1. Discount Code Scope (All items applicable)
@@ -308,60 +220,6 @@ public static class CommerceSeedData
                 DiscountCodeId = welcomeVoucherId,
                 ScopeRefType = DiscountScopeRefType.All,
                 ScopeRefId = null,
-                CreatedAt = seedDate,
-                UpdatedAt = seedDate,
-                IsDeleted = false
-            }
-        );
-
-        // 2. Discount Code Usage
-        modelBuilder.Entity<DiscountCodeUsage>().HasData(
-            new DiscountCodeUsage
-            {
-                Id = Guid.Parse("d2000000-0000-0000-0000-000000000001"),
-                DiscountCodeId = welcomeVoucherId,
-                UserId = buyerUserId,
-                OrderId = orderId,
-                SubOrderId = subOrderId,
-                Status = DiscountUsageStatus.Used,
-                DiscountAmount = 50000m,
-                ReservedAt = seedDate,
-                UsedAt = seedDate,
-                CreatedAt = seedDate,
-                UpdatedAt = seedDate,
-                IsDeleted = false
-            }
-        );
-
-        // 3. Order Status History
-        modelBuilder.Entity<OrderStatusHistory>().HasData(
-            new OrderStatusHistory
-            {
-                Id = Guid.Parse("04000000-0000-0000-0000-000000000001"),
-                SubOrderId = subOrderId,
-                FromStatus = SubOrderStatus.Shipped,
-                ToStatus = SubOrderStatus.Completed,
-                ChangedBy = buyerUserId,
-                ActorRole = OrderActorRole.Buyer,
-                Reason = "Khách hàng xác nhận đã nhận hàng thành công",
-                CreatedAt = seedDate,
-                UpdatedAt = seedDate,
-                IsDeleted = false
-            }
-        );
-
-        // 4. Order Invoice
-        modelBuilder.Entity<OrderInvoice>().HasData(
-            new OrderInvoice
-            {
-                Id = Guid.Parse("05000000-0000-0000-0000-000000000001"),
-                InvoiceNo = "INV-20260101-0001",
-                OrderId = orderId,
-                SubOrderId = subOrderId,
-                TotalAmount = 850000m,
-                FileUrl = "https://invoices.nexus.local/INV-20260101-0001.pdf",
-                Status = InvoiceStatus.Generated,
-                IssuedAt = seedDate,
                 CreatedAt = seedDate,
                 UpdatedAt = seedDate,
                 IsDeleted = false

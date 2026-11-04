@@ -615,23 +615,6 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.HasIndex("SubOrderId");
 
                     b.ToTable("DiscountCodeUsages");
-
-                    b.HasData(
-                        new
-                        {
-                            Id = new Guid("d2000000-0000-0000-0000-000000000001"),
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            DiscountAmount = 50000m,
-                            DiscountCodeId = new Guid("dddddddd-dddd-dddd-dddd-dddddddddddd"),
-                            IsDeleted = false,
-                            OrderId = new Guid("01000000-0000-0000-0000-000000000001"),
-                            ReservedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            Status = 1,
-                            SubOrderId = new Guid("02000000-0000-0000-0000-000000000001"),
-                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            UsedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            UserId = new Guid("dddddddd-4444-4444-4444-444444444444")
-                        });
                 });
 
             modelBuilder.Entity("Commerce.Domain.Entities.Order", b =>
@@ -683,21 +666,6 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.HasIndex("CartId");
 
                     b.ToTable("Orders");
-
-                    b.HasData(
-                        new
-                        {
-                            Id = new Guid("01000000-0000-0000-0000-000000000001"),
-                            BuyerId = new Guid("dddddddd-4444-4444-4444-444444444444"),
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            IsDeleted = false,
-                            PaymentAttemptCount = 1,
-                            PaymentDeadlineAt = new DateTimeOffset(new DateTime(2026, 1, 2, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            RowVersion = 1L,
-                            Status = 2,
-                            TotalAmount = 850000m,
-                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
-                        });
                 });
 
             modelBuilder.Entity("Commerce.Domain.Entities.OrderCancellation", b =>
@@ -818,22 +786,6 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("OrderInvoices");
-
-                    b.HasData(
-                        new
-                        {
-                            Id = new Guid("05000000-0000-0000-0000-000000000001"),
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            FileUrl = "https://invoices.nexus.local/INV-20260101-0001.pdf",
-                            InvoiceNo = "INV-20260101-0001",
-                            IsDeleted = false,
-                            IssuedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            OrderId = new Guid("01000000-0000-0000-0000-000000000001"),
-                            Status = 0,
-                            SubOrderId = new Guid("02000000-0000-0000-0000-000000000001"),
-                            TotalAmount = 850000m,
-                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
-                        });
                 });
 
             modelBuilder.Entity("Commerce.Domain.Entities.OrderRefund", b =>
@@ -977,21 +929,6 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.HasIndex("SubOrderId");
 
                     b.ToTable("OrderStatusHistories");
-
-                    b.HasData(
-                        new
-                        {
-                            Id = new Guid("04000000-0000-0000-0000-000000000001"),
-                            ActorRole = 0,
-                            ChangedBy = new Guid("dddddddd-4444-4444-4444-444444444444"),
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            FromStatus = 3,
-                            IsDeleted = false,
-                            Reason = "Khách hàng xác nhận đã nhận hàng thành công",
-                            SubOrderId = new Guid("02000000-0000-0000-0000-000000000001"),
-                            ToStatus = 5,
-                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
-                        });
                 });
 
             modelBuilder.Entity("Commerce.Domain.Entities.SubOrder", b =>
@@ -1074,10 +1011,6 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("ShippedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("ShippingAddress")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
                     b.Property<decimal>("ShippingFeeAmount")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
@@ -1116,39 +1049,6 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("SubOrders");
-
-                    b.HasData(
-                        new
-                        {
-                            Id = new Guid("02000000-0000-0000-0000-000000000001"),
-                            BuyerId = new Guid("dddddddd-4444-4444-4444-444444444444"),
-                            CompletedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            ContactPhone = "0900000004",
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            DeliveredAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            IsDeleted = false,
-                            ItemsAmount = 850000m,
-                            OrderId = new Guid("01000000-0000-0000-0000-000000000001"),
-                            PaidAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            PaymentDeadlineAt = new DateTimeOffset(new DateTime(2026, 1, 2, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            PaymentMethod = 0,
-                            PlatformFeeAmount = 42500m,
-                            PlatformMarkupAmount = 0m,
-                            ProductDiscountAmount = 0m,
-                            RowVersion = 1L,
-                            SellerAcceptedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            SellerId = new Guid("cccccccc-3333-3333-3333-333333333333"),
-                            SellerReceiveAmount = 807500m,
-                            ShippedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            ShippingAddress = "{\"fullName\":\"John Buyer\",\"phone\":\"0900000004\",\"address\":\"123 Nguyen Trai, Thanh Xuan, Ha Noi\"}",
-                            ShippingFeeAmount = 0m,
-                            ShopDiscountAmount = 0m,
-                            Status = 5,
-                            SubOrderNo = "SUB-20260101-0001",
-                            SystemDiscountAmount = 0m,
-                            TotalAmount = 850000m,
-                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
-                        });
                 });
 
             modelBuilder.Entity("Commerce.Domain.Entities.SubOrderItem", b =>
@@ -1221,27 +1121,6 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.HasIndex("SubOrderId");
 
                     b.ToTable("SubOrderItems");
-
-                    b.HasData(
-                        new
-                        {
-                            Id = new Guid("03000000-0000-0000-0000-000000000001"),
-                            CreatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)),
-                            ImageUrlSnapshot = "https://images.nexus.local/products/kettle-white.png",
-                            IsDeleted = false,
-                            LineTotal = 850000m,
-                            ProductId = new Guid("33000000-0000-0000-0000-000000000003"),
-                            ProductNameSnapshot = "Ấm Siêu Tốc Thông Minh Nexus 1.7L Trắng Tinh Khôi",
-                            Quantity = 1,
-                            SellerId = new Guid("cccccccc-3333-3333-3333-333333333333"),
-                            SkuAttributesSnapshot = "{}",
-                            SkuCodeSnapshot = "NX-KETTLE-17",
-                            SkuId = new Guid("33100000-0000-0000-0000-000000000003"),
-                            SubOrderId = new Guid("02000000-0000-0000-0000-000000000001"),
-                            UnitPrice = 850000m,
-                            UnitPriceAfterDiscount = 850000m,
-                            UpdatedAt = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
-                        });
                 });
 
             modelBuilder.Entity("Commerce.Domain.Entities.SystemSetting", b =>
@@ -1534,7 +1413,60 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.OwnsOne("Commerce.Domain.ValueObjects.ShippingAddressSnapshot", "ShippingAddress", b1 =>
+                        {
+                            b1.Property<Guid>("SubOrderId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("ContactPhone")
+                                .IsRequired()
+                                .HasColumnType("text");
+
+                            b1.Property<string>("District")
+                                .IsRequired()
+                                .HasColumnType("text");
+
+                            b1.Property<string>("FullAddressText")
+                                .IsRequired()
+                                .HasColumnType("text");
+
+                            b1.Property<int>("GhnDistrictId")
+                                .HasColumnType("integer");
+
+                            b1.Property<string>("GhnWardCode")
+                                .IsRequired()
+                                .HasColumnType("text");
+
+                            b1.Property<string>("Province")
+                                .IsRequired()
+                                .HasColumnType("text");
+
+                            b1.Property<string>("ReceiverName")
+                                .IsRequired()
+                                .HasColumnType("text");
+
+                            b1.Property<string>("Street")
+                                .IsRequired()
+                                .HasColumnType("text");
+
+                            b1.Property<string>("Ward")
+                                .IsRequired()
+                                .HasColumnType("text");
+
+                            b1.HasKey("SubOrderId");
+
+                            b1.ToTable("SubOrders");
+
+                            b1.ToJson("ShippingAddress");
+
+                            b1.WithOwner()
+                                .HasForeignKey("SubOrderId");
+                        });
+
                     b.Navigation("Order");
+
+                    b.Navigation("ShippingAddress")
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Commerce.Domain.Entities.SubOrderItem", b =>
