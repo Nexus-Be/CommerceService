@@ -1,0 +1,65 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Commerce Delivery Status Callback API",
+    "version": "v1"
+  },
+  "paths": {
+    "/api/v1/sub-orders/{subOrderId}/delivery-status": {
+      "post": {
+        "summary": "Fulfillment Service webhook callback to mark SubOrder as Delivered",
+        "parameters": [
+          {
+            "name": "subOrderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Internal-Service-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["status"],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "example": "Delivered"
+                  },
+                  "deliveredAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Delivery status updated successfully"
+          },
+          "403": {
+            "description": "Forbidden - Invalid or missing X-Internal-Service-Key"
+          },
+          "404": {
+            "description": "SubOrder not found"
+          }
+        }
+      }
+    }
+  }
+}
