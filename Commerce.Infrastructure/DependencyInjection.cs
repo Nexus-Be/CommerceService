@@ -31,6 +31,9 @@ public static class DependencyInjection
 
         services.AddScoped<ICommerceDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
+        // Identity propagation delegating handler for outgoing inter-service HTTP requests
+        services.AddTransient<Services.Common.IdentityPropagationHandler>();
+
         // REST Wallet Client
         var walletBaseUrl = Environment.GetEnvironmentVariable("WALLET_SERVICE_URL")
             ?? configuration["WALLET_SERVICE_URL"]
@@ -44,7 +47,7 @@ public static class DependencyInjection
         {
             client.BaseAddress = new Uri(walletBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
-        });
+        }).AddHttpMessageHandler<Services.Common.IdentityPropagationHandler>();
 
         // REST Catalog Client
         var catalogBaseUrl = Environment.GetEnvironmentVariable("CATALOG_SERVICE_URL")
@@ -57,7 +60,7 @@ public static class DependencyInjection
         {
             client.BaseAddress = new Uri(catalogBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
-        });
+        }).AddHttpMessageHandler<Services.Common.IdentityPropagationHandler>();
 
         return services;
     }
