@@ -45,3 +45,7 @@ public sealed record SellerRejectOrderRequest(
 public sealed record SubOrderRefundRequest(
     string Reason,
     string? Note = null);
+
+public sealed record UpdateDeliveryStatusRequest(
+    string Status,
+    DateTimeOffset? DeliveredAt = null);

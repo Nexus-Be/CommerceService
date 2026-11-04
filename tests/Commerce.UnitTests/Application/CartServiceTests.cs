@@ -450,6 +450,10 @@ public class CartServiceTests : IDisposable
             .Setup(c => c.GetSkuDetailsAsync(newSkuId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CatalogProductCheckResult(newSkuId, Guid.NewGuid(), Guid.NewGuid(), "New SKU", 60000m, true, 100));
 
+        _mockCatalogClient
+            .Setup(c => c.ValidateVariantSwitchAsync(oldSkuId, newSkuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogVariantSwitchResult(true, Guid.NewGuid(), Guid.NewGuid(), newSkuId, "New SKU", 60000m, true, 200));
+
         // Warehouse báo hết hàng cho newSkuId
         _mockFulfillmentClient
             .Setup(f => f.CheckStockAvailabilityAsync(newSkuId, It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -530,5 +534,183 @@ public class CartServiceTests : IDisposable
         item.ProductName.Should().Be("Áo Polo Trắng L");
         item.UnitPriceSnapshot.Should().Be(120000m);
         updatedCart.SubtotalAmount.Should().Be(240000m);
+    }
+
+    [Fact]
+    public async Task GetActiveCart_WhenProductInactiveInCatalog_ShouldSet_IsAvailableFalse_And_PRODUCT_INACTIVE()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuId, productId, sellerId, "Test Product", 50000m, true, 100));
+
+        var service = CreateService();
+        await service.AddItemAsync(buyerId, new AddCartItemRequest(skuId, 1), CancellationToken.None);
+
+        // Catalog returns inactive for batch check
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, CatalogProductCheckResult>
+            {
+                [skuId] = new CatalogProductCheckResult(skuId, productId, sellerId, "Test Product", 50000m, false, 100)
+            });
+
+        _mockFulfillmentClient
+            .Setup(f => f.BatchCheckStockAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, SkuStockCheckResult>
+            {
+                [skuId] = new SkuStockCheckResult(skuId, true, 10, null)
+            });
+
+        // Act
+        var cart = await service.GetActiveCartByBuyerIdAsync(buyerId, CancellationToken.None);
+
+        // Assert
+        cart.Items.Should().HaveCount(1);
+        var cartItem = cart.Items.First();
+        cartItem.IsAvailable.Should().BeFalse();
+        cartItem.DisabledReason.Should().Be("PRODUCT_INACTIVE");
+    }
+
+    [Fact]
+    public async Task GetActiveCart_WhenProductNotFoundInCatalog_ShouldSet_IsAvailableFalse_And_PRODUCT_NOT_FOUND()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuId, productId, sellerId, "Test Product", 50000m, true, 100));
+
+        var service = CreateService();
+        await service.AddItemAsync(buyerId, new AddCartItemRequest(skuId, 1), CancellationToken.None);
+
+        // Catalog returns empty map (SKU deleted/not found)
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, CatalogProductCheckResult>());
+
+        _mockFulfillmentClient
+            .Setup(f => f.BatchCheckStockAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, SkuStockCheckResult>
+            {
+                [skuId] = new SkuStockCheckResult(skuId, true, 10, null)
+            });
+
+        // Act
+        var cart = await service.GetActiveCartByBuyerIdAsync(buyerId, CancellationToken.None);
+
+        // Assert
+        cart.Items.Should().HaveCount(1);
+        var cartItem = cart.Items.First();
+        cartItem.IsAvailable.Should().BeFalse();
+        cartItem.DisabledReason.Should().Be("PRODUCT_NOT_FOUND");
+    }
+
+    [Fact]
+    public async Task GetActiveCart_WhenInactiveAndOutOfStock_ShouldPrioritize_PRODUCT_INACTIVE()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuId, productId, sellerId, "Test Product", 50000m, true, 100));
+
+        var service = CreateService();
+        await service.AddItemAsync(buyerId, new AddCartItemRequest(skuId, 1), CancellationToken.None);
+
+        // Both Inactive AND Out of stock
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, CatalogProductCheckResult>
+            {
+                [skuId] = new CatalogProductCheckResult(skuId, productId, sellerId, "Test Product", 50000m, false, 0)
+            });
+
+        _mockFulfillmentClient
+            .Setup(f => f.BatchCheckStockAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, SkuStockCheckResult>
+            {
+                [skuId] = new SkuStockCheckResult(skuId, false, 0, "OUT_OF_STOCK")
+            });
+
+        // Act
+        var cart = await service.GetActiveCartByBuyerIdAsync(buyerId, CancellationToken.None);
+
+        // Assert: PRODUCT_INACTIVE must take precedence over OUT_OF_STOCK
+        cart.Items.Should().HaveCount(1);
+        var cartItem = cart.Items.First();
+        cartItem.IsAvailable.Should().BeFalse();
+        cartItem.DisabledReason.Should().Be("PRODUCT_INACTIVE");
+    }
+
+    [Fact]
+    public async Task ValidateCartAsync_WhenPriceChangedAndProductInactive_ShouldPersistPriceSnapshotAndFlagIssues()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sku1 = Guid.NewGuid();
+        var sku2 = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(sku1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(sku1, Guid.NewGuid(), sellerId, "Item 1", 100000m, true, 100));
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(sku2, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(sku2, Guid.NewGuid(), sellerId, "Item 2", 50000m, true, 100));
+
+        _mockFulfillmentClient
+            .Setup(f => f.CheckStockAvailabilityAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _mockFulfillmentClient
+            .Setup(f => f.BatchCheckStockAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, SkuStockCheckResult>
+            {
+                [sku1] = new SkuStockCheckResult(sku1, true, 50, null),
+                [sku2] = new SkuStockCheckResult(sku2, true, 50, null)
+            });
+
+        var service = CreateService();
+        await service.AddItemAsync(buyerId, new AddCartItemRequest(sku1, 2), CancellationToken.None);
+        await service.AddItemAsync(buyerId, new AddCartItemRequest(sku2, 1), CancellationToken.None);
+
+        // Catalog returns price change for sku1 (100k -> 120k) and inactive for sku2
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, CatalogProductCheckResult>
+            {
+                [sku1] = new CatalogProductCheckResult(sku1, Guid.NewGuid(), sellerId, "Item 1", 120000m, true, 100),
+                [sku2] = new CatalogProductCheckResult(sku2, Guid.NewGuid(), sellerId, "Item 2", 50000m, false, 100)
+            });
+
+        // Act
+        var result = await service.ValidateCartAsync(buyerId, new ValidateCartRequest(), CancellationToken.None);
+
+        // Assert
+        result.IsValid.Should().BeFalse();
+        result.HasPriceChanges.Should().BeTrue();
+        result.Issues.Should().Contain(i => i.SkuId == sku1 && i.IssueType == "PRICE_CHANGED" && i.NewPrice == 120000m && i.OldPrice == 100000m);
+        result.Issues.Should().Contain(i => i.SkuId == sku2 && i.IssueType == "PRODUCT_INACTIVE");
+
+        // Verify direct database persistence of new snapshot price
+        var dbCart = await _dbContext.Carts.Include(c => c.Items).FirstAsync(c => c.BuyerId == buyerId);
+        var dbItem1 = dbCart.Items.First(i => i.SkuId == sku1);
+        dbItem1.UnitPriceSnapshot.Should().Be(120000m);
+        dbCart.SubtotalAmount.Should().Be(2 * 120000m + 1 * 50000m);
     }
 }

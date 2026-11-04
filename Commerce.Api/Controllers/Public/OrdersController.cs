@@ -174,6 +174,38 @@ public class OrdersController : ControllerBase
         return Ok(new { subOrderId, status = "RefundRequested", requestedAt = DateTimeOffset.UtcNow });
     }
 
+    /// <summary>Webhook callback từ Fulfillment Service cập nhật trạng thái giao hàng của đơn hàng con.</summary>
+    [HttpPost("/api/v1/sub-orders/{subOrderId:guid}/delivery-status")]
+    public async Task<IActionResult> UpdateDeliveryStatus(
+        [FromRoute] Guid subOrderId,
+        [FromBody] UpdateDeliveryStatusRequest request,
+        [FromServices] Microsoft.Extensions.Configuration.IConfiguration configuration,
+        CancellationToken ct)
+    {
+        var expectedKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
+            ?? configuration["INTERNAL_SERVICE_SECRET"]
+            ?? configuration["InternalSecurity:ServiceKey"]
+            ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
+
+        if (!Request.Headers.TryGetValue("X-Internal-Service-Key", out var providedKey) ||
+            !string.Equals(providedKey.ToString(), expectedKey, StringComparison.Ordinal))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                errorCode = "FORBIDDEN",
+                message = "Access denied: Missing or invalid X-Internal-Service-Key header."
+            });
+        }
+
+        await _orderService.UpdateSubOrderDeliveryStatusAsync(subOrderId, request.Status, request.DeliveredAt, ct);
+        return Ok(new
+        {
+            subOrderId,
+            status = request.Status,
+            updatedAt = DateTimeOffset.UtcNow
+        });
+    }
+
     /// <summary>Tương thích ngược: Tra cứu danh sách đơn của buyer.</summary>
     [HttpGet("buyer/{buyerId:guid}")]
     public async Task<IActionResult> ListByBuyer(

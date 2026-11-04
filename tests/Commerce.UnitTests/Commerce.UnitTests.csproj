@@ -32,4 +32,10 @@
     <ProjectReference Include="..\..\Commerce.Api\Commerce.Api.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Contracts\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

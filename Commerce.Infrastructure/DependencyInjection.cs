@@ -48,6 +48,16 @@ public static class DependencyInjection
         {
             client.BaseAddress = new Uri(walletBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
+
+            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
+                ?? configuration["INTERNAL_SERVICE_SECRET"]
+                ?? configuration["InternalSecurity:ServiceKey"]
+                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
+
+            if (!string.IsNullOrWhiteSpace(internalServiceKey))
+            {
+                client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
+            }
         });
 
         // REST Catalog Client
@@ -61,6 +71,16 @@ public static class DependencyInjection
         {
             client.BaseAddress = new Uri(catalogBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
+
+            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
+                ?? configuration["INTERNAL_SERVICE_SECRET"]
+                ?? configuration["InternalSecurity:ServiceKey"]
+                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
+
+            if (!string.IsNullOrWhiteSpace(internalServiceKey))
+            {
+                client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
+            }
         });
 
         // REST Fulfillment Client
@@ -68,12 +88,22 @@ public static class DependencyInjection
             ?? configuration["FULFILLMENT_SERVICE_URL"]
             ?? configuration["Services:Fulfillment:BaseUrl"]
             ?? configuration["FulfillmentService:BaseUrl"]
-            ?? "http://localhost:8005/";
+            ?? "http://localhost:8006/";
 
         services.AddHttpClient<IFulfillmentClient, FulfillmentClient>(client =>
         {
             client.BaseAddress = new Uri(fulfillmentBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
+
+            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
+                ?? configuration["INTERNAL_SERVICE_SECRET"]
+                ?? configuration["InternalSecurity:ServiceKey"]
+                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
+
+            if (!string.IsNullOrWhiteSpace(internalServiceKey))
+            {
+                client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
+            }
         });
 
         return services;

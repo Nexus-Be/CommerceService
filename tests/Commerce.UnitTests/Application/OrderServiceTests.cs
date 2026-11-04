@@ -482,6 +482,336 @@ public class OrderServiceTests
             Times.Once);
     }
 
+    [Fact]
+    public async Task SellerRejectSubOrderAsync_ShouldReleaseStockUsingMasterOrderId_WithCorrectItems()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var masterOrderId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+
+        var order = new Commerce.Domain.Entities.Order
+        {
+            Id = masterOrderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 100000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        var subOrder = new Commerce.Domain.Entities.SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-REJECT-01",
+            OrderId = masterOrderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            Status = SubOrderStatus.Confirmed,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            PaidAt = DateTimeOffset.UtcNow,
+            ShippingAddress = new Commerce.Domain.ValueObjects.ShippingAddressSnapshot("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", "Full Address"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 100000m,
+            TotalAmount = 100000m,
+            SellerReceiveAmount = 100000m,
+            Items = new List<Commerce.Domain.Entities.SubOrderItem>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = subOrderId,
+                    ProductId = Guid.NewGuid(),
+                    SkuId = skuId,
+                    SellerId = sellerId,
+                    ProductNameSnapshot = "Product 1",
+                    Quantity = 2,
+                    UnitPrice = 50000m,
+                    UnitPriceAfterDiscount = 50000m,
+                    LineTotal = 100000m
+                }
+            }
+        };
+
+        order.SubOrders.Add(subOrder);
+        dbContext.Orders.Add(order);
+        await dbContext.SaveChangesAsync();
+
+        var mockFulfillment = new Mock<IFulfillmentClient>();
+        mockFulfillment
+            .Setup(f => f.ReleaseSubOrderStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            mockFulfillment.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        // Act: Shop từ chối đơn hàng con
+        var request = new SellerRejectOrderRequest(subOrderId, CancellationReasonCode.SellerRejected, "Out of stock in shop");
+        await service.SellerRejectSubOrderAsync(sellerId, masterOrderId, request, CancellationToken.None);
+
+        // Assert: Trạng thái sub-order chuyển sang Cancelled
+        var updatedSubOrder = await dbContext.SubOrders.FirstAsync(s => s.Id == subOrderId);
+        updatedSubOrder.Status.Should().Be(SubOrderStatus.Cancelled);
+
+        // VERIFY: Gọi ReleaseSubOrderStockAsync với Master OrderId (không phải SubOrderId)
+        mockFulfillment.Verify(
+            f => f.ReleaseSubOrderStockAsync(
+                masterOrderId,
+                It.Is<List<StockReservationItem>>(items => items.Count == 1 && items[0].SkuId == skuId && items[0].Quantity == 2),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Theory]
+    [InlineData("ReadyToPick")]
+    [InlineData("Picking")]
+    [InlineData("Packed")]
+    public async Task UpdateSubOrderDeliveryStatusAsync_ShouldKeepPreparationStatus_WhenReadyToPickOrPickingOrPacked(string webhookStatus)
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var subOrderId = Guid.NewGuid();
+        var subOrder = new Commerce.Domain.Entities.SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-PREP-01",
+            OrderId = Guid.NewGuid(),
+            BuyerId = Guid.NewGuid(),
+            SellerId = Guid.NewGuid(),
+            Status = SubOrderStatus.Confirmed,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            ContactPhone = "0901234567",
+            ItemsAmount = 50000m,
+            TotalAmount = 50000m,
+            SellerReceiveAmount = 50000m,
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
+        };
+        dbContext.SubOrders.Add(subOrder);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var webhookTime = DateTimeOffset.UtcNow;
+
+        // Act
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrderId, webhookStatus, webhookTime, CancellationToken.None);
+
+        // Assert: Idempotent 200 OK - Status vẫn là Confirmed, UpdatedAt được cập nhật
+        var updated = await dbContext.SubOrders.FirstAsync(s => s.Id == subOrderId);
+        updated.Status.Should().Be(SubOrderStatus.Confirmed);
+        updated.UpdatedAt.Should().BeCloseTo(webhookTime, TimeSpan.FromSeconds(1));
+    }
+
+    [Theory]
+    [InlineData("HandedOver")]
+    [InlineData("InTransit")]
+    [InlineData("Shipped")]
+    public async Task UpdateSubOrderDeliveryStatusAsync_ShouldTransitionToShipped_WhenHandedOverOrInTransitOrShipped(string webhookStatus)
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var subOrderId = Guid.NewGuid();
+        var subOrder = new Commerce.Domain.Entities.SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-SHIP-01",
+            OrderId = Guid.NewGuid(),
+            BuyerId = Guid.NewGuid(),
+            SellerId = Guid.NewGuid(),
+            Status = SubOrderStatus.Confirmed,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            ContactPhone = "0901234567",
+            ItemsAmount = 50000m,
+            TotalAmount = 50000m,
+            SellerReceiveAmount = 50000m
+        };
+        dbContext.SubOrders.Add(subOrder);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var webhookTime = DateTimeOffset.UtcNow;
+
+        // Act
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrderId, webhookStatus, webhookTime, CancellationToken.None);
+
+        // Assert
+        var updated = await dbContext.SubOrders.FirstAsync(s => s.Id == subOrderId);
+        updated.Status.Should().Be(SubOrderStatus.Shipped);
+        updated.ShippedAt.Should().BeCloseTo(webhookTime, TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task UpdateSubOrderDeliveryStatusAsync_ShouldTransitionToDelivered_WhenDelivered()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var subOrderId = Guid.NewGuid();
+        var subOrder = new Commerce.Domain.Entities.SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-DELIV-01",
+            OrderId = Guid.NewGuid(),
+            BuyerId = Guid.NewGuid(),
+            SellerId = Guid.NewGuid(),
+            Status = SubOrderStatus.Shipped,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            ContactPhone = "0901234567",
+            ItemsAmount = 50000m,
+            TotalAmount = 50000m,
+            SellerReceiveAmount = 50000m
+        };
+        dbContext.SubOrders.Add(subOrder);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var webhookTime = DateTimeOffset.UtcNow;
+
+        // Act
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrderId, "Delivered", webhookTime, CancellationToken.None);
+
+        // Assert
+        var updated = await dbContext.SubOrders.FirstAsync(s => s.Id == subOrderId);
+        updated.Status.Should().Be(SubOrderStatus.Delivered);
+        updated.DeliveredAt.Should().BeCloseTo(webhookTime, TimeSpan.FromSeconds(1));
+    }
+
+    [Theory]
+    [InlineData("DeliveryFailed", CancellationReasonCode.DeliveryFailed, "DELIVERY_FAILED")]
+    [InlineData("Returned", CancellationReasonCode.PackageReturned, "PACKAGE_RETURNED")]
+    public async Task UpdateSubOrderDeliveryStatusAsync_ShouldTransitionToCancelledAndCreateRefund_WhenDeliveryFailedOrReturnedAndPaid(
+        string webhookStatus,
+        CancellationReasonCode expectedReasonCode,
+        string expectedRefundReason)
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var masterOrderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+        var paidAt = DateTimeOffset.UtcNow.AddHours(-2);
+
+        var subOrder = new Commerce.Domain.Entities.SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-FAIL-01",
+            OrderId = masterOrderId,
+            BuyerId = Guid.NewGuid(),
+            SellerId = Guid.NewGuid(),
+            Status = SubOrderStatus.Shipped,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            PaidAt = paidAt,
+            ContactPhone = "0901234567",
+            ItemsAmount = 85000m,
+            TotalAmount = 85000m,
+            SellerReceiveAmount = 85000m
+        };
+        dbContext.SubOrders.Add(subOrder);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var webhookTime = DateTimeOffset.UtcNow;
+
+        // Act
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrderId, webhookStatus, webhookTime, CancellationToken.None);
+
+        // Assert: Trạng thái SubOrder chuyển sang Cancelled
+        var updated = await dbContext.SubOrders.FirstAsync(s => s.Id == subOrderId);
+        updated.Status.Should().Be(SubOrderStatus.Cancelled);
+        updated.CancelledAt.Should().BeCloseTo(webhookTime, TimeSpan.FromSeconds(1));
+
+        // Assert: OrderCancellation record
+        var cancellation = await dbContext.OrderCancellations.FirstOrDefaultAsync(c => c.SubOrderId == subOrderId);
+        cancellation.Should().NotBeNull();
+        cancellation!.ReasonCode.Should().Be(expectedReasonCode);
+        cancellation.WasPaid.Should().BeTrue();
+        cancellation.InventoryReleased.Should().BeFalse();
+
+        // Assert: OrderRefund record
+        var refund = await dbContext.OrderRefunds.FirstOrDefaultAsync(r => r.SubOrderId == subOrderId);
+        refund.Should().NotBeNull();
+        refund!.Status.Should().Be(RefundStatus.Requested);
+        refund.ReasonCode.Should().Be(expectedRefundReason);
+        refund.Amount.Should().Be(85000m);
+    }
+
+    [Fact]
+    public async Task UpdateSubOrderDeliveryStatusAsync_ShouldThrow400_WhenInvalidStatus()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var subOrderId = Guid.NewGuid();
+        var subOrder = new Commerce.Domain.Entities.SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-INV-01",
+            OrderId = Guid.NewGuid(),
+            BuyerId = Guid.NewGuid(),
+            SellerId = Guid.NewGuid(),
+            Status = SubOrderStatus.Confirmed,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            ContactPhone = "0901234567",
+            ItemsAmount = 50000m,
+            TotalAmount = 50000m,
+            SellerReceiveAmount = 50000m
+        };
+        dbContext.SubOrders.Add(subOrder);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        // Act & Assert
+        var act = () => service.UpdateSubOrderDeliveryStatusAsync(subOrderId, "InvalidDeliveryStateXYZ", null, CancellationToken.None);
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Which.ErrorCode.Should().Be("INVALID_DELIVERY_STATUS");
+        ex.Which.StatusCode.Should().Be(400);
+    }
+
     private class FailingCommerceDbContext : TestCommerceDbContext
     {
         public FailingCommerceDbContext(DbContextOptions<TestCommerceDbContext> options) : base(options)

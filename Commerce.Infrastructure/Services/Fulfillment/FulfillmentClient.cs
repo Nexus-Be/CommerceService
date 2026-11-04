@@ -89,10 +89,7 @@ public sealed class FulfillmentClient : IFulfillmentClient
         bool callSucceeded = false;
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("api/v1/inventories/by-skus", new
-            {
-                skuIds
-            }, JsonOptions, ct);
+            var response = await _httpClient.PostAsJsonAsync("api/v1/inventories/by-skus", skuIds, JsonOptions, ct);
 
             if (response.IsSuccessStatusCode)
             {
@@ -147,70 +144,109 @@ public sealed class FulfillmentClient : IFulfillmentClient
 
     public async Task<bool> ReserveStockAsync(Guid orderId, List<StockReservationItem> items, int ttlMinutes = 15, CancellationToken ct = default)
     {
+        var payload = new
+        {
+            referenceId = orderId.ToString(),
+            holdMinutes = ttlMinutes,
+            items = items.Select(x => new
+            {
+                skuId = x.SkuId,
+                quantity = x.Quantity
+            }).ToList()
+        };
+
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("api/v1/fulfillment/inventory/reserve", new
-            {
-                orderId,
-                ttlMinutes,
-                items
-            }, ct);
+            var response = await _httpClient.PostAsJsonAsync("api/v1/internal/inventories/reservations", payload, JsonOptions, ct);
 
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogInformation("[REST Fulfillment Client] Stock reserved successfully for Order '{OrderId}' (TTL: {Ttl}m).", orderId, ttlMinutes);
+                _logger.LogInformation("[REST Fulfillment Client] Stock reserved successfully for Order '{OrderId}' (Hold: {Hold}m).", orderId, ttlMinutes);
                 return true;
             }
 
             var errorBody = await response.Content.ReadAsStringAsync(ct);
             _logger.LogWarning("[REST Fulfillment Client] Stock reservation failed for Order '{OrderId}'. Status: {StatusCode}, Details: {Details}",
                 orderId, response.StatusCode, errorBody);
-            return false;
+
+            if (!_failOpen)
+            {
+                return false;
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[REST Fulfillment Client] Connection error reserving stock for Order '{OrderId}'. Dev fallback to true.", orderId);
-            return true; // Dev Fallback
+            _logger.LogWarning(ex, "[REST Fulfillment Client] Connection error reserving stock for Order '{OrderId}'.", orderId);
+            if (!_failOpen)
+            {
+                throw new CommerceDomainException("STOCK_RESERVATION_FAILED", "Warehouse inventory service is temporarily unreachable.", 503);
+            }
         }
+
+        return _failOpen;
     }
 
     public async Task<bool> CommitStockAsync(Guid orderId, CancellationToken ct = default)
     {
-        try
+        const int maxRetries = 3;
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            var response = await _httpClient.PostAsJsonAsync("api/v1/fulfillment/inventory/commit", new { orderId }, ct);
-            if (response.IsSuccessStatusCode)
+            try
             {
-                _logger.LogInformation("[REST Fulfillment Client] Stock committed (deducted) for Order '{OrderId}'.", orderId);
-                return true;
-            }
+                using var emptyContent = new StringContent(string.Empty, System.Text.Encoding.UTF8, "application/json");
+                var response = await _httpClient.PostAsync($"api/v1/internal/inventories/reservations/{orderId}/commit", emptyContent, ct);
+                if (response.IsSuccessStatusCode)
+                {
+                    _logger.LogInformation("[REST Fulfillment Client] Stock committed (deducted) for Order '{OrderId}'.", orderId);
+                    return true;
+                }
 
-            var errorBody = await response.Content.ReadAsStringAsync(ct);
-            _logger.LogError("[REST Fulfillment Client] Stock commit failed for Order '{OrderId}'. Status: {StatusCode}, Details: {Details}",
-                orderId, response.StatusCode, errorBody);
-            return false;
+                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                _logger.LogError("[REST Fulfillment Client] Stock commit returned status {StatusCode} for Order '{OrderId}'. Attempt {Attempt}/{MaxRetries}. Details: {Details}",
+                    response.StatusCode, orderId, attempt, maxRetries, errorBody);
+
+                if ((int)response.StatusCode >= 400 && (int)response.StatusCode < 500 && response.StatusCode != HttpStatusCode.RequestTimeout)
+                {
+                    return false;
+                }
+            }
+            catch (Exception ex) when (attempt < maxRetries)
+            {
+                _logger.LogWarning(ex, "[REST Fulfillment Client] Connection error committing stock for Order '{OrderId}'. Attempt {Attempt}/{MaxRetries}. Retrying in {Delay}ms...",
+                    orderId, attempt, maxRetries, attempt * 200);
+                await Task.Delay(attempt * 200, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[REST Fulfillment Client] Final connection error committing stock for Order '{OrderId}' after {MaxRetries} attempts.", orderId, maxRetries);
+                return false;
+            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "[REST Fulfillment Client] Connection error committing stock for Order '{OrderId}'.", orderId);
-            return false; // Return false thật sự, triệt tiêu silent fallback
-        }
+
+        return false;
     }
 
     public async Task<bool> ReleaseStockAsync(Guid orderId, CancellationToken ct = default)
     {
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("api/v1/fulfillment/inventory/release", new { orderId }, ct);
+            using var emptyContent = new StringContent(string.Empty, System.Text.Encoding.UTF8, "application/json");
+            var response = await _httpClient.PostAsync($"api/v1/internal/inventories/reservations/{orderId}/release?reason=OrderCancelled", emptyContent, ct);
             if (response.IsSuccessStatusCode)
             {
                 _logger.LogInformation("[REST Fulfillment Client] Stock released back to available pool for Order '{OrderId}'.", orderId);
                 return true;
             }
+
+            _logger.LogWarning("[REST Fulfillment Client] Release stock returned status {StatusCode} for Order '{OrderId}'.", response.StatusCode, orderId);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[REST Fulfillment Client] Connection error releasing stock for Order '{OrderId}'.", orderId);
+            if (!_failOpen)
+            {
+                return false;
+            }
         }
 
         return true;
@@ -225,7 +261,7 @@ public sealed class FulfillmentClient : IFulfillmentClient
 
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("api/v1/fulfillment/inventory/batch-release", new
+            var response = await _httpClient.PostAsJsonAsync("api/v1/internal/inventories/reservations/batch-release", new
             {
                 orderIds
             }, JsonOptions, ct);
@@ -260,54 +296,54 @@ public sealed class FulfillmentClient : IFulfillmentClient
 
             _logger.LogWarning("[REST Fulfillment Client] Batch stock release returned status {StatusCode} for {Count} orders.",
                 response.StatusCode, orderIds.Count);
+            throw new CommerceDomainException("STOCK_RELEASE_UNAVAILABLE", "Warehouse inventory service is temporarily unreachable during batch release.", 503);
+        }
+        catch (CommerceDomainException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[REST Fulfillment Client] Connection error batch releasing stock for {Count} orders.", orderIds.Count);
-            if (!_failOpen)
-            {
-                throw new CommerceDomainException("STOCK_RELEASE_UNAVAILABLE", "Warehouse inventory service is temporarily unreachable during batch release.", 503);
-            }
-        }
-
-        if (!_failOpen)
-        {
+            _logger.LogError(ex, "[REST Fulfillment Client] Connection error batch releasing stock for {Count} orders.", orderIds.Count);
             throw new CommerceDomainException("STOCK_RELEASE_UNAVAILABLE", "Warehouse inventory service is temporarily unreachable during batch release.", 503);
         }
-
-        // Dev / Fallback khi _failOpen = true
-        return new BatchReleaseStockResult(orderIds, new List<Guid>(), true);
     }
 
-    public async Task<bool> ReleaseSubOrderStockAsync(Guid subOrderId, List<StockReservationItem> items, CancellationToken ct = default)
+    public async Task<bool> ReleaseSubOrderStockAsync(Guid orderId, List<StockReservationItem> items, CancellationToken ct = default)
     {
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("api/v1/fulfillment/inventory/suborder/release", new
+            var payload = new
             {
-                subOrderId,
-                items
-            }, ct);
-
+                items = items.Select(x => new
+                {
+                    skuId = x.SkuId,
+                    quantity = x.Quantity
+                }).ToList(),
+                reason = "SubOrderRejected"
+            };
+            var response = await _httpClient.PostAsJsonAsync($"api/v1/internal/inventories/reservations/{orderId}/release-items", payload, JsonOptions, ct);
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogInformation("[REST Fulfillment Client] SubOrder stock released for SubOrder '{SubOrderId}' ({Count} items).", subOrderId, items.Count);
+                _logger.LogInformation("[REST Fulfillment Client] SubOrder stock released for Master Order '{OrderId}'.", orderId);
                 return true;
             }
+
+            _logger.LogWarning("[REST Fulfillment Client] Release SubOrder stock returned status {StatusCode} for Master Order '{OrderId}'.", response.StatusCode, orderId);
+            return false;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[REST Fulfillment Client] Connection error releasing SubOrder stock for SubOrder '{SubOrderId}'.", subOrderId);
+            _logger.LogError(ex, "[REST Fulfillment Client] Connection error releasing SubOrder stock for Master Order '{OrderId}'.", orderId);
+            return false;
         }
-
-        return true;
     }
 
     public async Task<decimal> CalculateShopShippingFeeAsync(ShopShippingQuoteRequest request, CancellationToken ct = default)
     {
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("api/v1/fulfillment/shipping/quote", request, ct);
+            var response = await _httpClient.PostAsJsonAsync("api/v1/internal/shipping/quote", request, ct);
             if (response.IsSuccessStatusCode)
             {
                 var feeResult = await response.Content.ReadFromJsonAsync<ShippingFeeResult>(cancellationToken: ct);
@@ -315,38 +351,55 @@ public sealed class FulfillmentClient : IFulfillmentClient
                 {
                     return feeResult.FeeAmount;
                 }
+                throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Fulfillment service returned an empty shipping quote response.", 503);
             }
+
+            if (response.StatusCode == HttpStatusCode.BadRequest)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                _logger.LogWarning("[REST Fulfillment Client] Shipping quote rejected with 400 for Seller '{SellerId}': {Error}", request.SellerId, errorBody);
+                throw new CommerceDomainException("SHIPPING_QUOTE_FAILED", "Invalid shipping destination address or items payload for carrier calculation.", 400);
+            }
+
+            _logger.LogWarning("[REST Fulfillment Client] Shipping quote returned status {StatusCode} for Seller '{SellerId}'.", response.StatusCode, request.SellerId);
+            throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Fulfillment service is temporarily unreachable for shipping fee calculation.", 503);
+        }
+        catch (CommerceDomainException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[REST Fulfillment Client] Connection error calculating shipping fee for Seller '{SellerId}'. Fallback to 30000.", request.SellerId);
+            _logger.LogError(ex, "[REST Fulfillment Client] Connection error calculating shipping fee for Seller '{SellerId}'.", request.SellerId);
+            throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Fulfillment service is temporarily unreachable for shipping fee calculation.", 503);
         }
-
-        // Mặc định cước GHN đồng giá 30.000 VNĐ
-        return 30000m;
     }
 
     public async Task<ShipmentCreationResult> CreateShipmentAsync(Guid subOrderId, CancellationToken ct = default)
     {
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("api/v1/fulfillment/shipments", new { subOrderId }, ct);
+            var response = await _httpClient.PostAsJsonAsync("api/v1/internal/shipments", new { subOrderId }, ct);
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<ShipmentCreationResult>(cancellationToken: ct);
                 if (result != null) return result;
+
+                throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Fulfillment service returned an empty shipment response.", 503);
             }
+
+            _logger.LogWarning("[REST Fulfillment Client] Create shipment returned status {StatusCode} for SubOrder '{SubOrderId}'.", response.StatusCode, subOrderId);
+            throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Unable to create shipment with fulfillment service.", 503);
+        }
+        catch (CommerceDomainException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[REST Fulfillment Client] Connection error creating shipment for SubOrder '{SubOrderId}'.", subOrderId);
+            _logger.LogError(ex, "[REST Fulfillment Client] Connection error creating shipment for SubOrder '{SubOrderId}'.", subOrderId);
+            throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Unable to create shipment with fulfillment service.", 503);
         }
-
-        return new ShipmentCreationResult(
-            TrackingCode: $"GHN-{DateTime.UtcNow:yyyyMMdd}-{subOrderId.ToString()[..6].ToUpperInvariant()}",
-            CarrierCode: "GHN",
-            LabelPrintUrl: $"https://fulfillment.nexus.internal/labels/{subOrderId}.pdf"
-        );
     }
 
     private sealed record StockCheckApiResponse(bool IsAvailable, int AvailableStock);

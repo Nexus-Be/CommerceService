@@ -69,17 +69,18 @@ public sealed class CatalogClient : ICatalogClient
                     {
                         foreach (var item in data.Items)
                         {
-                            // Điều kiện mở bán: Variant Active, Product Active và Price > 0
-                            bool isPurchasable = string.Equals(item.Status, "Active", StringComparison.OrdinalIgnoreCase) &&
-                                                 string.Equals(item.ProductStatus, "Active", StringComparison.OrdinalIgnoreCase) &&
-                                                 item.Price > 0;
+                            // Tôn trọng Single Source of Truth từ CatalogService: nhận trực tiếp IsPurchasable và Price ?? 0m
+                            bool isPurchasable = item.IsPurchasable;
+                            decimal unitPrice = item.Price ?? 0m;
 
                             resultMap[item.VariantId] = new CatalogProductCheckResult(
                                 SkuId: item.VariantId,
                                 ProductId: item.ProductId,
                                 SellerId: item.SellerId,
-                                ProductName: !string.IsNullOrWhiteSpace(item.ProductName) ? item.ProductName : $"Product {item.VariantId.ToString()[..8]}",
-                                UnitPrice: item.Price,
+                                ProductName: !string.IsNullOrWhiteSpace(item.ProductName)
+                                    ? item.ProductName
+                                    : (!string.IsNullOrWhiteSpace(item.VariantName) ? item.VariantName : $"Product {item.VariantId.ToString()[..8]}"),
+                                UnitPrice: unitPrice,
                                 IsPurchasable: isPurchasable,
                                 StockQuantity: 100);
                         }
@@ -88,26 +89,16 @@ public sealed class CatalogClient : ICatalogClient
                 }
 
                 _logger.LogWarning("[REST Catalog Client] Batch lookup returned status {StatusCode} for chunk size {Count}.", response.StatusCode, chunk.Count);
+                throw new CommerceDomainException("CATALOG_SERVICE_UNAVAILABLE", "Product catalog service is temporarily unreachable.", 503);
+            }
+            catch (CommerceDomainException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[REST Catalog Client] Connection error during batch SKU lookup for chunk size {Count}. Fallback to mock data.", chunk.Count);
-            }
-
-            // Fallback cho môi trường offline development / test
-            foreach (var id in chunk)
-            {
-                if (!resultMap.ContainsKey(id))
-                {
-                    resultMap[id] = new CatalogProductCheckResult(
-                        SkuId: id,
-                        ProductId: Guid.NewGuid(),
-                        SellerId: Guid.Parse("11111111-1111-1111-1111-111111111111"),
-                        ProductName: $"Product SKU {id.ToString()[..8]}",
-                        UnitPrice: 100000m,
-                        IsPurchasable: true,
-                        StockQuantity: 100);
-                }
+                _logger.LogError(ex, "[REST Catalog Client] Connection error during batch SKU lookup for chunk size {Count}.", chunk.Count);
+                throw new CommerceDomainException("CATALOG_SERVICE_UNAVAILABLE", "Connection error communicating with product catalog service.", 503);
             }
         }
 
@@ -144,6 +135,8 @@ public sealed class CatalogClient : ICatalogClient
                         IsPurchasable: data.IsPurchasable,
                         WeightGrams: data.WeightGrams > 0 ? data.WeightGrams : 200);
                 }
+
+                throw new CommerceDomainException("CATALOG_SERVICE_UNAVAILABLE", "Product catalog service returned invalid response payload.", 503);
             }
             else if (response.StatusCode == HttpStatusCode.BadRequest)
             {
@@ -180,6 +173,11 @@ public sealed class CatalogClient : ICatalogClient
             {
                 throw new CommerceDomainException("CATALOG_SKU_NOT_FOUND", "The specified product SKU was not found in catalog.", 404);
             }
+            else
+            {
+                _logger.LogWarning("[REST Catalog Client] Variant switch returned status {StatusCode}.", response.StatusCode);
+                throw new CommerceDomainException("CATALOG_SERVICE_UNAVAILABLE", "Product catalog service is temporarily unreachable.", 503);
+            }
         }
         catch (CommerceDomainException)
         {
@@ -187,20 +185,10 @@ public sealed class CatalogClient : ICatalogClient
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[REST Catalog Client] Connection error validating variant switch from '{CurrentSkuId}' to '{NewSkuId}'. Fallback to permissive mock.",
+            _logger.LogError(ex, "[REST Catalog Client] Connection error validating variant switch from '{CurrentSkuId}' to '{NewSkuId}'.",
                 currentSkuId, newSkuId);
+            throw new CommerceDomainException("CATALOG_SERVICE_UNAVAILABLE", "Connection error communicating with product catalog service.", 503);
         }
-
-        // Fallback cho môi trường offline development / mock testing
-        return new CatalogVariantSwitchResult(
-            IsValid: true,
-            ProductId: Guid.NewGuid(),
-            SellerId: Guid.Parse("11111111-1111-1111-1111-111111111111"),
-            NewSkuId: newSkuId,
-            NewSkuName: $"Variant {newSkuId.ToString()[..8]}",
-            NewUnitPrice: 100000m,
-            IsPurchasable: true,
-            WeightGrams: 200);
     }
 
     private sealed class CatalogBatchVariantResponse
@@ -217,12 +205,13 @@ public sealed class CatalogClient : ICatalogClient
         public string? ProductName { get; set; }
         public string? VariantName { get; set; }
         public string? SkuCode { get; set; }
-        public decimal Price { get; set; }
+        public decimal? Price { get; set; }
         public string? Currency { get; set; }
         public string? Status { get; set; }
         public string? ProductStatus { get; set; }
         public string? SaleType { get; set; }
         public string? PrimaryImageUrl { get; set; }
+        public bool IsPurchasable { get; set; }
     }
 
     private sealed class CatalogSwitchRawResponse

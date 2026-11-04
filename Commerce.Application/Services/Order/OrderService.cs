@@ -890,7 +890,7 @@ public sealed class OrderService : IOrderService
             .Select(i => new StockReservationItem(i.SkuId, i.Quantity, so.SellerId))
             .ToList();
 
-        await _fulfillmentClient.ReleaseSubOrderStockAsync(so.Id, itemsToRelease, ct);
+        await _fulfillmentClient.ReleaseSubOrderStockAsync(so.OrderId, itemsToRelease, ct);
     }
 
     public async Task<ShipmentTrackingResponse> GetShipmentTrackingAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default)
@@ -953,6 +953,92 @@ public sealed class OrderService : IOrderService
 
         _dbContext.OrderRefunds.Add(refund);
         await _dbContext.SaveChangesAsync(ct);
+    }
+
+    public async Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, string status, DateTimeOffset? deliveredAt, CancellationToken ct = default)
+    {
+        var so = await _dbContext.SubOrders
+            .FirstOrDefaultAsync(s => s.Id == subOrderId, ct)
+            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
+
+        var timestamp = deliveredAt ?? DateTimeOffset.UtcNow;
+
+        if (string.Equals(status, "ReadyToPick", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(status, "Picking", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(status, "Packed", StringComparison.OrdinalIgnoreCase))
+        {
+            // Preparation phases: Idempotent 200 OK without altering confirmed status
+            so.UpdatedAt = timestamp;
+        }
+        else if (string.Equals(status, "HandedOver", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "InTransit", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "Shipped", StringComparison.OrdinalIgnoreCase))
+        {
+            so.Status = SubOrderStatus.Shipped;
+            so.ShippedAt = timestamp;
+            so.UpdatedAt = timestamp;
+        }
+        else if (string.Equals(status, "Delivered", StringComparison.OrdinalIgnoreCase))
+        {
+            so.Status = SubOrderStatus.Delivered;
+            so.DeliveredAt = timestamp;
+            so.UpdatedAt = timestamp;
+        }
+        else if (string.Equals(status, "Cancelled", StringComparison.OrdinalIgnoreCase))
+        {
+            so.Status = SubOrderStatus.Cancelled;
+            so.CancelledAt = timestamp;
+            so.UpdatedAt = timestamp;
+        }
+        else if (string.Equals(status, "DeliveryFailed", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase))
+        {
+            var isReturned = string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase);
+            so.Status = SubOrderStatus.Cancelled;
+            so.CancelledAt = timestamp;
+            so.UpdatedAt = timestamp;
+
+            var cancellationId = Guid.NewGuid();
+            var cancellation = new OrderCancellation
+            {
+                Id = cancellationId,
+                SubOrderId = so.Id,
+                CancelledBy = null,
+                ActorRole = OrderActorRole.System,
+                ReasonCode = isReturned ? CancellationReasonCode.PackageReturned : CancellationReasonCode.DeliveryFailed,
+                ReasonNote = $"Shipment delivery carrier status: {status}.",
+                WasPaid = so.PaidAt.HasValue,
+                InventoryReleased = false
+            };
+            _dbContext.OrderCancellations.Add(cancellation);
+
+            if (so.PaidAt.HasValue)
+            {
+                var refund = new OrderRefund
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = so.Id,
+                    OrderId = so.OrderId,
+                    CancellationId = cancellationId,
+                    RefundType = RefundType.Full,
+                    Amount = so.TotalAmount,
+                    Status = RefundStatus.Requested,
+                    ReasonCode = isReturned ? "PACKAGE_RETURNED" : "DELIVERY_FAILED",
+                    ReasonNote = $"Automated refund request created due to delivery carrier status: {status}.",
+                    ActorRole = OrderActorRole.System,
+                    RequestedBy = null,
+                    RequestedAt = timestamp
+                };
+                _dbContext.OrderRefunds.Add(refund);
+            }
+        }
+        else
+        {
+            throw new CommerceDomainException("INVALID_DELIVERY_STATUS", "The provided delivery status is not supported.", 400);
+        }
+
+        await _dbContext.SaveChangesAsync(ct);
+        _logger.LogInformation("[OrderService] SubOrder '{SubOrderId}' delivery status updated to '{Status}'.", subOrderId, so.Status);
     }
 
     public async Task<OrderDto> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)

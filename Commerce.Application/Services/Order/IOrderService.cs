@@ -38,6 +38,9 @@ public interface IOrderService
     /// <summary>R99: Khởi tạo yêu cầu hoàn tiền cho đơn con.</summary>
     Task RefundSubOrderAsync(Guid currentUserId, Guid subOrderId, SubOrderRefundRequest request, CancellationToken ct = default);
 
+    /// <summary>Cập nhật trạng thái giao hàng của SubOrder từ Webhook/Fulfillment Service.</summary>
+    Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, string status, DateTimeOffset? deliveredAt, CancellationToken ct = default);
+
     /// <summary>Passive Guard: Kiểm tra và hủy đơn hàng nếu đã quá hạn thanh toán.</summary>
     Task<bool> ExpireOrderIfOverdueAsync(Guid orderId, CancellationToken ct = default);
 

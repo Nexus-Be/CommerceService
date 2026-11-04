@@ -1,15 +1,11 @@
 <!--
 Sync Impact Report
-- Version change: 1.2.0 -> 1.3.0
+- Version change: 1.3.0 -> 1.4.0
 - List of modified principles:
-  - I. Clean Architecture & Direct EF Core Access: Clarified exact entity-to-table mapping for orders hierarchy (Order = checkout_groups, SubOrder = orders, SubOrderItem = order_items).
-  - II. Distributed Sagas via MassTransit State Machine: Enforced CloudEvents v1.0.2 format (source: /services/commerce, type: com.nexus.commerce.*); ratified AuctionSettled event over legacy AuctionWon.
-  - III. Immutable Infrastructure & RESTful API Architecture: Formally adopted API Catalog routes (/api/v1/carts/me, /api/v1/checkout/groups, /api/v1/orders) and mapped 45 SCREAMING_SNAKE_CASE error codes.
-  - Architecture & Persistence Constraints: Added IdempotencyKey entity constraint and documented exact DB invariants from DB_Commerce_v2 (total_amount = seller_receive + platform_fee + shipping_fee).
-- Added sections:
-  - CloudEvents Specification Standard
-  - DB_Commerce_v2 Invariants and Mapping Matrix
-- Removed sections: None
+  - II. Synchronous Typed HTTP REST Orchestration & Transactional Compensation: Formally repealed MassTransit/RabbitMQ Sagas and Outbox tables. Ratified synchronous Typed HTTP REST Orchestration (IWalletClient, ICatalogClient, IFulfillmentClient), fail-closed error handling (no mock fallbacks), and transactional compensation.
+  - III. Immutable Infrastructure & RESTful API Architecture: Removed RabbitMQ from messaging infrastructure. Reaffirmed container port 8003 and PostgreSQL port 5435.
+- Added sections: None
+- Removed sections: CloudEvents Specification Standard, MassTransit Transactional Outbox
 - Follow-up TODOs: None
 -->
 
@@ -28,30 +24,29 @@ The codebase MUST strictly adhere to the 4-layer Clean Architecture (`Commerce.D
   - `SubOrderItem` represents the Order Line Item (line items under SubOrder).
   - `Cart` & `CartItem` represent active buyer carts.
 
-### II. Distributed Sagas via MassTransit & CloudEvents Standard
-CommerceService is the Saga Orchestrator for order placement and checkout across the platform:
+### II. Synchronous Typed HTTP REST Orchestration & Transactional Compensation
+CommerceService coordinates order placement, inventory reservations, payments, and shipments via direct, synchronous Typed HTTP REST Clients:
 - **Bounded Context Boundaries**:
-  - CommerceService DOES NOT own inventory stock; stock reservation is owned by `CatalogService`.
-  - CommerceService DOES NOT own user wallet funds; payment deduction is owned by `WalletService`.
-  - CommerceService DOES NOT own auction bids; it consumes `AuctionSettled` from `AuctionService` to create `AuctionOrder`.
-- **Saga Workflow & CloudEvents Specification**:
-  - All asynchronous messages MUST strictly follow **CloudEvents v1.0.2** (Structured Mode, JSON format):
-    - `source`: `/services/commerce`
-    - `type`: `com.nexus.commerce.<aggregate>.<event-name>.<version>` (e.g. `com.nexus.commerce.cart.item-added.v1`, `com.nexus.commerce.order.created.v1`).
-  - Order submission triggers virtual stock reservation in `CatalogService` and balance deduction in `WalletService`. On failure, the Saga triggers automated compensating transactions (releasing inventory, cancelling orders).
-- **Reliable Messaging via Outbox**:
-  - All integration events MUST be published via the MassTransit 8.3.0 Transactional Outbox (`AddEntityFrameworkOutbox<AppDbContext>`, `UseBusOutbox`) to guarantee atomic database updates and event publishing.
+  - CommerceService DOES NOT own inventory stock; stock reservations, deductions, and releases are coordinated via `IFulfillmentClient` (`api/v1/internal/inventories/reservations`).
+  - CommerceService DOES NOT own user wallet funds; balance deductions and payments are coordinated via `IWalletClient` (`api/v1/internal/wallets`).
+  - CommerceService DOES NOT own product catalog items; catalog validations and price verifications are coordinated via `ICatalogClient` (`api/v1/products/batch`).
+  - CommerceService receives auction outcomes via REST endpoints to manage `AuctionOrder`.
+- **Typed HTTP REST Clients & Fail-Closed Governance**:
+  - All inter-service communications MUST use typed HTTP clients (`IWalletClient`, `ICatalogClient`, `IFulfillmentClient`) injected into feature services.
+  - gRPC, RabbitMQ, MassTransit, Saga State Machines, and Transactional Outbox tables are STRICTLY FORBIDDEN and REPEALED.
+  - Clients MUST operate fail-closed: never fabricate dummy shipping fees (e.g. 30,000 VND), fake carrier tracking codes (e.g. `GHN-...`), or swallow critical errors (`_failOpen = false`). Outbound service failures MUST surface as standard RFC 9110 HTTP 503 `CommerceDomainException`.
+- **Transactional Compensation**:
+  - When multi-step operations fail during checkout or payment (e.g., payment failure after stock reservation), CommerceService MUST execute explicit compensating calls (e.g. releasing reserved inventory via `ReleaseStockAsync` or `BatchReleaseStockAsync`).
 
 ### III. Immutable Infrastructure & RESTful API Architecture
 All deployment, network, and communication configurations are immutable project standards:
 - **Runtime Ports**:
   - **Docker/Container Port**: Port `8003` (`EXPOSE 8003`, `ASPNETCORE_URLS=http://+:8003`).
   - **Local Development**: Port `5105` (HTTP) and `7035` (HTTPS) defined in `launchSettings.json`.
-- **Data & Message Brokers**:
+- **Data Persistence**:
   - **PostgreSQL**: Port `5435`, database name `commerce_db`, user `postgres`.
-  - **RabbitMQ**: Port `5672`, vhost `/`, default user `guest`.
 - **RESTful API Standards**:
-  - Endpoints follow `docs/api_catalog.md` (e.g., `GET /api/v1/carts/me`, `POST /api/v1/carts/me/items`, `PATCH /api/v1/carts/me/items/{cartItemId}`, `POST /api/v1/checkout/groups`, `POST /api/v1/checkout/groups/{groupId}/pay`).
+  - Endpoints follow `docs/api_catalog.md` (e.g., `GET /api/v1/carts/me`, `POST /api/v1/carts/me/items`, `PATCH /api/v1/carts/me/items/{cartItemId}`, `POST /api/v1/orders`, `POST /api/v1/sub-orders/{subOrderId}/delivery-status`).
   - APIs MUST maintain 100% OpenAPI / Swagger specification parity with the API Gateway.
   - **Idempotency Protection**: State-mutating requests (such as Checkout and Order Creation) MUST require an `Idempotency-Key` (UUID) header with 24-hour deduplication stored in the idempotency store.
   - **Response Payload**: Error responses MUST return `application/problem+json` (RFC 9110) formatted with: `type`, `title`, `status`, `errorCode`, `detail`, `traceId`.
@@ -60,7 +55,7 @@ All deployment, network, and communication configurations are immutable project 
 All error messages, exceptions, problem details, and API validation responses MUST adhere strictly to the universal 3-part standard:
 - **100% English**: All human-facing messages MUST be written in clear English (never Vietnamese).
 - **Sentence Case**: Descriptions MUST capitalize only the first letter (e.g., `"Cart item not found in the user cart."`, `"Order cannot be cancelled in its current status."`).
-- **SCREAMING_SNAKE_CASE Codes**: Technical error codes MUST adhere to `docs/gaps_decisions.md` and the 45 standardized error codes (e.g., `VALIDATION_ERROR`, `VAL_IDEMPOTENCY_KEY_REQUIRED`, `CART_NOT_FOUND`, `CHECKOUT_ALREADY_OPEN`, `ORDER_INVALID_STATUS`).
+- **SCREAMING_SNAKE_CASE Codes**: Technical error codes MUST adhere to `docs/gaps_decisions.md` and the standardized error codes (e.g., `VALIDATION_ERROR`, `VAL_IDEMPOTENCY_KEY_REQUIRED`, `CART_NOT_FOUND`, `CHECKOUT_ALREADY_OPEN`, `ORDER_INVALID_STATUS`, `FULFILLMENT_SERVICE_UNAVAILABLE`).
 
 ### V. Self-Contained Repository & Inward-Only Boundaries
 CommerceService is an independent, self-contained Git repository (`Commerce.sln`):
@@ -78,7 +73,7 @@ CommerceService is an independent, self-contained Git repository (`Commerce.sln`
    - Cross-service references (`buyer_id`, `seller_id`, `product_id`, `sku_id`, `wallet_transaction_id`) are stored as raw `Guid` values without foreign keys.
 
 3. **Canonical Enum Naming Policy**:
-   All entity configurations store enum values as strings via `HasConversion<string>()`. Code MUST use canonical enum names:
+   All entity configurations store enum values as strings via `HasConversion<string>()` or PostgreSQL integer enums as configured. Code MUST use canonical enum names:
    - `SubOrderStatus`: Use `Confirmed` (do not use `SellerAccepted`); use `Shipped` (do not use `Shipping`).
    - `DiscountType`: Use `Percentage` and `FixedAmount`.
    - `DiscountScopeType`: Use `System` (do not use `Global`).
@@ -101,4 +96,4 @@ No technical task, code modification, or pull request is complete unless:
 - Any amendment MUST be versioned using Semantic Versioning (SemVer), documented with clear rationale, and accompanied by necessary schema/code migrations.
 - Runtime development rules defined in `AGENTS.md`, `specs/`, and `docs/` serve as active compliance references during implementation.
 
-**Version**: 1.3.0 | **Ratified**: 2026-10-24 | **Last Amended**: 2026-10-29
+**Version**: 1.4.0 | **Ratified**: 2026-10-24 | **Last Amended**: 2026-11-04

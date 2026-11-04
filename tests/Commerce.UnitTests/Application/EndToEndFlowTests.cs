@@ -58,6 +58,22 @@ public class EndToEndFlowTests : IDisposable
             .Setup(c => c.GetSkuDetailsAsync(_sku3, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CatalogProductCheckResult(_sku3, Guid.NewGuid(), _sellerB, "Giày Thể Thao B", 300000m, true, 20));
 
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .Returns<IEnumerable<Guid>, CancellationToken>(async (ids, ct) =>
+            {
+                var dict = new Dictionary<Guid, CatalogProductCheckResult>();
+                foreach (var id in ids)
+                {
+                    var item = await _mockCatalogClient.Object.GetSkuDetailsAsync(id, ct);
+                    if (item != null)
+                    {
+                        dict[id] = item;
+                    }
+                }
+                return dict;
+            });
+
         // Fulfillment setup
         _mockFulfillmentClient
             .Setup(f => f.CheckStockAvailabilityAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -565,9 +581,9 @@ public class EndToEndFlowTests : IDisposable
         refund.Status.Should().Be(RefundStatus.Requested);
         refund.ReasonCode.Should().Be("SELLER_REJECTED");
 
-        // Verify: CHỈ nhả kho của SubOrder A (không nhả kho của SubOrder B)
+        // Verify: CHỈ nhả kho của SubOrder A (không nhả kho của SubOrder B) bằng Master OrderId
         _mockFulfillmentClient.Verify(f => f.ReleaseSubOrderStockAsync(
-            subOrderAId,
+            orderId,
             It.Is<List<StockReservationItem>>(items => items.Count == 1 && items[0].SkuId == _sku1),
             It.IsAny<CancellationToken>()),
             Times.Once);

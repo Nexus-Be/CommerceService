@@ -67,6 +67,17 @@ public sealed class PaymentTimeoutWorker : BackgroundService
             _logger.LogInformation("[PaymentTimeoutWorker] Found {Count} expired pending-payment orders to cancel.", expiredOrders.Count);
             var orderIds = expiredOrders.Select(o => o.Id).ToList();
 
+            bool stockReleased = false;
+            try
+            {
+                var releaseResult = await fulfillmentClient.BatchReleaseStockAsync(orderIds, ct);
+                stockReleased = releaseResult.IsSuccess;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[PaymentTimeoutWorker] Outbound stock release failed for {Count} expired orders; setting InventoryReleased = false.", orderIds.Count);
+            }
+
             try
             {
                 // 1. Cập nhật trạng thái Order và SubOrder trong bộ nhớ
@@ -88,7 +99,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                             ReasonCode = CancellationReasonCode.PaymentTimeout,
                             ReasonNote = "Payment timeout expired after 15 minutes.",
                             WasPaid = false,
-                            InventoryReleased = true
+                            InventoryReleased = stockReleased
                         });
                     }
                 }
@@ -119,12 +130,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
 
                 // 3. Batch commit toàn bộ thay đổi database bằng 1 lần SaveChangesAsync duy nhất
                 await dbContext.SaveChangesAsync(ct);
-                _logger.LogInformation("[PaymentTimeoutWorker] Successfully persisted cancellations for {Count} expired orders to DB.", expiredOrders.Count);
-
-                // 4. Batch nhả kho tại Fulfillment Service bằng 1 cuộc gọi duy nhất (Chống N+1 HTTP calls)
-                await fulfillmentClient.BatchReleaseStockAsync(orderIds, ct);
-                _logger.LogInformation("[PaymentTimeoutWorker] Batch released stock at Fulfillment for {Count} orders: [{OrderIds}].",
-                    orderIds.Count, string.Join(", ", orderIds));
+                _logger.LogInformation("[PaymentTimeoutWorker] Successfully processed cancellations for {Count} expired orders (InventoryReleased: {InventoryReleased}).", expiredOrders.Count, stockReleased);
             }
             catch (Exception ex)
             {

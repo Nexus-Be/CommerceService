@@ -63,8 +63,8 @@ public interface IFulfillmentClient
     /// <summary>Nhả hàng lại cho kho hàng loạt khi nhiều đơn bị Quá hạn thanh toán (chống N+1 HTTP calls).</summary>
     Task<BatchReleaseStockResult> BatchReleaseStockAsync(List<Guid> orderIds, CancellationToken ct = default);
 
-    /// <summary>Nhả hàng cho kho chỉ riêng các món thuộc về 1 SubOrder khi Shop từ chối đơn con.</summary>
-    Task<bool> ReleaseSubOrderStockAsync(Guid subOrderId, List<StockReservationItem> items, CancellationToken ct = default);
+    /// <summary>Nhả hàng cho kho chỉ riêng các món thuộc về 1 SubOrder khi Shop từ chối đơn con (truyền Master orderId và danh sách items).</summary>
+    Task<bool> ReleaseSubOrderStockAsync(Guid orderId, List<StockReservationItem> items, CancellationToken ct = default);
 
     /// <summary>Tính cước phí ship GHN động theo từng Shop khi xem trước báo giá (CHK-01).</summary>
     Task<decimal> CalculateShopShippingFeeAsync(ShopShippingQuoteRequest request, CancellationToken ct = default);

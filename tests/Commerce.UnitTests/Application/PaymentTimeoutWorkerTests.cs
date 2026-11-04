@@ -15,6 +15,7 @@ using Commerce.Api.Workers;
 using Commerce.Application.Interfaces;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
+using Commerce.Domain.Exceptions;
 using Commerce.UnitTests.Common;
 
 public class PaymentTimeoutWorkerTests : IDisposable
@@ -49,7 +50,7 @@ public class PaymentTimeoutWorkerTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessExpiredOrdersAsync_ShouldBatchCancelOrdersAndReleaseStockInSingleCall()
+    public async Task ProcessExpiredOrdersAsync_ShouldActivelyCallBatchReleaseStock_AndSetInventoryReleasedTrue_WhenSuccessful()
     {
         // Arrange: Tạo 2 đơn hàng quá hạn thanh toán
         var now = DateTimeOffset.UtcNow;
@@ -138,18 +139,72 @@ public class PaymentTimeoutWorkerTests : IDisposable
 
         var cancellations = await _dbContext.OrderCancellations.ToListAsync();
         cancellations.Should().HaveCount(2);
+        cancellations.Should().OnlyContain(c => c.InventoryReleased == true);
 
-        // VERIFY: Gọi BatchReleaseStockAsync đúng 1 lần cho cả 2 đơn
+        // VERIFY: Chủ động gọi batch release kho tới FulfillmentService
         _mockFulfillmentClient.Verify(
             f => f.BatchReleaseStockAsync(
-                It.Is<List<Guid>>(ids => ids.Count == 2 && ids.Contains(expiredOrder1.Id) && ids.Contains(expiredOrder2.Id)),
+                It.Is<List<Guid>>(ids => ids.Count == 2 && ids.Contains(orderId1) && ids.Contains(orderId2)),
                 It.IsAny<CancellationToken>()),
             Times.Once);
 
-        // VERIFY: Tuyệt đối KHÔNG gọi hàm đơn lẻ ReleaseStockAsync (Triệt tiêu N+1)
+        // VERIFY: Không gọi đơn lẻ ReleaseStockAsync (tránh N+1)
         _mockFulfillmentClient.Verify(
             f => f.ReleaseStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessExpiredOrdersAsync_ShouldSetInventoryReleasedFalse_WhenBatchReleaseThrowsException()
+    {
+        // Arrange: Setup FulfillmentClient ném lỗi 503 khi nhả kho hàng loạt
+        _mockFulfillmentClient
+            .Setup(f => f.BatchReleaseStockAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new CommerceDomainException("STOCK_RELEASE_UNAVAILABLE", "Warehouse inventory service is temporarily unreachable during batch release.", 503));
+
+        var now = DateTimeOffset.UtcNow;
+        var orderId = Guid.NewGuid();
+        var buyerId = Guid.NewGuid();
+        var expiredOrder = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.PendingPayment,
+            TotalAmount = 70000m,
+            PaymentDeadlineAt = now.AddMinutes(-10),
+            SubOrders = new List<SubOrder>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderNo = "SO-FAIL-001",
+                    OrderId = orderId,
+                    BuyerId = buyerId,
+                    SellerId = Guid.NewGuid(),
+                    Status = SubOrderStatus.PendingPayment,
+                    PaymentMethod = PaymentMethod.Wallet,
+                    ContactPhone = "0901234567",
+                    PaymentDeadlineAt = now.AddMinutes(-10)
+                }
+            }
+        };
+
+        _dbContext.Orders.Add(expiredOrder);
+        await _dbContext.SaveChangesAsync();
+
+        var worker = new PaymentTimeoutWorker(_mockServiceProvider.Object, NullLogger<PaymentTimeoutWorker>.Instance);
+
+        // Act: Chạy worker
+        await worker.ProcessExpiredOrdersAsync(CancellationToken.None);
+
+        // Assert: Đơn vẫn hủy thành công nhưng cờ InventoryReleased được ghi nhận là false (resilience flag)
+        var orderInDb = await _dbContext.Orders.Include(o => o.SubOrders).FirstAsync(o => o.Id == orderId);
+        orderInDb.Status.Should().Be(OrderStatus.Cancelled);
+        orderInDb.SubOrders.First().Status.Should().Be(SubOrderStatus.Cancelled);
+
+        var cancellations = await _dbContext.OrderCancellations.ToListAsync();
+        cancellations.Should().HaveCount(1);
+        cancellations.First().InventoryReleased.Should().BeFalse();
     }
 
     [Fact]

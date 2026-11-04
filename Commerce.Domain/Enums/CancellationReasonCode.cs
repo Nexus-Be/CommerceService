@@ -6,5 +6,7 @@ public enum CancellationReasonCode
     OutOfStock = 1,
     PaymentTimeout = 2,
     SellerRejected = 3,
-    Other = 4
+    Other = 4,
+    DeliveryFailed = 5,
+    PackageReturned = 6
 }

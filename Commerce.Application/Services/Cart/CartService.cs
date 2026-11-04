@@ -32,8 +32,8 @@ public sealed class CartService : ICartService
         var cart = await GetActiveCartEntityAsync(buyerId, asNoTracking: true, cancellationToken)
             ?? throw new EntityNotFoundException("CART_NOT_FOUND", "Cart", buyerId);
 
-        var stockResults = await CheckStockForCartItemsAsync(cart.Items, cancellationToken);
-        return MapToDto(cart, stockResults);
+        var (stockResults, catalogResults) = await CheckStockAndCatalogForCartItemsAsync(cart.Items, cancellationToken);
+        return MapToDto(cart, stockResults, catalogResults);
     }
 
     public async Task<CartDto> GetOrCreateActiveCartAsync(Guid buyerId, CancellationToken cancellationToken = default)
@@ -65,8 +65,8 @@ public sealed class CartService : ICartService
             }
         }
 
-        var stockResults = await CheckStockForCartItemsAsync(cart.Items, cancellationToken);
-        return MapToDto(cart, stockResults);
+        var (stockResults, catalogResults) = await CheckStockAndCatalogForCartItemsAsync(cart.Items, cancellationToken);
+        return MapToDto(cart, stockResults, catalogResults);
     }
 
     public async Task<CartDto> AddItemAsync(Guid buyerId, AddCartItemRequest request, CancellationToken cancellationToken = default)
@@ -247,7 +247,7 @@ public sealed class CartService : ICartService
 
     public async Task<ValidateCartResponse> ValidateCartAsync(Guid buyerId, ValidateCartRequest request, CancellationToken cancellationToken = default)
     {
-        var cart = await GetActiveCartEntityAsync(buyerId, asNoTracking: true, cancellationToken);
+        var cart = await GetActiveCartEntityAsync(buyerId, asNoTracking: false, cancellationToken);
         if (cart == null || cart.Items.Count == 0)
         {
             return new ValidateCartResponse(true, false, false, Array.Empty<CartItemIssue>());
@@ -260,6 +260,7 @@ public sealed class CartService : ICartService
         var issues = new List<CartItemIssue>();
         var hasPriceChanges = false;
         var hasStockIssues = false;
+        var hasDbUpdates = false;
 
         // Parallel batch check from Fulfillment and Catalog (Anti N+1 & Concurrent Latency Optimization)
         var skuIds = targetItems.Select(i => i.SkuId).Distinct().ToList();
@@ -281,17 +282,32 @@ public sealed class CartService : ICartService
             }
             else
             {
-                // Fallback nếu mock hoặc SKU không có trong batch
+                // Fallback nếu SKU không có trong batch
                 sku = await _catalogClient.GetSkuDetailsAsync(item.SkuId, cancellationToken);
             }
-            if (sku == null || !sku.IsPurchasable)
+
+            if (sku == null)
             {
                 hasStockIssues = true;
                 issues.Add(new CartItemIssue(
                     CartItemId: item.Id,
                     SkuId: item.SkuId,
-                    IssueType: "OUT_OF_STOCK",
-                    Message: "The product is currently unavailable or inactive.",
+                    IssueType: "PRODUCT_NOT_FOUND",
+                    Message: "The product variant was not found in catalog.",
+                    AvailableStock: 0,
+                    RequestedQuantity: item.Quantity,
+                    SuggestedQuantity: null));
+                continue;
+            }
+
+            if (!sku.IsPurchasable)
+            {
+                hasStockIssues = true;
+                issues.Add(new CartItemIssue(
+                    CartItemId: item.Id,
+                    SkuId: item.SkuId,
+                    IssueType: "PRODUCT_INACTIVE",
+                    Message: "This product variant is no longer active or available for sale.",
                     AvailableStock: 0,
                     RequestedQuantity: item.Quantity,
                     SuggestedQuantity: null));
@@ -322,14 +338,26 @@ public sealed class CartService : ICartService
             if (sku.UnitPrice != item.UnitPriceSnapshot)
             {
                 hasPriceChanges = true;
+                var oldPrice = item.UnitPriceSnapshot;
+                item.UnitPriceSnapshot = sku.UnitPrice;
+                item.UpdatedAt = DateTimeOffset.UtcNow;
+                hasDbUpdates = true;
+
                 issues.Add(new CartItemIssue(
                     CartItemId: item.Id,
                     SkuId: item.SkuId,
                     IssueType: "PRICE_CHANGED",
-                    Message: $"Price has changed from {item.UnitPriceSnapshot:N0} to {sku.UnitPrice:N0}.",
-                    OldPrice: item.UnitPriceSnapshot,
+                    Message: $"Price has changed from {oldPrice:N0} to {sku.UnitPrice:N0}.",
+                    OldPrice: oldPrice,
                     NewPrice: sku.UnitPrice));
             }
+        }
+
+        if (hasDbUpdates)
+        {
+            cart.SubtotalAmount = cart.Items.Sum(i => i.Quantity * i.UnitPriceSnapshot);
+            cart.LastActivityAt = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(cancellationToken);
         }
 
         var isValid = issues.Count == 0;
@@ -392,7 +420,7 @@ public sealed class CartService : ICartService
                 Shops: Array.Empty<ShopCartGroupResponse>());
         }
 
-        var stockResults = await CheckStockForCartItemsAsync(cart.Items, cancellationToken);
+        var (stockResults, catalogResults) = await CheckStockAndCatalogForCartItemsAsync(cart.Items, cancellationToken);
 
         var shopGroups = cart.Items
             .GroupBy(i => i.SellerId)
@@ -404,9 +432,32 @@ public sealed class CartService : ICartService
                 ShopSubtotal: g.Sum(x => x.Quantity * x.UnitPriceSnapshot),
                 Items: g.Select(i =>
                 {
-                    var stock = stockResults.TryGetValue(i.SkuId, out var s) ? s : null;
-                    var isAvailable = stock?.IsAvailable ?? true;
-                    var disabledReason = !isAvailable ? (stock?.DisabledReason ?? "OUT_OF_STOCK") : null;
+                    stockResults.TryGetValue(i.SkuId, out var stock);
+                    CatalogProductCheckResult? catalog = null;
+                    bool hasCatalogResults = catalogResults != null;
+                    if (hasCatalogResults)
+                    {
+                        catalogResults!.TryGetValue(i.SkuId, out catalog);
+                    }
+
+                    bool isAvailable = true;
+                    string? disabledReason = null;
+
+                    if (hasCatalogResults && catalog == null)
+                    {
+                        isAvailable = false;
+                        disabledReason = "PRODUCT_NOT_FOUND";
+                    }
+                    else if (catalog != null && !catalog.IsPurchasable)
+                    {
+                        isAvailable = false;
+                        disabledReason = "PRODUCT_INACTIVE";
+                    }
+                    else if (stock != null && (!stock.IsAvailable || stock.AvailableStock <= 0))
+                    {
+                        isAvailable = false;
+                        disabledReason = stock.DisabledReason ?? "OUT_OF_STOCK";
+                    }
 
                     return new CartItemResponse(
                         i.Id,
@@ -442,25 +493,7 @@ public sealed class CartService : ICartService
 
         // Xác thực tính hợp lệ của việc đổi variant từ Catalog Service (cùng cha, cùng shop, đang active)
         var switchValidation = await _catalogClient.ValidateVariantSwitchAsync(currentItem.SkuId, request.NewSkuId, cancellationToken);
-        if (switchValidation == null)
-        {
-            // Fallback nếu mock chỉ setup GetSkuDetailsAsync
-            var skuInfo = await _catalogClient.GetSkuDetailsAsync(request.NewSkuId, cancellationToken);
-            if (skuInfo == null)
-            {
-                throw new CommerceDomainException("CATALOG_SKU_NOT_FOUND", "The specified product SKU was not found in catalog.", 404);
-            }
-            switchValidation = new CatalogVariantSwitchResult(
-                IsValid: true,
-                ProductId: skuInfo.ProductId,
-                SellerId: skuInfo.SellerId,
-                NewSkuId: skuInfo.SkuId,
-                NewSkuName: skuInfo.ProductName,
-                NewUnitPrice: skuInfo.UnitPrice,
-                IsPurchasable: skuInfo.IsPurchasable);
-        }
-
-        if (!switchValidation.IsValid)
+        if (switchValidation == null || !switchValidation.IsValid)
         {
             throw new CommerceDomainException("CATALOG_VARIANT_MISMATCH", "New SKU does not belong to the same parent product.", 400);
         }
@@ -517,6 +550,24 @@ public sealed class CartService : ICartService
         return await query.FirstOrDefaultAsync(c => c.BuyerId == buyerId && c.Status == CartStatus.Active, cancellationToken);
     }
 
+    private async Task<(Dictionary<Guid, SkuStockCheckResult> StockResults, IReadOnlyDictionary<Guid, CatalogProductCheckResult> CatalogResults)> CheckStockAndCatalogForCartItemsAsync(
+        ICollection<CartItem> items, CancellationToken cancellationToken)
+    {
+        if (items == null || items.Count == 0)
+        {
+            return (new Dictionary<Guid, SkuStockCheckResult>(), new Dictionary<Guid, CatalogProductCheckResult>());
+        }
+
+        var skuIds = items.Select(i => i.SkuId).Distinct().ToList();
+        var stockTask = _fulfillmentClient.BatchCheckStockAsync(skuIds, cancellationToken);
+        var catalogTask = _catalogClient.GetSkuBatchDetailsAsync(skuIds, cancellationToken);
+
+        await Task.WhenAll(stockTask, catalogTask);
+        var stockResults = await stockTask;
+        var catalogResults = await catalogTask;
+        return (stockResults ?? new Dictionary<Guid, SkuStockCheckResult>(), catalogResults ?? new Dictionary<Guid, CatalogProductCheckResult>());
+    }
+
     private async Task<Dictionary<Guid, SkuStockCheckResult>> CheckStockForCartItemsAsync(
         ICollection<CartItem> items, CancellationToken cancellationToken)
     {
@@ -529,13 +580,44 @@ public sealed class CartService : ICartService
         return await _fulfillmentClient.BatchCheckStockAsync(skuIds, cancellationToken);
     }
 
-    private static CartDto MapToDto(Cart cart, Dictionary<Guid, SkuStockCheckResult>? stockResults = null)
+    private static CartDto MapToDto(
+        Cart cart,
+        Dictionary<Guid, SkuStockCheckResult>? stockResults = null,
+        IReadOnlyDictionary<Guid, CatalogProductCheckResult>? catalogResults = null)
     {
         var items = cart.Items.Select(i =>
         {
-            var stock = stockResults != null && stockResults.TryGetValue(i.SkuId, out var s) ? s : null;
-            var isAvailable = stock?.IsAvailable ?? true;
-            var disabledReason = !isAvailable ? (stock?.DisabledReason ?? "OUT_OF_STOCK") : null;
+            SkuStockCheckResult? stock = null;
+            if (stockResults != null)
+            {
+                stockResults.TryGetValue(i.SkuId, out stock);
+            }
+
+            CatalogProductCheckResult? catalog = null;
+            bool hasCatalogResults = catalogResults != null;
+            if (hasCatalogResults)
+            {
+                catalogResults!.TryGetValue(i.SkuId, out catalog);
+            }
+
+            bool isAvailable = true;
+            string? disabledReason = null;
+
+            if (hasCatalogResults && catalog == null)
+            {
+                isAvailable = false;
+                disabledReason = "PRODUCT_NOT_FOUND";
+            }
+            else if (catalog != null && !catalog.IsPurchasable)
+            {
+                isAvailable = false;
+                disabledReason = "PRODUCT_INACTIVE";
+            }
+            else if (stock != null && (!stock.IsAvailable || stock.AvailableStock <= 0))
+            {
+                isAvailable = false;
+                disabledReason = stock.DisabledReason ?? "OUT_OF_STOCK";
+            }
 
             return new CartItemDto(
                 i.Id,

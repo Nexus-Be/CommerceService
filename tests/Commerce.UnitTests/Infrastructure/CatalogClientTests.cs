@@ -56,7 +56,8 @@ public class CatalogClientTests
                     sellerId = sellerId,
                     productName = "Laptop Dell",
                     variantName = "Core i5",
-                    price = 15000000m,
+                    price = (decimal?)15000000m,
+                    isPurchasable = true,
                     status = "Active",
                     productStatus = "Active"
                 },
@@ -67,7 +68,8 @@ public class CatalogClientTests
                     sellerId = sellerId,
                     productName = "Laptop Dell Inactive",
                     variantName = "Core i7",
-                    price = 20000000m,
+                    price = (decimal?)null,
+                    isPurchasable = false,
                     status = "Inactive",
                     productStatus = "Active"
                 }
@@ -89,7 +91,45 @@ public class CatalogClientTests
         result[sku1].UnitPrice.Should().Be(15000000m);
         result[sku1].SellerId.Should().Be(sellerId);
 
-        result[sku2].IsPurchasable.Should().BeFalse(); // Do status = Inactive
+        result[sku2].IsPurchasable.Should().BeFalse();
+        result[sku2].UnitPrice.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task GetSkuBatchDetailsAsync_ShouldThrow503_WhenCatalogReturns500()
+    {
+        // Arrange
+        var (client, _) = CreateClientWithMockHandler(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+
+        // Act
+        var act = () => client.GetSkuBatchDetailsAsync(new[] { Guid.NewGuid() });
+
+        // Assert
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Where(e => e.ErrorCode == "CATALOG_SERVICE_UNAVAILABLE" && e.StatusCode == 503);
+    }
+
+    [Fact]
+    public async Task GetSkuBatchDetailsAsync_ShouldThrow503_WhenNetworkFails()
+    {
+        // Arrange
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new HttpRequestException("Connection refused"));
+
+        var httpClient = new HttpClient(mockHandler.Object) { BaseAddress = new Uri("http://localhost:8002/") };
+        var client = new CatalogClient(httpClient, NullLogger<CatalogClient>.Instance);
+
+        // Act
+        var act = () => client.GetSkuBatchDetailsAsync(new[] { Guid.NewGuid() });
+
+        // Assert
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Where(e => e.ErrorCode == "CATALOG_SERVICE_UNAVAILABLE" && e.StatusCode == 503);
     }
 
     [Fact]
@@ -153,5 +193,42 @@ public class CatalogClientTests
         // Assert
         var ex = await act.Should().ThrowAsync<CommerceDomainException>();
         ex.Where(e => e.ErrorCode == "CATALOG_VARIANT_MISMATCH" && e.StatusCode == 400);
+    }
+
+    [Fact]
+    public async Task ValidateVariantSwitchAsync_ShouldThrow503_WhenCatalogReturns500()
+    {
+        // Arrange
+        var (client, _) = CreateClientWithMockHandler(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+
+        // Act
+        var act = () => client.ValidateVariantSwitchAsync(Guid.NewGuid(), Guid.NewGuid());
+
+        // Assert
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Where(e => e.ErrorCode == "CATALOG_SERVICE_UNAVAILABLE" && e.StatusCode == 503);
+    }
+
+    [Fact]
+    public async Task ValidateVariantSwitchAsync_ShouldThrow503_WhenNetworkFails()
+    {
+        // Arrange
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new HttpRequestException("Connection reset"));
+
+        var httpClient = new HttpClient(mockHandler.Object) { BaseAddress = new Uri("http://localhost:8002/") };
+        var client = new CatalogClient(httpClient, NullLogger<CatalogClient>.Instance);
+
+        // Act
+        var act = () => client.ValidateVariantSwitchAsync(Guid.NewGuid(), Guid.NewGuid());
+
+        // Assert
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Where(e => e.ErrorCode == "CATALOG_SERVICE_UNAVAILABLE" && e.StatusCode == 503);
     }
 }

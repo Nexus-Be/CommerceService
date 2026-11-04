@@ -1,4 +1,9 @@
-# ĐẶC TẢ SỰ KIỆN (EVENTS), CẤU HÌNH (CONFIGS) VÀ GIAO TIẾP BẤT ĐỒNG BỘ – COMMERCE SERVICE
+> [!WARNING]
+> **DEPRECATED DOCUMENTATION (ARCHITECTURAL MIGRATION - 2026-11-04)**  
+> Tài liệu này mô tả mô hình sự kiện bất đồng bộ cũ (MassTransit, RabbitMQ, Saga và Outbox/Inbox tables). Hệ thống `CommerceService` đã bãi bỏ hoàn toàn RabbitMQ/MassTransit và chuyển đổi 100% sang **Synchronous Typed HTTP REST Orchestration** (`IWalletClient`, `ICatalogClient`, `IFulfillmentClient`) và cơ chế bù trừ giao dịch (Transactional Compensation).  
+> Tham khảo các hợp đồng REST chính thức tại [docs/api_catalog.md](file:///d:/CommerceService/docs/api_catalog.md), [specs/02_API_REST_CONTRACTS.md](file:///d:/CommerceService/specs/02_API_REST_CONTRACTS.md) và Hiến pháp hệ thống tại [.specify/memory/constitution.md](file:///d:/CommerceService/.specify/memory/constitution.md) (v1.4.0).
+
+# ĐẶC TẢ SỰ KIỆN (EVENTS), CẤU HÌNH (CONFIGS) VÀ GIAO TIẾP BẤT ĐỒNG BỘ – COMMERCE SERVICE (DEPRECATED)
 
 | Mục | Giá trị |
 |---|---|
