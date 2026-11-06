@@ -874,13 +874,39 @@ public sealed class OrderService : IOrderService
                 Amount = so.TotalAmount,
                 Status = RefundStatus.Requested,
                 ReasonCode = "SELLER_REJECTED",
-                ReasonNote = request.ReasonText ?? "Shop rejected sub-order after payment. Pending manual refund reconciliation as WalletService lacks automated refund API.",
+                ReasonNote = request.ReasonText ?? "Shop rejected sub-order after payment.",
                 ActorRole = OrderActorRole.Seller,
                 RequestedBy = sellerId,
                 RequestedAt = DateTimeOffset.UtcNow
             };
+
+            try
+            {
+                var refundSucceeded = await _walletClient.RefundSubOrderPaymentAsync(
+                    so.Id,
+                    so.BuyerId.ToString(),
+                    so.TotalAmount,
+                    request.ReasonText ?? "Shop rejected sub-order after payment.",
+                    idempotencyKey: $"refund-suborder-{so.Id}",
+                    cancellationToken: ct);
+
+                if (refundSucceeded)
+                {
+                    refund.Status = RefundStatus.Completed;
+                    refund.CompletedAt = DateTimeOffset.UtcNow;
+                    _logger.LogInformation("SubOrder '{SubOrderId}' refund succeeded automatically via WalletClient. Amount: {Amount}", so.Id, so.TotalAmount);
+                }
+                else
+                {
+                    _logger.LogWarning("SubOrder '{SubOrderId}' automated wallet refund returned false. Flagged as Requested for manual reconciliation.", so.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to automatically refund wallet balance for SubOrder '{SubOrderId}'. Flagged as Requested.", so.Id);
+            }
+
             _dbContext.OrderRefunds.Add(refund);
-            _logger.LogInformation("SubOrder '{SubOrderId}' was paid. Created refund request '{RefundId}' for manual processing (no automatic refund API on WalletService).", so.Id, refundId);
         }
 
         await _dbContext.SaveChangesAsync(ct);
@@ -891,6 +917,108 @@ public sealed class OrderService : IOrderService
             .ToList();
 
         await _fulfillmentClient.ReleaseSubOrderStockAsync(so.OrderId, itemsToRelease, ct);
+    }
+
+    public async Task<ConfirmReceiptResponse> BuyerConfirmSubOrderReceiptAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default)
+    {
+        var so = await _dbContext.SubOrders
+            .FirstOrDefaultAsync(s => s.Id == subOrderId, ct)
+            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
+
+        if (so.BuyerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to confirm this sub-order.", 403);
+        }
+
+        if (so.Status != SubOrderStatus.Delivered && so.Status != SubOrderStatus.Shipped)
+        {
+            throw new CommerceDomainException("INVALID_STATUS", "Sub-order cannot be confirmed in its current status.");
+        }
+
+        var completedAt = DateTimeOffset.UtcNow;
+        so.Status = SubOrderStatus.Completed;
+        so.CompletedAt = completedAt;
+        so.UpdatedAt = completedAt;
+
+        bool settled = false;
+        try
+        {
+            settled = await _walletClient.SettleSellerSubOrderAsync(
+                so.Id,
+                so.SellerId,
+                so.SellerReceiveAmount,
+                idempotencyKey: $"settle-{so.Id}",
+                cancellationToken: ct);
+
+            if (settled)
+            {
+                _logger.LogInformation("Escrow funds settled successfully for SubOrder '{SubOrderId}', Seller '{SellerId}', Amount: {Amount}", so.Id, so.SellerId, so.SellerReceiveAmount);
+            }
+            else
+            {
+                _logger.LogWarning("Escrow settlement for SubOrder '{SubOrderId}' returned false. Flagged for settlement reconciliation.", so.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error calling WalletService to settle escrow for SubOrder '{SubOrderId}'. Flagged for reconciliation.", so.Id);
+        }
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        return new ConfirmReceiptResponse(
+            SubOrderId: so.Id,
+            Status: so.Status.ToString(),
+            CompletedAt: completedAt,
+            EscrowSettled: settled,
+            AmountSettled: so.SellerReceiveAmount
+        );
+    }
+
+    public async Task<PagedData<SubOrderSummaryResponse>> ListSellerSubOrdersAsync(Guid sellerId, int page, int pageSize, SubOrderStatus? status = null, CancellationToken ct = default)
+    {
+        if (page < 1) page = 1;
+        if (pageSize < 1 || pageSize > 100) pageSize = 20;
+
+        var query = _dbContext.SubOrders
+            .AsNoTracking()
+            .Include(s => s.Items)
+            .Where(s => s.SellerId == sellerId && !s.IsDeleted);
+
+        if (status.HasValue)
+        {
+            query = query.Where(s => s.Status == status.Value);
+        }
+
+        var totalCount = await query.CountAsync(ct);
+
+        var items = await query
+            .OrderByDescending(s => s.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(s => new SubOrderSummaryResponse(
+                s.Id,
+                s.SubOrderNo,
+                s.OrderId,
+                s.BuyerId,
+                s.SellerId,
+                s.Status.ToString(),
+                s.PaymentMethod.ToString(),
+                s.ItemsAmount,
+                s.ShippingFeeAmount,
+                s.TotalAmount,
+                s.SellerReceiveAmount,
+                s.Items.Count,
+                s.CreatedAt,
+                s.SellerAcceptedAt,
+                s.ShippedAt,
+                s.DeliveredAt,
+                s.CompletedAt,
+                s.CancelledAt
+            ))
+            .ToListAsync(ct);
+
+        return new PagedData<SubOrderSummaryResponse>(items, PaginationMetadata.Create(page, pageSize, totalCount));
     }
 
     public async Task<ShipmentTrackingResponse> GetShipmentTrackingAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default)

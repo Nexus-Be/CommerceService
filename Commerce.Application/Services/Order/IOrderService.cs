@@ -32,6 +32,12 @@ public interface IOrderService
     /// <summary>R84: Người bán từ chối đơn hàng con.</summary>
     Task SellerRejectSubOrderAsync(Guid sellerId, Guid orderId, SellerRejectOrderRequest request, CancellationToken ct = default);
 
+    /// <summary>Người mua xác nhận đã nhận hàng (SubOrderStatus -> Completed), kích hoạt giải ngân sang ví Seller.</summary>
+    Task<ConfirmReceiptResponse> BuyerConfirmSubOrderReceiptAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default);
+
+    /// <summary>Người bán tra cứu danh sách đơn hàng con thuộc Shop của mình, có phân trang database và lọc status.</summary>
+    Task<PagedData<SubOrderSummaryResponse>> ListSellerSubOrdersAsync(Guid sellerId, int page, int pageSize, SubOrderStatus? status = null, CancellationToken ct = default);
+
     /// <summary>R87: Theo dõi tiến độ giao hàng và thông tin vận chuyển.</summary>
     Task<ShipmentTrackingResponse> GetShipmentTrackingAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default);
 

@@ -12,7 +12,7 @@ public static class CommerceSeedData
         SeedDiscountCodes(modelBuilder);
         SeedSystemSettings(modelBuilder);
         SeedCarts(modelBuilder);
-        SeedOrders(modelBuilder);
+        // SeedOrders(modelBuilder); // Disabled: SubOrder.ShippingAddress is JSONB-mapped (OwnsOne.ToJson), causing EF Core HasData conflict.
         SeedOperationsAndAudit(modelBuilder);
     }
 

@@ -117,3 +117,32 @@ public sealed record OrderResponse(
     DateTimeOffset PaymentDeadlineAt,
     DateTimeOffset CreatedAt,
     List<SubOrderDetailResponse> SubOrders);
+
+public sealed record SubOrderSummaryResponse(
+    Guid SubOrderId,
+    string SubOrderNo,
+    Guid OrderId,
+    Guid BuyerId,
+    Guid SellerId,
+    string Status,
+    string PaymentMethod,
+    decimal ItemsAmount,
+    decimal ShippingFeeAmount,
+    decimal TotalAmount,
+    decimal SellerReceiveAmount,
+    int ItemCount,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? SellerAcceptedAt,
+    DateTimeOffset? ShippedAt,
+    DateTimeOffset? DeliveredAt,
+    DateTimeOffset? CompletedAt,
+    DateTimeOffset? CancelledAt
+);
+
+public sealed record ConfirmReceiptResponse(
+    Guid SubOrderId,
+    string Status,
+    DateTimeOffset CompletedAt,
+    bool EscrowSettled,
+    decimal AmountSettled
+);

@@ -45,6 +45,14 @@ public class OrderLifecycleTests : IDisposable
         _mockFulfillmentClient
             .Setup(f => f.CreateShipmentAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ShipmentCreationResult("GHN-TRACK-001", "GHN", "https://label.pdf"));
+
+        _mockWalletClient
+            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _mockWalletClient
+            .Setup(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
     }
 
     public void Dispose()
@@ -255,6 +263,19 @@ public class OrderLifecycleTests : IDisposable
         cancellation.Should().NotBeNull();
         cancellation!.ReasonCode.Should().Be(CancellationReasonCode.OutOfStock);
         cancellation.ActorRole.Should().Be(OrderActorRole.Seller);
+
+        var refund = await _dbContext.OrderRefunds.FirstOrDefaultAsync(r => r.SubOrderId == subOrder.Id);
+        refund.Should().NotBeNull();
+        refund!.Status.Should().Be(RefundStatus.Completed);
+        refund.CompletedAt.Should().NotBeNull();
+
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
+            subOrder.Id,
+            buyerId.ToString(),
+            subOrder.TotalAmount,
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

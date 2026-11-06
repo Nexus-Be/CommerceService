@@ -1,224 +1,326 @@
-# COMMERCE SERVICE — MASTER REST API CONTRACT \& INTEGRATION SPECIFICATION
+# COMMERCE SERVICE — MASTER REST API CONTRACT & INTEGRATION SPECIFICATION
+## (Hợp đồng Giao tiếp RESTful Toàn diện: Giỏ hàng, Báo giá, Đơn hàng, Vận chuyển & Liên dịch vụ)
 
-## (Hợp đồng Giao tiếp RESTful Toàn diện: Giỏ hàng, Báo giá, Đơn hàng \& Vận chuyển)
+> **Phiên bản:** v3.2.0 (Master Unified REST Contract)  
+> **Phân hệ:** Commerce Service (`Commerce.Api`)  
+> **Cổng dịch vụ (Port):** `8003` (Container & Localhost)  
+> **Cơ sở dữ liệu:** PostgreSQL port `5435` (`commerce_db`)  
+> **Giao thức:** HTTP/1.1 & HTTP/2 RESTful Web API  
+> **Đối tượng sử dụng:** Frontend (Web & Mobile), API Gateway Team, Wallet Service Team, Catalog Service Team, Fulfillment Service Team, QA Engineers, OJT / Kỹ sư Phần mềm  
+> **Cập nhật lần cuối:** 2026-11-05  
+> **Trạng thái:** ✅ ĐÃ CHUẨN HÓA 100% VỚI CODE THỰC THI (115/115 TESTS PASSING)  
 
-> \\\*\\\*Phiên bản:\\\*\\\* v3.0.0 (Master Unified Contract)  
-> \\\*\\\*Phân hệ:\\\*\\\* Commerce Service (`Commerce.Api`)  
-> \\\*\\\*Cổng dịch vụ (Port):\\\*\\\* `8003` (Container \\\& Localhost)  
-> \\\*\\\*Cơ sở dữ liệu:\\\*\\\* PostgreSQL on port `5435` (`commerce\\\_db`)  
-> \\\*\\\*Giao thức:\\\*\\\* HTTP/1.1 \\\& HTTP/2 RESTful Web API  
-> \\\*\\\*Đối tượng sử dụng:\\\*\\\* Frontend (Web \\\& Mobile), API Gateway Team, Wallet Service Team, Catalog Service Team, OJT / Kỹ sư Phần mềm  
-> \\\*\\\*Cập nhật lần cuối:\\\*\\\* 2026-11-01  
-> \\\*\\\*Trạng thái:\\\*\\\* ✅ ĐÃ CHUẨN HÓA \\\& KHÓA NGUYÊN TẮC (LOCKED)  
-
-\---
+---
 
 ## MỤC LỤC BỐ CỤC TÀI LIỆU
 
-1. [Phần 1: Quy chuẩn Kiến trúc \& Giao thức Chung](#phần-1-quy-chuẩn-kiến-trúc--giao-thức-chung)
+1. [Phần 1: Quy chuẩn Kiến trúc & Giao thức Chung](#phần-1-quy-chuẩn-kiến-trúc--giao-thức-chung)
 2. [Phần 2: Bounded Context 1 — Quản lý Giỏ hàng (`CART-01` .. `CART-14`)](#phần-2-bounded-context-1--quản-lý-giỏ-hàng-cart-01--cart-14)
-
-   * *Nhóm 1: Xem \& Khám phá Giỏ hàng (`CART-01` .. `CART-03`)*
+   * *Nhóm 1: Xem & Khám phá Giỏ hàng (`CART-01` .. `CART-03`)*
    * *Nhóm 2: Thao tác Dòng Sản phẩm (`CART-04` .. `CART-09`)*
-   * *Nhóm 3: Tính giá \& Chuẩn bị Đặt hàng (`CART-10` .. `CART-12`)*
-   * *Nhóm 4: Hậu Đặt hàng \& Quản trị (`CART-13` .. `CART-14`)*
-3. [Phần 3: Bounded Context 2 — Báo giá \& Đặt hàng 2 Bước (`CHK-01` .. `CHK-02`)](#phần-3-bounded-context-2--báo-giá--đặt-hàng-2-bước-chk-01--chk-02)
-
+   * *Nhóm 3: Tính giá, Thẩm định & Gộp giỏ (`CART-10` .. `CART-12`)*
+   * *Nhóm 4: Hậu Đặt hàng & Quản trị (`CART-13` .. `CART-14`)*
+3. [Phần 3: Bounded Context 2 — Báo giá & Đặt hàng 2 Bước (`CHK-01` .. `CHK-02`)](#phần-3-bounded-context-2--báo-giá--đặt-hàng-2-bước-chk-01--chk-02)
    * *Bước 1: Báo giá Giỏ hàng Đa Shop (`CHK-01` / `R75`)*
    * *Bước 2: Tạo Đơn hàng Chính thức (`CHK-02` / `R76`)*
-4. [Phần 4: Bounded Context 3 — Vòng đời Đơn hàng \& Vận chuyển (`ORD-01` .. `ORD-13`)](#phần-4-bounded-context-3--vòng-đời-đơn-hàng--vận-chuyển-ord-01--ord-13)
+4. [Phần 4: Bounded Context 3 — Vòng đời Đơn hàng & Vận chuyển (`ORD-01` .. `ORD-13`)](#phần-4-bounded-context-3--vòng-đời-đơn-hàng--vận-chuyển-ord-01--ord-13)
+   * *Tra cứu Đơn hàng (`ORD-01`, `ORD-02`, `ORD-02B`, `LEGACY`)*
+   * *Xử lý & Chuyển trạng thái Đơn (`ORD-04`, `ORD-05`, `ORD-06`)*
+   * *Vận chuyển & Hoàn tiền (`ORD-08`, `ORD-13`)*
+5. [Phần 5: Webhook Tiếp Nhận Trạng Thái Giao Vận (Fulfillment ➔ Commerce)](#phần-5-webhook-tiếp-nhận-trạng-thái-giao-vận)
+6. [Phần 6: Hợp đồng Outbound Typed REST Clients (Gọi Liên Dịch Vụ)](#phần-6-hợp-đồng-outbound-typed-rest-clients-gọi-liên-dịch-vụ)
+   * *Catalog Service (`:8002`)*
+   * *Fulfillment Service (`:8006`)*
+   * *Wallet Service (`:8008`)*
+7. [Phần 7: Bảng Tra cứu Mã Lỗi Hệ thống Chuẩn RFC 9110](#phần-7-bảng-tra-cứu-mã-lỗi-hệ-thống-chuẩn-rfc-9110)
+8. [Phần 8: Bộ TypeScript Type Definitions Hoàn chỉnh (Frontend DTOs)](#phần-8-bộ-typescript-type-definitions-hoàn-chỉnh-frontend-dtos)
 
-   * *Tra cứu Đơn hàng (`ORD-01`, `ORD-02`, `ORD-02B`)*
-   * *Xử lý \& Chuyển trạng thái Đơn (`ORD-04`, `ORD-05`, `ORD-06`)*
-   * *Vận chuyển \& Hoàn tiền (`ORD-08`, `ORD-13`)*
-5. [Phần 5: Hợp đồng Gọi Liên dịch vụ (Outbound Contract `R181`)](#phần-5-hợp-đồng-gọi-liên-dịch-vụ-outbound-contract-r181)
-6. [Phần 6: Bảng Tra cứu Mã Lỗi Hệ thống Chuẩn RFC 9110](#phần-6-bảng-tra-cứu-mã-lỗi-hệ-thống-chuẩn-rfc-9110)
-7. [Phần 7: Bộ TypeScript Type Definitions Hoàn chỉnh (Frontend DTOs)](#phần-7-bộ-typescript-type-definitions-hoàn-chỉnh-frontend-dtos)
+---
 
-\---
+# PHẦN 1: QUY CHUẨN KIẾN TRÚC & GIAO THỨC CHUNG
 
-# PHẦN 1: QUY CHUẨN KIẾN TRÚC \& GIAO THỨC CHUNG
-
-### 1.1. Bounded Context \& Phân định Ranh giới
-
+### 1.1. Bounded Context & Phân định Ranh giới
 Commerce Service chịu trách nhiệm độc quyền:
-
-1. **Giỏ hàng (`Carts`, `CartItems`)**: Mỗi Người mua (Buyer) sở hữu tối đa 1 Giỏ hàng `ACTIVE`. Giới hạn tối đa 50 món (distinct items) và tối đa 99 đơn vị/món.
-2. **Đơn hàng cha \& Đơn con theo Shop (`Orders`, `SubOrders`, `SubOrderItems`)**: Đơn cha quản lý tổng thanh toán toàn phiên, Đơn con quản lý từng gói hàng độc lập của từng Người bán (Seller).
+1. **Giỏ hàng (`Carts`, `CartItems`)**: Mỗi Người mua (Buyer) sở hữu tối đa 1 Giỏ hàng `Active`. Giới hạn tối đa 50 món (distinct items) và tối đa 99 đơn vị/món.
+2. **Đơn hàng cha & Đơn con theo Shop (`Orders`, `SubOrders`, `SubOrderItems`)**: Đơn cha quản lý tổng thanh toán toàn phiên; Đơn con quản lý từng gói hàng độc lập của từng Người bán (Seller).
 3. **Snapshot Bất biến (Immutable Snapshots)**:
+   * Thông tin sản phẩm lúc mua: `ProductNameSnapshot`, `UnitPriceSnapshot`, `SkuCodeSnapshot`.
+   * Địa chỉ giao hàng: `ShippingAddressSnapshot` (dạng PostgreSQL `jsonb` qua EF Core 8 `.ToJson()`).
+4. **Các phân hệ KHÔNG thuộc Commerce Service (External Collaborations)**:
+   * **Số dư tiền, Trừ tiền ví & Hoàn tiền ví** ➔ Do **Wallet Service** (`:8008`) sở hữu (gọi qua `IWalletClient`).
+   * **Thông tin sản phẩm niêm yết (Master Data, Tên, Giá bán, Trạng thái bán)** ➔ Do **Catalog Service** (`:8002`) sở hữu (gọi qua `ICatalogClient`).
+   * **Tồn kho vật lý, Giữ hàng 15m, Trừ/Nhả kho & Vận chuyển GHN** ➔ Do **Fulfillment Service** (`:8006`) sở hữu (gọi qua `IFulfillmentClient`).
 
-   * Thông tin sản phẩm lúc mua: Lưu `ProductNameSnapshot`, `UnitPriceSnapshot`, `SkuCodeSnapshot`.
-   * Địa chỉ giao hàng: Lưu `ShippingAddressSnapshot` (dạng PostgreSQL `jsonb` qua EF Core 8).
-4. **Những gì Commerce Service KHÔNG sở hữu (External Collaborations)**:
+---
 
-   * **Số dư tiền, trừ tiền ví \& hoàn tiền** $\\rightarrow$ Do **Wallet Service** (`:8008`) sở hữu (gọi qua `IWalletClient`).
-   * **Thông tin sản phẩm niêm yết (Master Data, Tên, Giá bán, Trạng thái bán)** $\\rightarrow$ Do **Catalog Service** (`:8002`) sở hữu (gọi qua `ICatalogClient`).
-   * **Tồn kho vật lý, Giữ hàng (15m TTL), Trừ/Nhả kho \& Vận chuyển GHN** $\\rightarrow$ Do **Fulfillment Service** (`:8005`) sở hữu (gọi qua `IFulfillmentClient`).
+### 1.2. Cơ chế Identity Propagation & Headers từ API Gateway
+Mọi HTTP request từ Frontend (Web/Mobile) gửi qua API Gateway được middleware tiếp nhận và chuyển tiếp:
 
-\---
+```
+[ API Gateway ]
+       │ Headers: x-user-id, x-user-roles, x-user-email, x-user-permissions
+       ▼
+[ UserContextMiddleware ] ──▶ Khởi tạo ClaimsPrincipal trên HttpContext.User
+       │
+[ Commerce Controllers ]  ──▶ CartsController / OrdersController
+       │
+[ IdentityPropagationHandler ] ──▶ Tự động chèn Headers sang Outbound HttpClients
+       ▼
+[ External Microservices ] (Catalog :8002, Fulfillment :8006, Wallet :8008)
+```
 
-### 1.2. Quy chuẩn Headers từ API Gateway
+| Header Name | Kiểu | Bắt buộc | Diễn giải | Ví dụ |
+| - | - | :-: | - | - |
+| `x-user-id` | UUID (v4) | **Có** | ID người dùng xác thực từ Claim `sub` | `11111111-1111-1111-1111-000000000004` |
+| `x-user-roles` | String | **Có** | Vai trò người dùng (`buyer`, `seller`, `admin`, `staff`) | `buyer` hoặc `buyer,seller` |
+| `x-user-email` | String | Không | Email người dùng | `buyer@nexus.local` |
+| `x-user-permissions` | String | Không | Danh sách permissions chi tiết | `ORDER_READ,ORDER_WRITE` |
+| `x-client-ip` | String | Không | IP của client thực tế | `192.168.1.100` |
+| `x-trace-id` | String | Không | W3C / OpenTelemetry Trace ID | `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01` |
+| `X-Internal-Service-Key` | String | Nội bộ | Khóa bảo mật giao tiếp giữa các services nội bộ | `<secret-key>` |
 
-Mọi HTTP request từ Frontend (Web/Mobile) gửi qua API Gateway bắt buộc phải có các Headers:
-
-|Header Name|Kiểu|Bắt buộc|Diễn giải|Ví dụ|
-|-|-|:-:|-|-|
-|`X-User-Id`|UUID (v4)|**Có**|ID người dùng xác thực từ Claim `sub`|`11111111-1111-1111-1111-000000000004`|
-|`X-User-Roles`|String|**Có**|Vai trò người dùng (`buyer`, `seller`, `admin`)|`buyer` hoặc `buyer,seller`|
-|`Content-Type`|String|**Có**|MIME type (cho POST/PATCH)|`application/json`|
-|`Accept`|String|**Có**|Định dạng client mong muốn nhận|`application/json`|
-
-\---
+---
 
 ### 1.3. Quy tắc Đóng gói Phong bì (Response Envelope Conventions)
-
 * **Tại tầng Controller C# (Nội bộ Commerce Service)**: Controller **CHỈ TRẢ VỀ PURE DTO** (DTO thuần túy) kèm HTTP Status chuẩn. Tuyệt đối không bọc lặp `ApiResponse<T>`.
-* **Tại tầng API Gateway**: Gateway tự động bọc vỏ phong bì trước khi truyền ra Internet:
-
-```json
+* **Tại tầng API Gateway**: Gateway tự động bọc vỏ phong bì trước khi truyền ra ngoài Internet:
+  ```json
   {
     "success": true,
     "data": { ... },
     "error": null,
-    "timestamp": "2026-11-01T10:00:00Z",
+    "timestamp": "2026-11-05T10:00:00Z",
     "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
   }
   ```
-
 * **Khi xảy ra lỗi (RFC 9110 Problem Details)**:
-
-```json
+  ```json
   {
     "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
     "title": "Business rule violation",
     "status": 400,
-    "errorCode": "QUOTE\\\_EXPIRED",
-    "detail": "Checkout quote has expired.",
+    "errorCode": "QUOTE_EXPIRED",
+    "detail": "Checkout quote has expired, is invalid, or is currently being processed.",
     "traceId": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
   }
   ```
 
-\---
+---
 
-### 1.4. Quy tắc Vàng về Casing \& Định danh Trường Tài chính
-
-1. **Mã lỗi hệ thống (`errorCode`)**: 100% `SCREAMING\\\_SNAKE\\\_CASE` (ví dụ: `CART\\\_ITEM\\\_NOT\\\_FOUND`, `ORDER\\\_NOT\\\_FOUND`, `VAL\\\_INVALID\\\_INPUT`).
-2. **Enum Dữ liệu nghiệp vụ**: 100% `PascalCase` (ví dụ: `"PendingPayment"`, `"SellerRejected"`, `"Confirmed"`, `"Wallet"`).
+### 1.4. Quy tắc Vàng về Casing & Định danh Trường Tài chính
+1. **Mã lỗi hệ thống (`errorCode`)**: 100% `SCREAMING_SNAKE_CASE` (ví dụ: `CART_ITEM_NOT_FOUND`, `ORDER_NOT_FOUND`, `VAL_INVALID_INPUT`, `PRICE_CHANGED`).
+2. **Enum Dữ liệu nghiệp vụ**: 100% `PascalCase` (ví dụ: `"PendingPayment"`, `"SellerRejected"`, `"Confirmed"`, `"Wallet"`). Cấm chuỗi in hoa toàn bộ và cấm số nguyên.
 3. **Thuộc tính JSON**: 100% `camelCase` (ví dụ: `cartItemId`, `subOrderNo`, `totalAmount`).
 4. **Khóa cứng Trường Tiền tệ**: 100% sử dụng **`shippingFeeAmount`**. CẤM tuyệt đối từ khóa `shippingFee`.
+   * $\text{totalAmount} = \text{itemsAmount} - \text{discountAmount} + \text{shippingFeeAmount}$
+   * $\text{discountAmount} = \text{productDiscountAmount} + \text{shopDiscountAmount} + \text{systemDiscountAmount}$
 
-   * $\\text{totalAmount} = \\text{itemsAmount} - \\text{discountAmount} + \\text{shippingFeeAmount}$
-   * $\\text{discountAmount} = \\text{productDiscountAmount} + \\text{shopDiscountAmount} + \\text{systemDiscountAmount}$
-
-\---
+---
 
 # PHẦN 2: BOUNDED CONTEXT 1 — QUẢN LÝ GIỎ HÀNG (`CART-01` .. `CART-14`)
 
-### Bảng tra cứu nhanh 14 API Giỏ hàng:
+### Bảng tra cứu 14 API Giỏ hàng (`CartsController` — `/api/v1/carts`):
 
-|Mã|Method|Path|Tên nghiệp vụ|Quyền|
-|:-:|:-:|-|-|:-:|
-|**`CART-01`**|`GET`|`/api/v1/carts/me`|Lấy hoặc tự động tạo giỏ hàng người mua|`Buyer`|
-|**`CART-02`**|`GET`|`/api/v1/carts/me/summary`|Badge số lượng \& tổng tiền tạm tính cho Header|`Buyer`|
-|**`CART-03`**|`GET`|`/api/v1/carts/me/grouped`|Giỏ hàng gom nhóm theo Shop (Multi-Vendor)|`Buyer`|
-|**`CART-04`**|`POST`|`/api/v1/carts/me/items`|Thêm sản phẩm (SKU) vào giỏ hàng|`Buyer`|
-|**`CART-05`**|`PATCH`|`/api/v1/carts/me/items/{cartItemId}`|Cập nhật số lượng của dòng sản phẩm (1–99)|`Buyer`|
-|**`CART-06`**|`PATCH`|`/api/v1/carts/me/items/{cartItemId}/variant`|Đổi phân loại hàng trực tiếp trong giỏ (Smart Merge)|`Buyer`|
-|**`CART-07`**|`DELETE`|`/api/v1/carts/me/items/{cartItemId}`|Xóa một món khỏi giỏ hàng|`Buyer`|
-|**`CART-08`**|`POST`|`/api/v1/carts/me/items:bulk-remove`|Xóa hàng loạt món được tick chọn|`Buyer`|
-|**`CART-09`**|`DELETE`|`/api/v1/carts/me/clear`|Dọn sạch toàn bộ giỏ hàng|`Buyer`|
-|**`CART-10`**|`POST`|`/api/v1/carts/me/calculate`|Tính tiền tạm tính các món tick chọn (Shopee Checkbox)|`Buyer`|
-|**`CART-11`**|`POST`|`/api/v1/carts/me/validate`|Kiểm tra tồn kho \& biến động giá trước checkout|`Buyer`|
-|**`CART-12`**|`POST`|`/api/v1/carts/me/merge`|Gộp giỏ hàng khách vãng lai sau khi đăng nhập|`Buyer`|
-|**`CART-13`**|`POST`|`/api/v1/carts/me/cleanup-checked-out`|Dọn dẹp món đã mua sau khi thanh toán thành công|`Buyer, System`|
-|**`CART-14`**|`GET`|`/api/v1/carts/active?buyerId={guid}`|Quản trị tra cứu giỏ hàng đang hoạt động|`Admin, Staff`|
+| Mã | Method | Path | Tên nghiệp vụ | Quyền |
+| :-: | :-: | - | - | :-: |
+| **`CART-01`** | `GET` | `/api/v1/carts/me` | Lấy hoặc tự động tạo giỏ hàng người mua | `buyer` |
+| **`CART-02`** | `GET` | `/api/v1/carts/me/summary` | Badge số lượng & tổng tiền tạm tính cho Header | `buyer` |
+| **`CART-03`** | `GET` | `/api/v1/carts/me/grouped` | Giỏ hàng gom nhóm theo Shop (Multi-Vendor) | `buyer` |
+| **`CART-04`** | `POST` | `/api/v1/carts/me/items` | Thêm sản phẩm (SKU) vào giỏ hàng | `buyer` |
+| **`CART-05`** | `PATCH` | `/api/v1/carts/me/items/{cartItemId}` | Cập nhật số lượng của dòng sản phẩm (1–99) | `buyer` |
+| **`CART-06`** | `PATCH` | `/api/v1/carts/me/items/{cartItemId}/variant` | Đổi phân loại hàng trực tiếp trong giỏ (Smart Merge) | `buyer` |
+| **`CART-07`** | `DELETE` | `/api/v1/carts/me/items/{cartItemId}` | Xóa một món khỏi giỏ hàng | `buyer` |
+| **`CART-08`** | `POST` | `/api/v1/carts/me/items:bulk-remove` | Xóa hàng loạt món được tick chọn | `buyer` |
+| **`CART-09`** | `DELETE` | `/api/v1/carts/me/clear` | Dọn sạch toàn bộ giỏ hàng | `buyer` |
+| **`CART-10`** | `POST` | `/api/v1/carts/me/calculate` | Tính tiền tạm tính các món tick chọn (Shopee Checkbox) | `buyer` |
+| **`CART-11`** | `POST` | `/api/v1/carts/me/validate` | Kiểm tra tồn kho & biến động giá trước checkout | `buyer` |
+| **`CART-12`** | `POST` | `/api/v1/carts/me/merge` | Gộp giỏ hàng khách vãng lai sau khi đăng nhập | `buyer` |
+| **`CART-13`** | `POST` | `/api/v1/carts/me/cleanup-checked-out` | Dọn dẹp món đã mua sau khi thanh toán thành công | `buyer` |
+| **`CART-14`** | `GET` | `/api/v1/carts/active?buyerId={guid}` | Quản trị tra cứu giỏ hàng đang hoạt động | `admin`, `staff`, `buyer` |
 
-\---
+---
 
-### Chi tiết các Endpoint Giỏ hàng tiêu biểu:
+### Chi tiết Đặc tả 14 Endpoint Giỏ hàng:
 
-#### `CART-01`: GET `/api/v1/carts/me`
-
-* **Mô tả:** Lấy thông tin giỏ hàng của chính người mua đang đăng nhập. Nếu chưa có giỏ nào, hệ thống tự tạo giỏ mới trạng thái `Active`.
-* **Response (200 OK):**
-
-```json
+#### `CART-01`: Lấy hoặc Tự Động Tạo Giỏ Hàng
+* **Endpoint:** `GET /api/v1/carts/me`
+* **Quyền:** `buyer`
+* **Response (HTTP 200 OK):**
+  ```json
   {
-    "cartId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "id": "c1111111-1111-1111-1111-000000000001",
     "buyerId": "11111111-1111-1111-1111-000000000004",
+    "status": "Active",
     "itemCount": 2,
-    "subtotalAmount": 1250000.00,
-    "items": \\\[
+    "subtotalAmount": 500000.0,
+    "items": [
       {
-        "cartItemId": "4fa85f64-5717-4562-b3fc-2c963f66afa7",
-        "productId": "9f8e7d6c-2222-4b3c-8d4e-5f6a7b8c9d02",
-        "skuId": "7c6b5a49-3333-4c4d-9e5f-6a7b8c9d0e03",
-        "sellerId": "5e9d1c2b-7f3a-4d8e-9c1b-2a4f6d8e0b12",
-        "productName": "Bàn phím cơ không dây",
+        "id": "i1111111-1111-1111-1111-000000000001",
+        "cartId": "c1111111-1111-1111-1111-000000000001",
+        "productId": "p1111111-1111-1111-1111-000000000001",
+        "skuId": "s1111111-1111-1111-1111-000000000001",
+        "sellerId": "shop1111-1111-1111-1111-000000000001",
+        "productNameSnapshot": "Áo Thun Cotton Nexus",
+        "skuCodeSnapshot": "AT-BLK-L",
+        "quantity": 2,
+        "unitPriceSnapshot": 250000.0,
+        "lineTotal": 500000.0,
+        "currency": "VND",
+        "isAvailable": true,
+        "availableStock": 50,
+        "disabledReason": null,
+        "createdAt": "2026-11-05T08:00:00Z",
+        "updatedAt": "2026-11-05T08:00:00Z"
+      }
+    ],
+    "lastActivityAt": "2026-11-05T08:00:00Z"
+  }
+  ```
+
+#### `CART-02`: Lấy Badge Tóm Tắt Giỏ Hàng
+* **Endpoint:** `GET /api/v1/carts/me/summary`
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "cartId": "c1111111-1111-1111-1111-000000000001",
+    "totalItemCount": 2,
+    "subtotalAmount": 500000.0,
+    "hasUnavailableItems": false
+  }
+  ```
+
+#### `CART-03`: Giỏ Hàng Gom Nhóm Theo Shop
+* **Endpoint:** `GET /api/v1/carts/me/grouped`
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "cartId": "c1111111-1111-1111-1111-000000000001",
+    "shops": [
+      {
+        "sellerId": "shop1111-1111-1111-1111-000000000001",
+        "shopName": "Nexus Official Store",
+        "shopSubtotal": 500000.0,
+        "items": [ ... ]
+      }
+    ],
+    "grandSubtotal": 500000.0,
+    "totalItemCount": 2
+  }
+  ```
+
+#### `CART-04`: Thêm Sản Phẩm Vào Giỏ Hàng
+* **Endpoint:** `POST /api/v1/carts/me/items`
+* **Request Body:**
+  ```json
+  {
+    "skuId": "s1111111-1111-1111-1111-000000000001",
+    "quantity": 2,
+    "sellerId": "shop1111-1111-1111-1111-000000000001"
+  }
+  ```
+* **Lỗi có thể trả về:**
+  * `INSUFFICIENT_STOCK` (400): Tồn kho khả dụng nhỏ hơn số lượng yêu cầu.
+  * `MAX_QUANTITY_EXCEEDED` (400): Số lượng dòng món vượt quá 99.
+  * `MAX_ITEMS_REACHED` (400): Giỏ hàng đã đạt giới hạn tối đa 50 món khác nhau.
+  * `CATALOG_SKU_NOT_FOUND` (404): Không tìm thấy SKU trong Catalog.
+  * `CATALOG_SKU_INACTIVE` (400): Sản phẩm bị ẩn hoặc ngừng kinh doanh.
+* **Response (HTTP 200 OK):** Trả về `CartResponse` mới nhất.
+
+#### `CART-05`: Cập Nhật Số Lượng Dòng Sản Phẩm
+* **Endpoint:** `PATCH /api/v1/carts/me/items/{cartItemId}`
+* **Request Body:** `{ "quantity": 3 }`
+* **Response (HTTP 200 OK):** Trả về `CartResponse` cập nhật.
+
+#### `CART-06`: Đổi Biến Thể Sản Phẩm Trong Giỏ
+* **Endpoint:** `PATCH /api/v1/carts/me/items/{cartItemId}/variant`
+* **Request Body:** `{ "newSkuId": "s2222222-2222-2222-2222-000000000002" }`
+* **Cơ chế:** Kiểm tra SKU mới thuộc cùng sản phẩm và cùng người bán qua Catalog. Tự động merge số lượng nếu biến thể mới đã có sẵn một dòng khác trong giỏ.
+* **Response (HTTP 200 OK):** Trả về `CartResponse` cập nhật.
+
+#### `CART-07`: Xóa Một Món Khỏi Giỏ Hàng
+* **Endpoint:** `DELETE /api/v1/carts/me/items/{cartItemId}`
+* **Response (HTTP 200 OK):** Trả về `CartResponse` mới nhất sau khi xóa.
+
+#### `CART-08`: Xóa Hàng Loạt Món Được Tick Chọn
+* **Endpoint:** `POST /api/v1/carts/me/items:bulk-remove`
+* **Request Body:**
+  ```json
+  {
+    "cartItemIds": ["i1111111-1111-...", "i2222222-2222-..."],
+    "clearAll": false
+  }
+  ```
+* **Response (HTTP 200 OK):** Trả về `CartResponse` cập nhật.
+
+#### `CART-09`: Dọn Sạch Toàn Bộ Giỏ Hàng
+* **Endpoint:** `DELETE /api/v1/carts/me/clear`
+* **Response (HTTP 200 OK):** Trả về `CartResponse` với `itemCount: 0`, `subtotalAmount: 0`.
+
+#### `CART-10`: Tính Tiền Tạm Tính Các Món Tick Chọn (Shopee Checkbox)
+* **Endpoint:** `POST /api/v1/carts/me/calculate`
+* **Request Body:**
+  ```json
+  {
+    "selectedItemIds": ["i1111111-1111-1111-1111-000000000001"]
+  }
+  ```
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "selectedItemCount": 1,
+    "selectedSubtotal": 250000.0,
+    "currency": "VND",
+    "canCheckout": true,
+    "validationMessages": []
+  }
+  ```
+
+#### `CART-11`: Kiểm Tra Tồn Kho & Biến Động Giá Trước Checkout
+* **Endpoint:** `POST /api/v1/carts/me/validate`
+* **Request Body:**
+  ```json
+  {
+    "selectedItemIds": ["i1111111-1111-1111-1111-000000000001"]
+  }
+  ```
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "isValid": true,
+    "issues": [],
+    "totalPriceChange": 0.0
+  }
+  ```
+
+#### `CART-12`: Gộp Giỏ Khách Vãng Lai Sau Khi Đăng Nhập
+* **Endpoint:** `POST /api/v1/carts/me/merge`
+* **Request Body:**
+  ```json
+  {
+    "guestItems": [
+      {
+        "skuId": "s1111111-1111-1111-1111-000000000001",
         "quantity": 1,
-        "unitPrice": 750000.00,
-        "lineTotal": 750000.00
+        "sellerId": "shop1111-1111-1111-1111-000000000001"
       }
     ]
   }
   ```
+* **Response (HTTP 200 OK):** Trả về `CartResponse` gộp.
 
-#### `CART-04`: POST `/api/v1/carts/me/items`
+#### `CART-13`: Dọn Dẹp Món Đã Mua Sau Khi Thanh Toán Thành Công
+* **Endpoint:** `POST /api/v1/carts/me/cleanup-checked-out`
+* **Request Body:** `{ "purchasedItemIds": ["i1111111-1111-..."] }`
+* **Response (HTTP 200 OK):** Trả về `CartResponse` sau dọn dẹp.
 
-* **Mô tả:** Thêm sản phẩm vào giỏ. Hệ thống tự động kiểm tra tồn kho vật lý tại Fulfillment Service trước khi thêm. Nếu sản phẩm đã có, tự động cộng dồn số lượng.
-* **Lỗi có thể trả về:** `INSUFFICIENT\\\_STOCK` (400) nếu kho hết hàng; `CATALOG\\\_SKU\\\_INACTIVE` (400) nếu sản phẩm bị gỡ bỏ.
-* **Request Body:**
+#### `CART-14`: Quản Trị Tra Cứu Giỏ Hàng Đang Hoạt Động
+* **Endpoint:** `GET /api/v1/carts/active?buyerId={guid}`
+* **Quyền:** `admin`, `staff` (cho bất kỳ buyer nào) hoặc `buyer` (cho chính mình qua ownership check).
+* **Response (HTTP 200 OK):** Trả về `CartResponse`.
 
-```json
-  {
-    "skuId": "7c6b5a49-3333-4c4d-9e5f-6a7b8c9d0e03",
-    "quantity": 2
-  }
-  ```
+---
 
-* **Response (200 OK):** Trả về CartResponse cập nhật mới nhất.
-
-#### `CART-05`: PATCH `/api/v1/carts/me/items/{cartItemId}`
-
-* **Mô tả:** Cập nhật số lượng của dòng sản phẩm (khi bấm `+` / `-` trong giỏ hàng). Bắt buộc kiểm tra tồn kho khả dụng từ Fulfillment Service trước khi cập nhật.
-* **Lỗi có thể trả về:** `INSUFFICIENT\\\_STOCK` (400) nếu số lượng yêu cầu vượt quá tồn kho còn lại; `CART\\\_ITEM\\\_NOT\\\_FOUND` (404) nếu món không tồn tại.
-* **Request Body:**
-
-```json
-  {
-    "quantity": 5
-  }
-  ```
-
-* **Response (200 OK):** Trả về CartResponse cập nhật mới nhất.
-
-#### `CART-10`: POST `/api/v1/carts/me/calculate`
-
-* **Mô tả:** Cơ chế tính tiền tạm tính khi người mua tick chọn các checkbox món hàng trong giỏ.
-* **Request Body:**
-
-```json
-  {
-    "selectedItemIds": \\\[
-      "4fa85f64-5717-4562-b3fc-2c963f66afa7"
-    ]
-  }
-  ```
-
-* **Response (200 OK):**
-
-```json
-  {
-    "selectedItemCount": 1,
-    "selectedSubtotalAmount": 750000.00
-  }
-  ```
-
-\---
-
-# PHẦN 3: BOUNDED CONTEXT 2 — BÁO GIÁ \& ĐẶT HÀNG 2 BƯỚC (`CHK-01` .. `CHK-02`)
-
-Trong thương mại điện tử đa người bán (Multi-Vendor Marketplace), giỏ hàng có thể chứa sản phẩm từ nhiều Shop khác nhau ở các vị trí địa lý khác nhau. Để tránh tranh chấp giá cước vận chuyển, hệ thống áp dụng quy trình **Quote-Based Checkout 2 Bước**:
+# PHẦN 3: BOUNDED CONTEXT 2 — BÁO GIÁ & ĐẶT HÀNG 2 BƯỚC (`CHK-01` .. `CHK-02`)
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -232,348 +334,454 @@ Trong thương mại điện tử đa người bán (Multi-Vendor Marketplace), 
 ┌────────────────────────────────────────────────────────┐
 │ BƯỚC 2: TẠO ĐƠN HÀNG CHÍNH THỨC (CHK-02 / R76)         │
 │ POST /api/v1/orders                                    │
-│ Input: quoteId + Phương thức thanh toán + Ghi chú      │
+│ Input: quoteId + Phương thức thanh toán + Địa chỉ      │
 │ Output: orderId + Danh sách subOrderIds                │
 └────────────────────────────────────────────────────────┘
 ```
 
-\---
+---
 
-### `CHK-01`: POST `/api/v1/checkouts/quote` (Xem trước báo giá)
-
-* **Quyền:** `Buyer`
+### `CHK-01 / R75`: Khảo Giá Thanh Toán & Tính Cước Ship GHN
+* **Endpoint:** `POST /api/v1/checkouts/quote`
+* **Quyền:** `buyer`
 * **Request Body:**
-
-```json
+  ```json
   {
-    "cartItemIds": \\\[
-      "4fa85f64-5717-4562-b3fc-2c963f66afa7"
+    "cartItemIds": [
+      "i1111111-1111-1111-1111-000000000001"
     ],
     "shippingAddress": {
       "receiverName": "Nguyen Van A",
       "contactPhone": "0901234567",
       "street": "123 Le Loi",
-      "ward": "Ben Nghe",
-      "district": "Quan 1",
-      "province": "TP.HCM",
+      "ward": "Phường Bến Nghé",
+      "district": "Quận 1",
+      "province": "TP. Hồ Chí Minh",
       "ghnDistrictId": 1442,
       "ghnWardCode": "20101"
     },
     "contactPhone": "0901234567",
     "paymentMethod": "Wallet",
-    "voucherCodes": \\\["FREESHIP2026"]
+    "voucherCodes": []
   }
   ```
-
-* **Response (200 OK):**
-
-```json
+* **Cơ chế kỹ thuật:**
+  1. Phân nhóm các món theo `SellerId`.
+  2. Với mỗi shop, gọi Fulfillment `:8006` (`POST /api/v1/internal/shipping/quote`) để tính cước GHN động.
+  3. Gọi Wallet `:8008` (`GET /api/v1/wallets/me`) lấy số dư ví khả dụng hiện tại.
+  4. Lưu cache vào `IDistributedCache` với key `checkout_quote:{quoteId}` và `TTL = 15 phút`.
+* **Response (HTTP 200 OK):**
+  ```json
   {
     "quoteId": "e2a1c4b8-9999-4d8e-b123-5a6b7c8d9e0f",
-    "grandTotal": 780000.00,
-    "walletBalance": 1500000.00,
-    "shops": \\\[
+    "grandTotal": 530000.0,
+    "walletBalance": 1500000.0,
+    "shops": [
       {
-        "sellerId": "5e9d1c2b-7f3a-4d8e-9c1b-2a4f6d8e0b12",
-        "shopName": "Shop Công Nghệ",
-        "items": \\\[
+        "sellerId": "shop1111-1111-1111-1111-000000000001",
+        "shopName": "Shop shop1111",
+        "items": [
           {
-            "cartItemId": "4fa85f64-5717-4562-b3fc-2c963f66afa7",
-            "productId": "9f8e7d6c-2222-4b3c-8d4e-5f6a7b8c9d02",
-            "skuId": "7c6b5a49-3333-4c4d-9e5f-6a7b8c9d0e03",
-            "productName": "Bàn phím cơ không dây",
-            "quantity": 1,
-            "unitPrice": 750000.00,
-            "lineTotal": 750000.00
+            "cartItemId": "i1111111-1111-1111-1111-000000000001",
+            "productId": "p1111111-1111-1111-1111-000000000001",
+            "skuId": "s1111111-1111-1111-1111-000000000001",
+            "productName": "Áo Thun Cotton Nexus",
+            "quantity": 2,
+            "unitPrice": 250000.0,
+            "lineTotal": 500000.0
           }
         ],
-        "itemsAmount": 750000.00,
-        "productDiscountAmount": 0.00,
-        "shopDiscountAmount": 0.00,
-        "systemDiscountAmount": 0.00,
-        "discountAmount": 0.00,
-        "shippingFeeAmount": 30000.00,
-        "totalAmount": 780000.00
+        "itemsAmount": 500000.0,
+        "productDiscountAmount": 0.0,
+        "shopDiscountAmount": 0.0,
+        "systemDiscountAmount": 0.0,
+        "discountAmount": 0.0,
+        "shippingFeeAmount": 30000.0,
+        "totalAmount": 530000.0
       }
     ],
-    "appliedVouchers": \\\["FREESHIP2026"],
-    "warnings": null,
-    "expiredAt": "2026-11-01T10:15:00Z"
+    "appliedVouchers": [],
+    "appliedPriceDrops": null,
+    "expiredAt": "2026-11-05T10:15:00Z"
   }
   ```
 
-\---
+---
 
-### `CHK-02`: POST `/api/v1/orders` (Tạo đơn hàng chính thức)
-
-* **Quyền:** `Buyer`
-* **Cơ chế phòng vệ:**
-
-  * **Atomic Pop**: Xóa ngay phiên `quoteId` khỏi `IDistributedCache` để triệt tiêu Race Condition và lỗi trừ tiền 2 lần khi người dùng bấm liên tiếp.
-  * **Asymmetric Price Drift Policy**: Kiểm tra đối soát giá với `CatalogService`. Nếu có sản phẩm **Tăng giá**: Chặn đơn và ném `PRICE\\\_CHANGED` (409) kèm cập nhật giá mới vào Cart để lần bấm sau không bị chặn. Nếu sản phẩm **Giảm giá**: Tự động áp dụng mức giá rẻ hơn (`appliedPriceDrops`), không chặn đơn. Đóng băng giá sau khi tạo đơn (`Post-Checkout Price Lock`).
-  * **Hybrid Payment Expiration**: Áp dụng Passive Guard kiểm tra quá hạn khi truy vấn API và Active Sweeper nền quét định kỳ. Tự động hủy đơn, giải phóng voucher và nhả kho Fulfillment.
-  * **Khóa giữ kho 15 phút**: Gọi `ReserveStockAsync` tại `FulfillmentService`. Ném lỗi `INSUFFICIENT\\\_STOCK` (400) nếu hết hàng.
-  * **Idempotency Key**: Gọi `\\\_walletClient.CheckoutDirectPaymentAsync` kèm `idempotencyKey = "quote-wallet-{quoteId}"`.
-  * **Compensation Circuit Breaker**: Nếu `\\\_dbContext.SaveChangesAsync()` ném ngoại lệ (DB crash, constraint failure), hệ thống tự động gọi `\\\_fulfillmentClient.ReleaseStockAsync` nhả kho và `\\\_walletClient.RefundOrderPaymentAsync` hoàn lại 100% tiền ví với `idempotencyKey = "compensation-db-{orderId}"`. Ném lỗi `ORDER\\\_CREATION\\\_FAILED` (500).
+### `CHK-02 / R76`: Tạo Đơn Hàng Chính Thức
+* **Endpoint:** `POST /api/v1/orders`
+* **Quyền:** `buyer`
 * **Request Body:**
-
-```json
+  ```json
   {
     "quoteId": "e2a1c4b8-9999-4d8e-b123-5a6b7c8d9e0f",
     "paymentMethod": "Wallet",
-    "shippingAddress": "123 Le Loi, Phuong Ben Nghe, Quan 1, TP.HCM",
-    "contactPhone": "0901234567",
-    "note": "Giao giờ hành chính giúp em"
+    "shippingAddress": "123 Le Loi, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh",
+    "contactPhone": "0901234567"
   }
   ```
-
-* **Response (201 Created):**
-
-```json
+* **Các chốt chặn bảo vệ sống còn (Resilience Shield):**
+  1. **Atomic Pop**: Đọc và xóa tức thì key `checkout_quote:{quoteId}` khỏi Cache để triệt tiêu Race Condition và lỗi trừ tiền 2 lần khi bấm liên tiếp. Nếu không tìm thấy $\rightarrow$ Báo lỗi `QUOTE_EXPIRED` (400).
+  2. **Asymmetric Price Drift Policy**: Quét lại giá Catalog `:8002` qua `POST /api/v1/internal/variants`. Nếu sản phẩm **Tăng giá** $\rightarrow$ Hard block HTTP 409 `PRICE_CHANGED` và cập nhật giá mới vào Cart. Nếu sản phẩm **Giảm giá** $\rightarrow$ Tự động áp dụng giá rẻ hơn (`appliedPriceDrops`).
+  3. **Giữ kho 15 phút**: Gọi Fulfillment `:8006` (`POST /api/v1/internal/inventories/reservations`).
+  4. **Thanh toán Ví**: Gọi Wallet `:8008` (`POST /api/v1/internal/wallet/orders/{orderId}/payment`). Thành công $\rightarrow$ Ghi nhận `TransactionId`, gọi Fulfillment trừ kho vĩnh viễn (`CommitStockAsync`), đơn chuyển `Paid`.
+  5. **Compensation Circuit Breaker**: Nếu `SaveChangesAsync()` phát sinh lỗi kết nối DB $\rightarrow$ Tự động gọi Fulfillment nhả kho và gọi Wallet hoàn tiền ví 100% với idempotency key `compensation-db-{orderId}`.
+* **Response (HTTP 201 Created):**
+  ```json
   {
     "orderId": "6a1b2c3d-7777-4e8f-9a0b-1c2d3e4f5a07",
-    "orderNo": "ORD-20261101-9A0B1C",
-    "totalAmount": 780000.00,
+    "orderNo": "ORD-20261105-9A0B1C",
+    "totalAmount": 530000.0,
     "status": "Paid",
-    "paymentDeadlineAt": "2026-11-01T10:15:00Z",
-    "paymentUrl": null,
-    "subOrderIds": \\\[
+    "paymentDeadlineAt": "2026-11-05T10:15:00Z",
+    "subOrderIds": [
       "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08"
     ],
-    "createdAt": "2026-11-01T10:00:00Z"
+    "appliedPriceDrops": null
   }
   ```
 
-\---
+---
 
-# PHẦN 4: BOUNDED CONTEXT 3 — VÒNG ĐỜI ĐƠN HÀNG \& VẬN CHUYỂN (`ORD-01` .. `ORD-13`)
+# PHẦN 4: BOUNDED CONTEXT 3 — VÒNG ĐỜI ĐƠN HÀNG & VẬN CHUYỂN (`ORD-01` .. `ORD-13`)
 
-### Bảng tra cứu 8 API Quản lý Đơn hàng:
+### Bảng tra cứu API Đơn hàng & Vận chuyển (`OrdersController`):
 
-|Mã|Method|Path|Tên nghiệp vụ|Quyền|
-|:-:|:-:|-|-|:-:|
-|**`ORD-01`**|`GET`|`/api/v1/orders`|Danh sách lịch sử đơn hàng của tôi (phân trang)|`Buyer`|
-|**`ORD-02`**|`GET`|`/api/v1/orders/{orderId}`|Chi tiết đơn hàng cha (Master Order)|`Buyer, Admin`|
-|**`ORD-02B`**|`GET`|`/api/v1/sub-orders/{subOrderId}`|Chi tiết đơn con của Shop (Single DTO)|`Buyer, Seller, Admin`|
-|**`ORD-04`**|`POST`|`/api/v1/orders/{orderId}/accept`|Người bán tiếp nhận đơn con (`Confirmed`)|`Seller`|
-|**`ORD-05`**|`POST`|`/api/v1/orders/{orderId}/reject`|Người bán từ chối đơn con (`Cancelled` + `SellerRejected`)|`Seller`|
-|**`ORD-06`**|`POST`|`/api/v1/orders/{orderId}/cancel`|Người mua hủy đơn hàng (`PendingPayment`)|`Buyer, Admin`|
-|**`ORD-08`**|`GET`|`/api/v1/shipments/order/{orderId}`|Theo dõi tiến độ vận chuyển đơn hàng|`Buyer, Seller`|
-|**`ORD-13`**|`POST`|`/api/v1/sub-orders/{subOrderId}/refund`|Khởi tạo yêu cầu hoàn tiền cho đơn con|`Buyer, Admin`|
+| Mã | Method | Path | Tên nghiệp vụ | Quyền |
+| :-: | :-: | - | - | :-: |
+| **`ORD-01 / R78`** | `GET` | `/api/v1/orders` | Danh sách lịch sử đơn hàng của tôi (phân trang DB) | `buyer` |
+| **`ORD-02 / R77`** | `GET` | `/api/v1/orders/{orderId}` | Chi tiết đơn hàng cha (kèm Passive Guard) | `buyer`, `admin` |
+| **`ORD-02B / R79`**| `GET` | `/api/v1/sub-orders/{subOrderId}` | Chi tiết đơn con của Shop (Single DTO) | `buyer`, `seller`, `admin` |
+| **`ORD-02C`** | `GET` | `/api/v1/sub-orders` | Danh sách đơn con của Shop (phân trang DB) | `seller` |
+| **`ORD-04 / R83`** | `POST` | `/api/v1/orders/{orderId}/accept` | Shop tiếp nhận đơn con (`Confirmed` + tạo vận đơn GHN) | `seller` |
+| **`ORD-05 / R84`** | `POST` | `/api/v1/orders/{orderId}/reject` | Shop từ chối đơn con (Nhả kho mục tiêu + hoàn tiền ví tự động) | `seller` |
+| **`ORD-06 / R80`** | `POST` | `/api/v1/orders/{orderId}/cancel` | Người mua hủy đơn đang chờ thanh toán | `buyer` |
+| **`ORD-07`** | `POST` | `/api/v1/sub-orders/{subOrderId}/confirm-receipt` | Người mua xác nhận nhận hàng & giải ngân ví Seller | `buyer` |
+| **`ORD-08 / R87`** | `GET` | `/api/v1/shipments/order/{orderId}` | Tra cứu danh sách vận đơn và tiến độ giao hàng | `buyer`, `seller` |
+| **`ORD-13 / R99`** | `POST` | `/api/v1/sub-orders/{subOrderId}/refund` | Khởi tạo yêu cầu hoàn tiền cho đơn con | `buyer` |
+| **`LEGACY`** | `GET` | `/api/v1/orders/buyer/{buyerId}` | Tra cứu đơn hàng theo `buyerId` (Tương thích ngược) | `buyer`, `admin` |
 
-\---
+---
 
-### Chi tiết Endpoint Đơn hàng tiêu biểu:
+### Chi tiết Đặc tả Các Endpoint Đơn Hàng:
 
-#### `ORD-02B`: GET `/api/v1/sub-orders/{subOrderId}` (Chi tiết Đơn con của Shop)
-
-* **Response (200 OK):** Trả về đối tượng đơn **`SubOrderDetailResponse`** (Single DTO, không bọc phân trang `PagedData`):
-
-```json
+#### `ORD-01 / R78`: Danh Sách Lịch Sử Đơn Hàng (Phân Trang DB)
+* **Endpoint:** `GET /api/v1/orders?page=1&pageSize=20&status=Paid`
+* **Response (HTTP 200 OK):**
+  ```json
   {
-    "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
-    "subOrderNo": "SUB-20261101-8B0C2D",
+    "items": [
+      {
+        "id": "6a1b2c3d-7777-4e8f-9a0b-1c2d3e4f5a07",
+        "orderNo": "ORD-6A1B2C3D",
+        "totalAmount": 530000.0,
+        "status": "Paid",
+        "paymentDeadlineAt": "2026-11-05T10:15:00Z",
+        "subOrderCount": 1,
+        "createdAt": "2026-11-05T10:00:00Z"
+      }
+    ],
+    "pagination": {
+      "pageIndex": 1,
+      "pageSize": 20,
+      "totalCount": 1,
+      "totalPages": 1,
+      "hasPreviousPage": false,
+      "hasNextPage": false
+    }
+  }
+  ```
+
+#### `ORD-02 / R77`: Chi Tiết Đơn Hàng Cha (Master Order)
+* **Endpoint:** `GET /api/v1/orders/{orderId}`
+* **Cơ chế:** Kích hoạt Passive Guard tự động hủy đơn, nhả kho và giải phóng voucher nếu đơn `PendingPayment` quá hạn 15 phút. Thẩm định quyền sở hữu `order.BuyerId == currentUserId`.
+
+#### `ORD-02B / R79`: Chi Tiết Đơn Con Của Shop (Single DTO)
+* **Endpoint:** `GET /api/v1/sub-orders/{subOrderId}`
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "id": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
+    "subOrderNo": "SUB-20261105-8B0C2D",
     "orderId": "6a1b2c3d-7777-4e8f-9a0b-1c2d3e4f5a07",
     "buyerId": "11111111-1111-1111-1111-000000000004",
-    "sellerId": "5e9d1c2b-7f3a-4d8e-9c1b-2a4f6d8e0b12",
-    "shopName": "Shop Công Nghệ",
+    "sellerId": "shop1111-1111-1111-1111-000000000001",
+    "shopName": "Shop shop1111",
     "status": "Paid",
     "paymentMethod": "Wallet",
     "shippingAddress": {
       "receiverName": "Nguyen Van A",
       "contactPhone": "0901234567",
       "street": "123 Le Loi",
-      "ward": "Ben Nghe",
-      "district": "Quan 1",
-      "province": "TP.HCM",
+      "ward": "Phường Bến Nghé",
+      "district": "Quận 1",
+      "province": "TP. Hồ Chí Minh",
       "ghnDistrictId": 1442,
       "ghnWardCode": "20101",
-      "fullAddressText": "123 Le Loi, Phuong Ben Nghe, Quan 1, TP.HCM"
+      "fullAddressText": "123 Le Loi, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh"
     },
     "contactPhone": "0901234567",
-    "itemsAmount": 750000.00,
-    "productDiscountAmount": 0.00,
-    "shopDiscountAmount": 0.00,
-    "systemDiscountAmount": 0.00,
-    "discountAmount": 0.00,
-    "shippingFeeAmount": 30000.00,
-    "totalAmount": 780000.00,
-    "createdAt": "2026-11-01T10:00:00Z",
-    "items": \\\[
+    "itemsAmount": 500000.0,
+    "productDiscountAmount": 0.0,
+    "shopDiscountAmount": 0.0,
+    "systemDiscountAmount": 0.0,
+    "discountAmount": 0.0,
+    "shippingFeeAmount": 30000.0,
+    "totalAmount": 530000.0,
+    "createdAt": "2026-11-05T10:00:00Z",
+    "items": [
       {
-        "orderItemId": "c2d3e4f5-9999-4a0b-9c1d-3e4f5a6b7c09",
-        "productId": "9f8e7d6c-2222-4b3c-8d4e-5f6a7b8c9d02",
-        "skuId": "7c6b5a49-3333-4c4d-9e5f-6a7b8c9d0e03",
-        "productName": "Bàn phím cơ không dây",
-        "skuCode": "KB-WL-01",
-        "quantity": 1,
-        "unitPrice": 750000.00,
-        "lineTotal": 750000.00
+        "id": "c2d3e4f5-9999-4a0b-9c1d-3e4f5a6b7c09",
+        "productId": "p1111111-1111-1111-1111-000000000001",
+        "skuId": "s1111111-1111-1111-1111-000000000001",
+        "productName": "Áo Thun Cotton Nexus",
+        "skuCode": "AT-BLK-L",
+        "quantity": 2,
+        "unitPrice": 250000.0,
+        "lineTotal": 500000.0
       }
     ]
   }
   ```
 
-#### `ORD-05`: POST `/api/v1/orders/{orderId}/reject` (Shop từ chối đơn)
-
-* **Request Body:**
-
-```json
+#### `ORD-04 / R83`: Shop Tiếp Nhận Đơn Con
+* **Endpoint:** `POST /api/v1/orders/{orderId}/accept`
+* **Request Body:** `{ "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08" }`
+* **Quy tắc:** Chuyển `SubOrder.Status = Confirmed`, tự động gọi Fulfillment `:8006` (`POST /api/v1/internal/shipments`) tạo vận đơn GHN.
+* **Response (HTTP 200 OK):**
+  ```json
   {
     "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
-    "reasonCode": "OutOfStock",
-    "reasonText": "Sản phẩm tạm thời hết hàng trong kho."
+    "status": "Confirmed",
+    "acceptedAt": "2026-11-05T10:05:00Z"
   }
   ```
 
-* **Response (200 OK):**
-
-```json
+#### `ORD-05 / R84`: Shop Từ Chối Đơn Con
+* **Endpoint:** `POST /api/v1/orders/{orderId}/reject`
+* **Request Body:**
+  ```json
+  {
+    "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
+    "reasonCode": "OutOfStock",
+    "reasonText": "Hết màu đen size L"
+  }
+  ```
+* **Cơ chế kỹ thuật:**
+  1. Chuyển `SubOrder.Status = Cancelled`. Đơn của các shop khác vẫn giữ nguyên vẹn.
+  2. Nếu đơn đã thanh toán, tự động tạo bản ghi `OrderRefund` (Status: `Requested`).
+  3. **Targeted Stock Release**: Gọi Fulfillment Service:
+     `POST /api/v1/internal/inventories/reservations/{orderId}/release-items`
+     Payload: `{ "items": [{ "skuId": "s1111111-...", "quantity": 2 }], "reason": "SubOrderRejected" }`.
+* **Response (HTTP 200 OK):**
+  ```json
   {
     "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
     "status": "Cancelled",
     "cancellationReason": "OutOfStock",
-    "rejectedAt": "2026-11-01T10:05:00Z"
+    "rejectedAt": "2026-11-05T10:05:00Z"
   }
   ```
 
-\---
+#### `ORD-06 / R80`: Người Mua Hủy Đơn Chờ Thanh Toán
+* **Endpoint:** `POST /api/v1/orders/{orderId}/cancel`
+* **Request Body:** `{ "reasonCode": "BuyerChangedMind", "reasonText": "Muốn đổi địa chỉ khác" }`
+* **Response (HTTP 200 OK):** `{ "orderId": "...", "status": "Cancelled", "cancelledAt": "..." }`
 
-# PHẦN 5: HỢP ĐỒNG GỌI LIÊN DỊCH VỤ (OUTBOUND TYPED REST CONTRACTS)
+#### `ORD-08 / R87`: Theo Dõi Vận Chuyển Đơn Hàng
+* **Endpoint:** `GET /api/v1/shipments/order/{orderId}`
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "orderId": "6a1b2c3d-7777-4e8f-9a0b-1c2d3e4f5a07",
+    "orderNo": "ORD-6A1B2C3D",
+    "shipments": [
+      {
+        "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
+        "subOrderNo": "SUB-20261105-8B0C2D",
+        "sellerId": "shop1111-1111-1111-1111-000000000001",
+        "shopName": "Shop shop1111",
+        "status": "Shipping",
+        "carrierCode": "GHN",
+        "trackingCode": "GHN-SUB-20261105-8B0C2D",
+        "shippedAt": "2026-11-05T11:00:00Z",
+        "deliveredAt": null
+      }
+    ]
+  }
+  ```
 
-Commerce Service giao tiếp đồng bộ với 3 external microservices qua Typed HTTP Clients:
+#### `ORD-13 / R99`: Khởi Tạo Yêu Cầu Hoàn Tiền Đơn Con
+* **Endpoint:** `POST /api/v1/sub-orders/{subOrderId}/refund`
+* **Request Body:** `{ "reason": "DamagedItem", "note": "Sản phẩm bị lỗi mép" }`
+* **Response (HTTP 200 OK):** `{ "subOrderId": "...", "status": "RefundRequested", "requestedAt": "..." }`
 
-### 5.1. Wallet Service (`:8008` REST) — `IWalletClient`
+---
 
-1. **Trừ tiền ví trực tiếp (`R181`):**
+# PHẦN 5: WEBHOOK TIẾP NHẬN TRẠNG THÁI GIAO VẬN
 
-   * **Endpoint:** `POST /api/v1/wallets/checkout/direct`
-   * **Headers:** `x-user-id`, `Idempotency-Key: quote-wallet-{quoteId}`
-   * **Payload:** `{ "orderId": "guid", "userId": "guid", "amount": 780000.00 }`
-2. **Lấy số dư khả dụng thời gian thực:**
+### Endpoint: `POST /api/v1/sub-orders/{subOrderId}/delivery-status`
+* **Bảo mật:** Bắt buộc Header `X-Internal-Service-Key: <secret>`. Nếu thiếu hoặc không khớp $\rightarrow$ Trả HTTP 403 `FORBIDDEN`.
+* **Request Body:**
+  ```json
+  {
+    "status": "Delivered",
+    "deliveredAt": "2026-11-05T14:30:00Z"
+  }
+  ```
+* **Ma trận 9 trạng thái giao vận từ Carrier:**
+  1. `ReadyToPick`, `Picking`, `Packed`: Cập nhật timestamp chuẩn bị hàng (Idempotent 200 OK).
+  2. `HandedOver`, `InTransit`, `Shipped`: Chuyển `SubOrderStatus.Shipped`, ghi nhận `ShippedAt`.
+  3. `Delivered`: Chuyển `SubOrderStatus.Delivered`, ghi nhận `DeliveredAt`.
+  4. `Cancelled`: Chuyển `SubOrderStatus.Cancelled`, ghi nhận `CancelledAt`.
+  5. `DeliveryFailed`, `Returned`: Chuyển `SubOrderStatus.Cancelled`, tự động ghi nhận bản ghi `OrderCancellation` (Lý do: `DeliveryFailed` hoặc `PackageReturned`) và tự động tạo `OrderRefund` (Status: `Requested`) nếu đơn đã thanh toán.
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
+    "status": "Delivered",
+    "updatedAt": "2026-11-05T14:30:00Z"
+  }
+  ```
 
-   * **Endpoint:** `GET /api/v1/wallets/me/balance`
-   * **Headers:** `x-user-id`
-   * **Response:** `{ "balance": 1500000.00 }`
-3. **Hoàn tiền ví tự động:**
+---
 
-   * **Endpoint:** `POST /api/v1/wallets/refund`
-   * **Headers:** `x-user-id`, `Idempotency-Key: refund-suborder-{subOrderId}` hoặc `compensation-db-{orderId}`
-   * **Payload:** `{ "subOrderId": "guid", "orderId": "guid", "userId": "guid", "amount": 250000.00, "reason": "string" }`
+# PHẦN 6: HỢP ĐỒNG OUTBOUND TYPED REST CLIENTS (GỌI LIÊN DỊCH VỤ)
 
-### 5.2. Fulfillment Service (`:8005` REST) — `IFulfillmentClient`
+Commerce Service gọi ra bên ngoài thông qua các Typed HTTP Clients được cấu hình tại `Commerce.Infrastructure/DependencyInjection.cs`:
 
-1. **Kiểm tra tồn kho đơn lẻ (CART-04, CART-05):** `POST /api/v1/fulfillment/inventory/check` $\\rightarrow$ `{ "skuId": "guid", "quantity": 2 }`
-2. **Quét tồn kho hàng loạt cho giỏ hàng (CART-01, CART-03):** `POST /api/v1/fulfillment/inventory/batch-check` $\\rightarrow$ `{ "skuIds": \\\["guid-1", "guid-2"] }`
-3. **Giữ kho tạm thời 15 phút (CHK-02):** `POST /api/v1/fulfillment/inventory/reserve` $\\rightarrow$ `{ "orderId": "guid", "ttlMinutes": 15, "items": \\\[...] }`
-4. **Trừ kho vĩnh viễn sau thanh toán / COD:** `POST /api/v1/fulfillment/inventory/commit` $\\rightarrow$ `{ "orderId": "guid" }`
-5. **Nhả tồn kho khi hủy đơn / timeout:** `POST /api/v1/fulfillment/inventory/release` $\\rightarrow$ `{ "orderId": "guid" }`
-6. **Nhả tồn kho có chủ đích của 1 Shop bị từ chối:** `POST /api/v1/fulfillment/inventory/suborder/release` $\\rightarrow$ `{ "subOrderId": "guid", "items": \\\[...] }`
-7. **Tính cước vận chuyển GHN động (CHK-01):** `POST /api/v1/fulfillment/shipping/quote` $\\rightarrow$ `{ "sellerId": "guid", "toDistrictId": 1442, "toWardCode": "20101" }`
-8. **Tạo vận đơn GHN tự động khi Shop xác nhận đơn:** `POST /api/v1/fulfillment/shipments` $\\rightarrow$ `{ "subOrderId": "guid" }`
+### 6.1. Catalog Service (`:8002` REST) — `ICatalogClient`
+1. **Batch tra cứu thông tin biến thể SKU (`POST /api/v1/internal/variants`):**
+   * Payload: `{ "variantIds": ["guid-1", "guid-2"] }` (Tối đa 100 IDs/chunk).
+   * Response: `{ "items": [{ "variantId", "productId", "sellerId", "productName", "price", "isPurchasable" }] }`.
+2. **Kiểm tra tính hợp lệ khi đổi biến thể (`POST /api/v1/internal/catalog/skus/validate-variant-switch`):**
+   * Payload: `{ "currentSkuId": "guid", "newSkuId": "guid" }`.
+   * Response: `{ "isValid": true, "productId": "guid", "newUnitPrice": 250000.0, "isPurchasable": true }`.
 
-### 5.3. Catalog Service (`:8002` REST) — `ICatalogClient`
+### 6.2. Fulfillment Service (`:8006` REST) — `IFulfillmentClient`
+1. **Kiểm tra tồn kho đơn lẻ:** `GET /api/v1/inventories/{skuId}`
+2. **Batch kiểm tra tồn kho giỏ hàng:** `POST /api/v1/inventories/by-skus` (Payload: `["skuId1", "skuId2"]`)
+3. **Giữ kho tạm thời 15 phút:** `POST /api/v1/internal/inventories/reservations`
+   * Payload: `{ "referenceId": "orderId", "holdMinutes": 15, "items": [{ "skuId", "quantity" }] }`
+4. **Trừ kho vĩnh viễn (Commit):** `POST /api/v1/internal/inventories/reservations/{orderId}/commit`
+5. **Nhả tồn kho khi hủy đơn cha:** `POST /api/v1/internal/inventories/reservations/{orderId}/release?reason=OrderCancelled`
+6. **Batch nhả kho cho nhiều đơn quá hạn:** `POST /api/v1/internal/inventories/reservations/batch-release`
+   * Payload: `{ "orderIds": ["orderId1", "orderId2"] }`
+7. **Nhả kho có mục tiêu cho SubOrder bị từ chối:** `POST /api/v1/internal/inventories/reservations/{orderId}/release-items`
+   * Payload: `{ "items": [{ "skuId", "quantity" }], "reason": "SubOrderRejected" }`
+8. **Tính cước vận chuyển GHN động:** `POST /api/v1/internal/shipping/quote`
+   * Payload: `{ "sellerId": "guid", "toDistrictId": 1442, "toWardCode": "20101", "items": [{ "skuId", "quantity", "weightGrams": 200 }] }`
+   * Response: `{ "feeAmount": 30000.0 }`
+9. **Tạo vận đơn GHN tự động:** `POST /api/v1/internal/shipments`
+   * Payload: `{ "subOrderId": "guid" }`
 
-1. **Lấy metadata \& giá niêm yết thời gian thực:** `GET /api/v1/catalog/skus/{skuId}`
+### 6.3. Wallet Service (`:8008` REST) — `IWalletClient`
+1. **Trừ tiền ví trực tiếp theo đơn hàng:** `POST /api/v1/internal/wallet/orders/{orderId}/payment`
+   * Headers: `Authorization: Bearer <token>`, `x-user-id: <guid>`
+   * Payload: `{ "amount": 530000.0 }`
+   * Response: `{ "id": "tx-guid", "balanceAfter": 970000.0, "status": "Success" }`
+2. **Lấy số dư ví thời gian thực:** `GET /api/v1/wallets/me`
+   * Response: `{ "balance": 1500000.0 }`
 
-   * Phục vụ kiểm tra biến động giá bất đối xứng (`Asymmetric Price Drift`) và kiểm tra sản phẩm còn bán (`IsPurchasable`).
+---
 
-> \\\*\\\*Lưu ý:\\\*\\\* Commerce Service \\\*\\\*tuyệt đối không tạo Controller\\\*\\\* cho các route trên vì chúng thuộc quyền sở hữu của các External Services tương ứng.
+# PHẦN 7: BẢNG TRA CỨU MÃ LỖI HỆ THỐNG CHUẨN RFC 9110
 
-\---
+| HTTP Status | Mã Lỗi (`errorCode`) | Ngữ Cảnh Xảy Ra | Câu Thông Báo Tiếng Anh Chuẩn (Sentence Case) |
+| :-: | - | - | - |
+| **400** | `VAL_INVALID_INPUT` | Body thiếu trường hoặc dữ liệu sai định dạng | `"Shipping address fields cannot be empty."` |
+| **400** | `CART_EMPTY` | Giỏ hàng rỗng hoặc không có món hợp lệ khi checkout | `"No valid items selected for checkout."` |
+| **400** | `QUOTE_EXPIRED` | Báo giá hết hạn 15m hoặc bấm đúp nút Đặt hàng | `"Checkout quote has expired, is invalid, or is currently being processed."` |
+| **400** | `INSUFFICIENT_STOCK` | Kho không đủ số lượng tồn khả dụng | `"One or more items in the order have insufficient stock."` |
+| **400** | `MAX_QUANTITY_EXCEEDED` | Mua vượt quá 99 chiếc/món | `"Quantity per item cannot exceed 99."` |
+| **400** | `MAX_ITEMS_REACHED` | Vượt quá 50 món khác nhau trong giỏ | `"Cart cannot contain more than 50 distinct items."` |
+| **400** | `INVALID_STATUS` | Chuyển trạng thái đơn không hợp lệ | `"Sub-order cannot be accepted in its current status."` |
+| **400** | `ORDER_CANNOT_BE_CANCELLED` | Hủy đơn không ở trạng thái PendingPayment | `"Order cannot be cancelled in its current status."` |
+| **400** | `CATALOG_SKU_INACTIVE` | Sản phẩm đã ngừng bán trên sàn | `"Product is no longer available for purchase."` |
+| **400** | `INVALID_DELIVERY_STATUS` | Webhook gửi status giao vận lạ | `"The provided delivery status is not supported."` |
+| **403** | `FORBIDDEN` | Truy cập đơn hàng/giỏ hàng của người khác | `"You do not have permission to access this order."` |
+| **403** | `FORBIDDEN` | Webhook thiếu hoặc sai X-Internal-Service-Key | `"Access denied: Missing or invalid X-Internal-Service-Key header."` |
+| **404** | `CART_ITEM_NOT_FOUND` | Không tìm thấy dòng sản phẩm trong giỏ | `"Cart item not found."` |
+| **404** | `ORDER_NOT_FOUND` | Không tìm thấy đơn hàng cha | `"Order was not found."` |
+| **404** | `SUB_ORDER_NOT_FOUND` | Không tìm thấy đơn hàng con | `"SubOrder was not found."` |
+| **404** | `CATALOG_SKU_NOT_FOUND` | SKU không tồn tại trong Catalog Service | `"Product SKU was not found in catalog."` |
+| **409** | `PRICE_CHANGED` | Sản phẩm bị tăng giá lúc bấm Đặt hàng | `"Price of '...' has increased from ... to .... Cart prices have been refreshed."` |
+| **500** | `ORDER_CREATION_FAILED` | Sập DB lúc tạo đơn, đã kích hoạt bù trừ | `"Failed to save order to database. Automatic compensation refund initiated."` |
+| **503** | `STOCK_CHECK_UNAVAILABLE` | Kho Fulfillment tạm thời không phản hồi | `"Warehouse inventory service is temporarily unreachable."` |
+| **503** | `FULFILLMENT_SERVICE_UNAVAILABLE` | Tính cước GHN hoặc tạo vận đơn lỗi | `"Fulfillment service is temporarily unreachable."` |
+| **503** | `CATALOG_SERVICE_UNAVAILABLE` | Catalog Service tạm thời mất kết nối | `"Product catalog service is temporarily unreachable."` |
 
-# PHẦN 6: BẢNG TRA CỨU MÃ LỖI HỆ THỐNG CHUẨN RFC 9110
+---
 
-Frontend bắt lỗi dựa trên trường `errorCode` để xử lý giao diện người dùng:
+# PHẦN 8: BỘ TYPESCRIPT TYPE DEFINITIONS HOÀN CHỈNH (FRONTEND DTOs)
 
-|HTTP Status|errorCode (`SCREAMING\\\_SNAKE`)|Message mẫu chuẩn Sentence Case|Hướng dẫn xử lý trên giao diện Frontend|
-|:-:|-|-|-|
-|`400`|`CART\\\_EMPTY`|`"No valid items selected for checkout."`|Giỏ hàng rỗng. Disable nút thanh toán.|
-|`400`|`INSUFFICIENT\\\_STOCK`|`"Insufficient stock available in warehouse."`|Hết tồn kho vật lý tại kho Fulfillment. Hiển thị thông báo hoặc làm xám món hàng.|
-|`409`|`PRICE\\\_CHANGED`|`"One or more item prices have increased. Cart prices have been refreshed. Please review your order before proceeding."`|Giá sản phẩm tăng (Flash Sale kết thúc). Giỏ đã cập nhật giá mới, yêu cầu xác nhận trước khi đặt lại.|
-|`400`|`CATALOG\\\_SKU\\\_INACTIVE`|`"The specified product SKU is unavailable or out of stock."`|Sản phẩm đã bị Shop ngưng bán hoặc ẩn khỏi Catalog.|
-|`400`|`QUOTE\\\_EXPIRED`|`"Checkout quote has expired, is invalid, or is currently being processed."`|Báo giá quá hạn 15 phút hoặc đang được xử lý. Yêu cầu tính lại tiền.|
-|`400`|`VAL\\\_INVALID\\\_INPUT`|`"Shipping address fields cannot be empty."`|Thiếu địa chỉ/SĐT. Focus vào ô nhập liệu lỗi.|
-|`400`|`CART\\\_ITEM\\\_LIMIT\\\_EXCEEDED`|`"Maximum quantity allowed per item is 99."`|Vượt quá 99 món. Chặn nút tăng số lượng.|
-|`400`|`ORDER\\\_CANNOT\\\_BE\\\_CANCELLED`|`"Order cannot be cancelled in its current status."`|Đơn đã thanh toán hoặc đã giao. Ẩn nút "Hủy đơn".|
-|`400`|`INVALID\\\_STATUS`|`"Sub-order cannot be processed in its current status."`|Thao tác không hợp lệ với trạng thái hiện tại của đơn hàng.|
-|`401`|`UNAUTHORIZED`|`"Authentication credentials were not provided or invalid."`|Hết hạn phiên đăng nhập. Chuyển hướng về màn hình Login.|
-|`403`|`FORBIDDEN`|`"You do not have permission to access this resource."`|Cố tình truy cập đơn của người khác. Báo cấm quyền.|
-|`404`|`CART\\\_NOT\\\_FOUND`|`"Shopping cart was not found."`|Không tìm thấy giỏ hàng của người dùng.|
-|`404`|`CART\\\_ITEM\\\_NOT\\\_FOUND`|`"Cart item was not found."`|Sản phẩm đã bị xóa trước đó. Reload lại giỏ.|
-|`404`|`CATALOG\\\_SKU\\\_NOT\\\_FOUND`|`"The specified product SKU was not found in catalog."`|Không tìm thấy thông tin sản phẩm trong Catalog.|
-|`404`|`ORDER\\\_NOT\\\_FOUND`|`"Order was not found."`|Đơn hàng không tồn tại. Hiển thị màn hình 404 Empty.|
-|`404`|`SUB\\\_ORDER\\\_NOT\\\_FOUND`|`"Sub-order was not found."`|Đơn con của Shop không tồn tại.|
-|`500`|`ORDER\\\_CREATION\\\_FAILED`|`"An error occurred while saving the order. All inventory allocations and payments have been safely rolled back."`|Lỗi lưu trữ DB; hệ thống đã tự động hoàn tiền và hoàn kho. Mời khách đặt lại.|
-
-\---
-
-# PHẦN 7: BỘ TYPESCRIPT TYPE DEFINITIONS HOÀN CHỈNH (FRONTEND DTOs)
-
-Dành cho lập trình viên Frontend (React, Vue, React Native, Flutter) copy dùng ngay:
+Dành cho Frontend Web/Mobile và SDK Client:
 
 ```typescript
 // =============================================================================
 // COMMERCE SERVICE FRONTEND CONTRACT TYPES
 // =============================================================================
 
-export type PaymentMethod = 'Wallet' | 'VnPay' | 'Cod';
-export type OrderStatus = 'PendingPayment' | 'PaymentProcessing' | 'Paid' | 'Cancelled' | 'Expired';
-export type SubOrderStatus = 'PendingPayment' | 'Paid' | 'Confirmed' | 'Shipping' | 'Delivered' | 'Completed' | 'Cancelled' | 'Refunded';
-export type CancellationReasonCode = 'BuyerChangedMind' | 'OutOfStock' | 'PaymentTimeout' | 'SellerRejected' | 'Other';
+export type PaymentMethod = 'Cod' | 'Wallet' | 'VNPay';
+export type OrderStatus = 'PendingPayment' | 'Paid' | 'Processing' | 'Completed' | 'Cancelled';
+export type SubOrderStatus = 'PendingPayment' | 'Paid' | 'Confirmed' | 'Shipping' | 'Delivered' | 'Completed' | 'Cancelled';
+export type CancellationReasonCode = 'BuyerChangedMind' | 'OutOfStock' | 'PaymentTimeout' | 'SellerRejected' | 'DeliveryFailed' | 'PackageReturned' | 'Other';
 
 // -----------------------------------------------------------------------------
 // 1. Giỏ hàng (Cart)
 // -----------------------------------------------------------------------------
-export interface CartItemResponse {
-  cartItemId: string;
+export interface CartItemDto {
+  id: string;
+  cartId: string;
   productId: string;
   skuId: string;
   sellerId: string;
-  productName: string;
-  skuAttributes?: string;
-  imageUrl?: string;
+  productNameSnapshot: string;
+  skuCodeSnapshot?: string | null;
   quantity: number;
-  unitPrice: number;
+  unitPriceSnapshot: number;
   lineTotal: number;
+  currency: string;
   isAvailable: boolean;
-  disabledReason?: 'OUT\\\_OF\\\_STOCK' | 'PRODUCT\\\_INACTIVE' | string | null;
+  availableStock: number;
+  disabledReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CartResponse {
-  cartId: string;
+  id: string;
   buyerId: string;
+  status: string;
   itemCount: number;
   subtotalAmount: number;
-  items: CartItemResponse\\\[];
+  items: CartItemDto[];
+  lastActivityAt: string;
 }
 
 export interface CartSummaryResponse {
   cartId: string;
-  itemCount: number;
+  totalItemCount: number;
   subtotalAmount: number;
+  hasUnavailableItems: boolean;
 }
 
 export interface ShopCartGroupResponse {
   sellerId: string;
   shopName: string;
-  distinctItemCount: number;
-  totalQuantity: number;
   shopSubtotal: number;
-  items: CartItemResponse\\\[];
+  items: CartItemDto[];
 }
 
 export interface GroupedCartResponse {
   cartId: string;
-  buyerId: string;
-  totalDistinctItems: number;
-  totalQuantity: number;
-  subtotalAmount: number;
-  shops: ShopCartGroupResponse\\\[];
+  shops: ShopCartGroupResponse[];
+  grandSubtotal: number;
+  totalItemCount: number;
 }
 
 // -----------------------------------------------------------------------------
-// 2. Báo giá \\\& Đặt hàng (Checkout)
+// 2. Báo giá & Đặt hàng (Checkout)
 // -----------------------------------------------------------------------------
 export interface ShippingAddressInput {
   receiverName: string;
@@ -582,17 +790,16 @@ export interface ShippingAddressInput {
   ward: string;
   district: string;
   province: string;
-  ghnDistrictId?: number;
-  ghnWardCode?: string;
+  ghnDistrictId?: number | null;
+  ghnWardCode?: string | null;
 }
 
 export interface CheckoutQuoteRequest {
-  cartItemIds: string\\\[];
+  cartItemIds: string[];
   shippingAddress: ShippingAddressInput;
   contactPhone: string;
   paymentMethod: PaymentMethod;
-  carrierCode?: string;
-  voucherCodes?: string\\\[];
+  voucherCodes?: string[];
 }
 
 export interface ShopQuoteItem {
@@ -608,7 +815,7 @@ export interface ShopQuoteItem {
 export interface ShopOrderQuote {
   sellerId: string;
   shopName: string;
-  items: ShopQuoteItem\\\[];
+  items: ShopQuoteItem[];
   itemsAmount: number;
   productDiscountAmount: number;
   shopDiscountAmount: number;
@@ -618,13 +825,21 @@ export interface ShopOrderQuote {
   totalAmount: number;
 }
 
+export interface PriceDropDto {
+  skuId: string;
+  productName: string;
+  quotedUnitPrice: number;
+  currentUnitPrice: number;
+  savingsAmount: number;
+}
+
 export interface CheckoutQuoteResponse {
   quoteId: string;
   grandTotal: number;
   walletBalance: number;
-  shops: ShopOrderQuote\\\[];
-  appliedVouchers: string\\\[];
-  warnings?: string\\\[];
+  shops: ShopOrderQuote[];
+  appliedVouchers: string[];
+  appliedPriceDrops?: PriceDropDto[] | null;
   expiredAt: string;
 }
 
@@ -633,15 +848,6 @@ export interface CreateOrderRequest {
   paymentMethod: PaymentMethod;
   shippingAddress: string;
   contactPhone: string;
-  note?: string;
-}
-
-export interface PriceDropDto {
-  skuId: string;
-  productName: string;
-  oldPrice: number;
-  newPrice: number;
-  savedAmount: number;
 }
 
 export interface CreateOrderResponse {
@@ -650,14 +856,12 @@ export interface CreateOrderResponse {
   totalAmount: number;
   status: OrderStatus;
   paymentDeadlineAt: string;
-  paymentUrl?: string | null;
-  subOrderIds: string\\\[];
-  createdAt: string;
-  appliedPriceDrops?: PriceDropDto\\\[] | null;
+  subOrderIds: string[];
+  appliedPriceDrops?: PriceDropDto[] | null;
 }
 
 // -----------------------------------------------------------------------------
-// 3. Đơn hàng \\\& Vận chuyển (Orders \\\& Shipments)
+// 3. Đơn hàng & Vận chuyển (Orders & Shipments)
 // -----------------------------------------------------------------------------
 export interface ShippingAddressSnapshot {
   receiverName: string;
@@ -672,18 +876,18 @@ export interface ShippingAddressSnapshot {
 }
 
 export interface SubOrderItemResponse {
-  orderItemId: string;
+  id: string;
   productId: string;
   skuId: string;
   productName: string;
-  skuCode?: string;
+  skuCode?: string | null;
   quantity: number;
   unitPrice: number;
   lineTotal: number;
 }
 
 export interface SubOrderDetailResponse {
-  subOrderId: string;
+  id: string;
   subOrderNo: string;
   orderId: string;
   buyerId: string;
@@ -701,28 +905,17 @@ export interface SubOrderDetailResponse {
   shippingFeeAmount: number;
   totalAmount: number;
   createdAt: string;
-  items: SubOrderItemResponse\\\[];
+  items: SubOrderItemResponse[];
 }
 
 export interface OrderSummaryResponse {
-  orderId: string;
+  id: string;
   orderNo: string;
   totalAmount: number;
-  status: OrderStatus;
+  status: string;
   paymentDeadlineAt: string;
   subOrderCount: number;
   createdAt: string;
-}
-
-export interface OrderResponse {
-  id: string;
-  orderNo: string;
-  buyerId: string;
-  status: OrderStatus;
-  totalAmount: number;
-  paymentDeadlineAt: string;
-  createdAt: string;
-  subOrders: SubOrderDetailResponse\\\[];
 }
 
 export interface SubOrderShipmentInfo {
@@ -733,14 +926,18 @@ export interface SubOrderShipmentInfo {
   status: string;
   carrierCode?: string;
   trackingCode?: string;
-  shippedAt?: string;
-  deliveredAt?: string;
+  shippedAt?: string | null;
+  deliveredAt?: string | null;
 }
 
 export interface ShipmentTrackingResponse {
   orderId: string;
   orderNo: string;
-  shipments: SubOrderShipmentInfo\\\[];
+  shipments: SubOrderShipmentInfo[];
+}
+
+export interface DeliveryStatusWebhookRequest {
+  status: string;
+  deliveredAt?: string | null;
 }
 ```
-

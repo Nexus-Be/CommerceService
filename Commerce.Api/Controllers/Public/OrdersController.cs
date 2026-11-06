@@ -78,6 +78,23 @@ public class OrdersController : ControllerBase
         return Ok(orders);
     }
 
+    /// <summary>Người bán tra cứu danh sách đơn hàng con thuộc Shop của mình, phân trang tại DB.</summary>
+    [HttpGet("/api/v1/sub-orders")]
+    public async Task<IActionResult> ListSellerSubOrders(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] SubOrderStatus? status = null,
+        CancellationToken ct = default)
+    {
+        if (!this.TryGetUserId(out var sellerId, out var authError))
+        {
+            return authError;
+        }
+
+        var response = await _orderService.ListSellerSubOrdersAsync(sellerId, page, pageSize, status, ct);
+        return Ok(response);
+    }
+
     /// <summary>R79: Tra cứu chi tiết đơn hàng con của Shop (Single DTO có discount breakdown và địa chỉ JSONB).</summary>
     [HttpGet("/api/v1/sub-orders/{subOrderId:guid}")]
     public async Task<IActionResult> GetSubOrderDetail([FromRoute] Guid subOrderId, CancellationToken ct)
@@ -156,6 +173,21 @@ public class OrdersController : ControllerBase
 
         var tracking = await _orderService.GetShipmentTrackingAsync(currentUserId, orderId, ct);
         return Ok(tracking);
+    }
+
+    /// <summary>Người mua xác nhận đã nhận hàng (SubOrderStatus to Completed), tự động kích hoạt giải ngân Escrow sang ví Seller.</summary>
+    [HttpPost("/api/v1/sub-orders/{subOrderId:guid}/confirm-receipt")]
+    public async Task<IActionResult> ConfirmSubOrderReceipt(
+        [FromRoute] Guid subOrderId,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var buyerId, out var authError))
+        {
+            return authError;
+        }
+
+        var response = await _orderService.BuyerConfirmSubOrderReceiptAsync(buyerId, subOrderId, ct);
+        return Ok(response);
     }
 
     /// <summary>R99: Khởi tạo yêu cầu hoàn tiền cho đơn hàng con.</summary>

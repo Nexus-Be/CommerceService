@@ -110,13 +110,18 @@ public sealed class CartService : ICartService
             _dbContext.Carts.Add(cart);
         }
 
-        cart.AddOrUpdateItem(
+        var cartItem = cart.AddOrUpdateItem(
             productId: request.ProductId ?? skuInfo.ProductId,
             skuId: skuInfo.SkuId,
             sellerId: skuInfo.SellerId,
             productName: skuInfo.ProductName,
             quantity: request.Quantity,
             unitPrice: skuInfo.UnitPrice);
+
+        if (!_dbContext.CartItems.Local.Any(ci => ci.Id == cartItem.Id))
+        {
+            _dbContext.CartItems.Add(cartItem);
+        }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return MapToDto(cart);

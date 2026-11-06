@@ -132,6 +132,10 @@ public class EndToEndFlowTests : IDisposable
         _mockWalletClient
             .Setup(w => w.RefundOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+
+        _mockWalletClient
+            .Setup(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
     }
 
     public void Dispose()
@@ -578,7 +582,8 @@ public class EndToEndFlowTests : IDisposable
         var refund = await _dbContext.OrderRefunds.FirstOrDefaultAsync(r => r.SubOrderId == subOrderAId);
         refund.Should().NotBeNull();
         refund!.Amount.Should().Be(200000m);
-        refund.Status.Should().Be(RefundStatus.Requested);
+        refund.Status.Should().Be(RefundStatus.Completed);
+        refund.CompletedAt.Should().NotBeNull();
         refund.ReasonCode.Should().Be("SELLER_REJECTED");
 
         // Verify: CHỈ nhả kho của SubOrder A (không nhả kho của SubOrder B) bằng Master OrderId
@@ -589,6 +594,65 @@ public class EndToEndFlowTests : IDisposable
             Times.Once);
 
         _mockFulfillmentClient.Verify(f => f.ReleaseStockAsync(orderId, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task E2E_Flow9_BuyerConfirmReceiptAndEscrowSettlement_ShouldPass()
+    {
+        var orderService = CreateOrderService();
+        var orderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+
+        var order = new Order
+        {
+            Id = orderId,
+            BuyerId = _buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 250000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+
+        var subOrder = new SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-E2E-CONFIRM-01",
+            OrderId = orderId,
+            BuyerId = _buyerId,
+            SellerId = _sellerA,
+            Status = SubOrderStatus.Delivered,
+            PaymentMethod = PaymentMethod.Wallet,
+            ShippingAddress = new ShippingAddressSnapshot("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", "Full Address"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 250000m,
+            TotalAmount = 250000m,
+            SellerReceiveAmount = 237500m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            DeliveredAt = DateTimeOffset.UtcNow.AddHours(-1)
+        };
+
+        order.SubOrders.Add(subOrder);
+        _dbContext.Orders.Add(order);
+        await _dbContext.SaveChangesAsync();
+
+        // Buyer bấm xác nhận đã nhận hàng
+        var confirmResult = await orderService.BuyerConfirmSubOrderReceiptAsync(_buyerId, subOrderId, CancellationToken.None);
+
+        // Assert
+        confirmResult.Status.Should().Be("Completed");
+        confirmResult.EscrowSettled.Should().BeTrue();
+        confirmResult.AmountSettled.Should().Be(237500m);
+
+        var updatedSubOrder = await _dbContext.SubOrders.FindAsync(subOrderId);
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Completed);
+        updatedSubOrder.CompletedAt.Should().NotBeNull();
+
+        // Verify: Lệnh giải ngân sang ví Seller được kích hoạt
+        _mockWalletClient.Verify(w => w.SettleSellerSubOrderAsync(
+            subOrderId,
+            _sellerA,
+            237500m,
+            $"settle-{subOrderId}",
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private class FailingDbCommerce : TestCommerceDbContext

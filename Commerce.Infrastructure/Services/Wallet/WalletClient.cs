@@ -29,7 +29,7 @@ public sealed class WalletClient : IWalletClient
 
     /// <summary>
     /// Hợp đồng chuẩn bàn giao từ WalletService:
-    /// POST /api/v1/internal/wallet/orders/{orderId}/payment
+    /// POST /api/v1/wallets/orders/{orderId}/payment
     /// Header: Authorization: Bearer <buyer JWT>
     /// Body: { "amount": <positive decimal> }
     /// </summary>
@@ -51,7 +51,7 @@ public sealed class WalletClient : IWalletClient
                 }
             }
 
-            var requestUri = $"api/v1/internal/wallet/orders/{orderId}/payment";
+            var requestUri = $"api/v1/wallets/orders/{orderId}/payment";
             using var request = new HttpRequestMessage(HttpMethod.Post, requestUri)
             {
                 Content = JsonContent.Create(new { amount })
@@ -166,7 +166,7 @@ public sealed class WalletClient : IWalletClient
         return 0m;
     }
 
-    public Task<bool> RefundSubOrderPaymentAsync(
+    public async Task<bool> RefundSubOrderPaymentAsync(
         Guid subOrderId,
         string userId,
         decimal amount,
@@ -174,12 +174,50 @@ public sealed class WalletClient : IWalletClient
         string? idempotencyKey = null,
         CancellationToken cancellationToken = default)
     {
-        // Theo tài liệu bàn giao, WalletService chưa cung cấp API hoàn tiền tự động.
-        _logger.LogWarning("[REST Wallet Client] Automatic refund is not supported by WalletService. SubOrder '{SubOrderId}' flagged for manual processing.", subOrderId);
-        return Task.FromResult(false);
+        try
+        {
+            var requestUri = $"api/v1/wallets/sub-orders/{subOrderId}/refund";
+            using var request = new HttpRequestMessage(HttpMethod.Post, requestUri)
+            {
+                Content = JsonContent.Create(new
+                {
+                    userId,
+                    amount,
+                    reason
+                })
+            };
+
+            var key = idempotencyKey ?? $"refund-suborder-{subOrderId}";
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", key);
+
+            if (_httpContextAccessor?.HttpContext != null)
+            {
+                var authHeader = _httpContextAccessor.HttpContext.Request.Headers.Authorization.ToString();
+                if (!string.IsNullOrWhiteSpace(authHeader))
+                {
+                    request.Headers.TryAddWithoutValidation("Authorization", authHeader);
+                }
+            }
+
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("[REST Wallet Client] SubOrder '{SubOrderId}' refund succeeded for User '{UserId}', Amount: {Amount}.", subOrderId, userId, amount);
+                return true;
+            }
+
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("[REST Wallet Client] SubOrder '{SubOrderId}' refund failed with status {StatusCode}: {ErrorBody}", subOrderId, (int)response.StatusCode, errorBody);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[REST Wallet Client] Error during refund for SubOrder '{SubOrderId}'.", subOrderId);
+            return false;
+        }
     }
 
-    public Task<bool> RefundOrderPaymentAsync(
+    public async Task<bool> RefundOrderPaymentAsync(
         Guid orderId,
         string userId,
         decimal amount,
@@ -187,8 +225,96 @@ public sealed class WalletClient : IWalletClient
         string? idempotencyKey = null,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogWarning("[REST Wallet Client] Automatic refund is not supported by WalletService. Order '{OrderId}' flagged for manual processing.", orderId);
-        return Task.FromResult(false);
+        try
+        {
+            var requestUri = $"api/v1/wallets/orders/{orderId}/refund";
+            using var request = new HttpRequestMessage(HttpMethod.Post, requestUri)
+            {
+                Content = JsonContent.Create(new
+                {
+                    userId,
+                    amount,
+                    reason
+                })
+            };
+
+            var key = idempotencyKey ?? $"refund-order-{orderId}";
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", key);
+
+            if (_httpContextAccessor?.HttpContext != null)
+            {
+                var authHeader = _httpContextAccessor.HttpContext.Request.Headers.Authorization.ToString();
+                if (!string.IsNullOrWhiteSpace(authHeader))
+                {
+                    request.Headers.TryAddWithoutValidation("Authorization", authHeader);
+                }
+            }
+
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("[REST Wallet Client] Order '{OrderId}' refund succeeded for User '{UserId}', Amount: {Amount}.", orderId, userId, amount);
+                return true;
+            }
+
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("[REST Wallet Client] Order '{OrderId}' refund failed with status {StatusCode}: {ErrorBody}", orderId, (int)response.StatusCode, errorBody);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[REST Wallet Client] Error during refund for Order '{OrderId}'.", orderId);
+            return false;
+        }
+    }
+
+    public async Task<bool> SettleSellerSubOrderAsync(
+        Guid subOrderId,
+        Guid sellerId,
+        decimal amount,
+        string? idempotencyKey = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var requestUri = $"api/v1/wallets/sub-orders/{subOrderId}/settle";
+            using var request = new HttpRequestMessage(HttpMethod.Post, requestUri)
+            {
+                Content = JsonContent.Create(new
+                {
+                    sellerId,
+                    amount
+                })
+            };
+
+            var key = idempotencyKey ?? $"settle-{subOrderId}";
+            request.Headers.TryAddWithoutValidation("Idempotency-Key", key);
+
+            if (_httpContextAccessor?.HttpContext != null)
+            {
+                var authHeader = _httpContextAccessor.HttpContext.Request.Headers.Authorization.ToString();
+                if (!string.IsNullOrWhiteSpace(authHeader))
+                {
+                    request.Headers.TryAddWithoutValidation("Authorization", authHeader);
+                }
+            }
+
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("[REST Wallet Client] SubOrder '{SubOrderId}' settlement succeeded for Seller '{SellerId}', Amount: {Amount}.", subOrderId, sellerId, amount);
+                return true;
+            }
+
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("[REST Wallet Client] SubOrder '{SubOrderId}' settlement failed with status {StatusCode}: {ErrorBody}", subOrderId, (int)response.StatusCode, errorBody);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[REST Wallet Client] Error during settlement for SubOrder '{SubOrderId}'.", subOrderId);
+            return false;
+        }
     }
 
     private sealed record WalletTransactionDto(

@@ -823,4 +823,83 @@ public class OrderServiceTests
             throw new InvalidOperationException("Simulated PostgreSQL connection drop or constraint failure during save.");
         }
     }
+    [Fact]
+    public async Task ListSellerSubOrdersAsync_ShouldReturnPaginatedSubOrders_FilteredBySellerId()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var sellerId = Guid.NewGuid();
+        var otherSellerId = Guid.NewGuid();
+
+        var subOrder1 = new Commerce.Domain.Entities.SubOrder
+        {
+            Id = Guid.NewGuid(),
+            SubOrderNo = "SUB-SELLER-01",
+            OrderId = Guid.NewGuid(),
+            BuyerId = Guid.NewGuid(),
+            SellerId = sellerId,
+            Status = SubOrderStatus.Paid,
+            PaymentMethod = PaymentMethod.Wallet,
+            ContactPhone = "0901234567",
+            ItemsAmount = 100000m,
+            TotalAmount = 100000m,
+            SellerReceiveAmount = 100000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
+        };
+
+        var subOrder2 = new Commerce.Domain.Entities.SubOrder
+        {
+            Id = Guid.NewGuid(),
+            SubOrderNo = "SUB-SELLER-02",
+            OrderId = Guid.NewGuid(),
+            BuyerId = Guid.NewGuid(),
+            SellerId = sellerId,
+            Status = SubOrderStatus.Confirmed,
+            PaymentMethod = PaymentMethod.Wallet,
+            ContactPhone = "0901234567",
+            ItemsAmount = 200000m,
+            TotalAmount = 200000m,
+            SellerReceiveAmount = 200000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5)
+        };
+
+        var otherSubOrder = new Commerce.Domain.Entities.SubOrder
+        {
+            Id = Guid.NewGuid(),
+            SubOrderNo = "SUB-OTHER-01",
+            OrderId = Guid.NewGuid(),
+            BuyerId = Guid.NewGuid(),
+            SellerId = otherSellerId,
+            Status = SubOrderStatus.Paid,
+            PaymentMethod = PaymentMethod.Wallet,
+            ContactPhone = "0901234567",
+            ItemsAmount = 300000m,
+            TotalAmount = 300000m,
+            SellerReceiveAmount = 300000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        dbContext.SubOrders.AddRange(subOrder1, subOrder2, otherSubOrder);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        // Act
+        var result = await service.ListSellerSubOrdersAsync(sellerId, page: 1, pageSize: 10, status: null, CancellationToken.None);
+
+        // Assert
+        result.Items.Should().HaveCount(2);
+        result.Pagination.TotalCount.Should().Be(2);
+        result.Items.Select(x => x.SubOrderId).Should().Contain(new[] { subOrder1.Id, subOrder2.Id });
+        result.Items.Select(x => x.SubOrderId).Should().NotContain(otherSubOrder.Id);
+    }
 }
