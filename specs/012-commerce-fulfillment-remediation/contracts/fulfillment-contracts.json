@@ -1,0 +1,320 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Commerce - Fulfillment Remediation Contract",
+    "version": "1.4.0",
+    "description": "Standardized REST API contract between CommerceService (Port 8003) and FulfillmentService (Port 8006)."
+  },
+  "paths": {
+    "/api/v1/fulfillment/shipping/quote": {
+      "post": {
+        "summary": "Calculate shipping fee for shop items",
+        "operationId": "calculateShippingFee",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShopShippingQuoteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Shipping fee calculated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShippingFeeResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid destination address or parameters",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Fulfillment service unavailable (Fail-Closed)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/shipments": {
+      "post": {
+        "summary": "Create shipment and issue tracking code",
+        "operationId": "createShipment",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["subOrderId"],
+                "properties": {
+                  "subOrderId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Shipment created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentCreationResult"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Fulfillment service unavailable (Fail-Closed)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/internal/inventories/reservations/{referenceId}/release": {
+      "post": {
+        "summary": "Release reserved inventory (full or partial)",
+        "operationId": "releaseReservation",
+        "parameters": [
+          {
+            "name": "referenceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Master OrderId under which the reservation was created"
+          },
+          {
+            "name": "reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "description": "Optional list of items to partially release for a rejected sub-order",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/StockReservationItem"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Inventory released successfully (Idempotent)"
+          },
+          "404": {
+            "description": "Reservation not found"
+          },
+          "503": {
+            "description": "Fulfillment service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/internal/inventories/reservations/batch-release": {
+      "post": {
+        "summary": "Batch release reservations for expired orders",
+        "operationId": "batchReleaseStock",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["orderIds"],
+                "properties": {
+                  "orderIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Batch released successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "succeededOrderIds": {
+                      "type": "array",
+                      "items": { "type": "string", "format": "uuid" }
+                    },
+                    "failedOrderIds": {
+                      "type": "array",
+                      "items": { "type": "string", "format": "uuid" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Fulfillment service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/sub-orders/{subOrderId}/delivery-status": {
+      "post": {
+        "summary": "Inbound webhook to update sub-order delivery status",
+        "operationId": "updateSubOrderDeliveryStatus",
+        "parameters": [
+          {
+            "name": "subOrderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDeliveryStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Delivery status processed successfully"
+          },
+          "400": {
+            "description": "Invalid delivery status value"
+          },
+          "404": {
+            "description": "SubOrder not found"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ShopShippingQuoteRequest": {
+        "type": "object",
+        "required": ["sellerId"],
+        "properties": {
+          "sellerId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "ShippingFeeResult": {
+        "type": "object",
+        "required": ["feeAmount"],
+        "properties": {
+          "feeAmount": { "type": "number", "format": "decimal" }
+        }
+      },
+      "ShipmentCreationResult": {
+        "type": "object",
+        "required": ["trackingCode", "carrierCode", "labelPrintUrl"],
+        "properties": {
+          "trackingCode": { "type": "string" },
+          "carrierCode": { "type": "string" },
+          "labelPrintUrl": { "type": "string" }
+        }
+      },
+      "StockReservationItem": {
+        "type": "object",
+        "required": ["skuId", "quantity"],
+        "properties": {
+          "skuId": { "type": "string", "format": "uuid" },
+          "quantity": { "type": "integer" }
+        }
+      },
+      "UpdateDeliveryStatusRequest": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ReadyToPick",
+              "Picking",
+              "Packed",
+              "HandedOver",
+              "InTransit",
+              "Shipped",
+              "Delivered",
+              "DeliveryFailed",
+              "Returned",
+              "Cancelled"
+            ]
+          },
+          "deliveredAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "status": { "type": "integer" },
+          "errorCode": { "type": "string" },
+          "detail": { "type": "string" },
+          "traceId": { "type": "string" }
+        }
+      }
+    }
+  }
+}

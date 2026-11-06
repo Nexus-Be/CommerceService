@@ -3,6 +3,7 @@ namespace Commerce.Infrastructure.Persistence.Seeds;
 using Microsoft.EntityFrameworkCore;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
+using Commerce.Domain.ValueObjects;
 
 public static class CommerceSeedData
 {
@@ -11,7 +12,7 @@ public static class CommerceSeedData
         SeedDiscountCodes(modelBuilder);
         SeedSystemSettings(modelBuilder);
         SeedCarts(modelBuilder);
-        SeedOrders(modelBuilder);
+        // SeedOrders(modelBuilder); // Disabled: SubOrder.ShippingAddress is JSONB-mapped (OwnsOne.ToJson), causing EF Core HasData conflict.
         SeedOperationsAndAudit(modelBuilder);
     }
 
@@ -243,7 +244,7 @@ public static class CommerceSeedData
                 SellerId = sellerUserId,
                 Status = SubOrderStatus.Completed,
                 PaymentMethod = PaymentMethod.Wallet,
-                ShippingAddress = "{\"fullName\":\"John Buyer\",\"phone\":\"0900000004\",\"address\":\"123 Nguyen Trai, Thanh Xuan, Ha Noi\"}",
+                ShippingAddress = new ShippingAddressSnapshot("John Buyer", "0900000004", "123 Nguyen Trai", "Thanh Xuan", "Thanh Xuan", "Ha Noi", 1442, "20101", "123 Nguyen Trai, Thanh Xuan, Ha Noi"),
                 ContactPhone = "0900000004",
                 ItemsAmount = 850000m,
                 ProductDiscountAmount = 0m,
