@@ -23,6 +23,7 @@ public sealed class OrderService : IOrderService
     private readonly IWalletClient _walletClient;
     private readonly IFulfillmentClient _fulfillmentClient;
     private readonly ICatalogClient _catalogClient;
+    private readonly IUserClient _userClient;
     private readonly IDistributedCache _cache;
     private readonly ILogger<OrderService> _logger;
 
@@ -33,11 +34,24 @@ public sealed class OrderService : IOrderService
         ICatalogClient catalogClient,
         IDistributedCache cache,
         ILogger<OrderService> logger)
+        : this(dbContext, walletClient, fulfillmentClient, catalogClient, null!, cache, logger)
+    {
+    }
+
+    public OrderService(
+        ICommerceDbContext dbContext,
+        IWalletClient walletClient,
+        IFulfillmentClient fulfillmentClient,
+        ICatalogClient catalogClient,
+        IUserClient userClient,
+        IDistributedCache cache,
+        ILogger<OrderService> logger)
     {
         _dbContext = dbContext;
         _walletClient = walletClient;
         _fulfillmentClient = fulfillmentClient;
         _catalogClient = catalogClient;
+        _userClient = userClient;
         _cache = cache;
         _logger = logger;
     }
@@ -52,8 +66,8 @@ public sealed class OrderService : IOrderService
         if (request.ShippingAddress == null ||
             string.IsNullOrWhiteSpace(request.ShippingAddress.ReceiverName) ||
             string.IsNullOrWhiteSpace(request.ContactPhone) ||
+            string.IsNullOrWhiteSpace(request.ShippingAddress.Street) ||
             string.IsNullOrWhiteSpace(request.ShippingAddress.Province) ||
-            string.IsNullOrWhiteSpace(request.ShippingAddress.District) ||
             string.IsNullOrWhiteSpace(request.ShippingAddress.Ward))
         {
             throw new CommerceDomainException("VAL_INVALID_INPUT", "Shipping address fields cannot be empty.");
@@ -192,6 +206,19 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("QUOTE_EXPIRED", "Checkout quote has expired, is invalid, or is currently being processed.");
         }
 
+        // THẨM ĐỊNH QUYỀN MUA HÀNG VỚI USER SERVICE (INT-01 / BUYER PERMISSION GATE)
+        if (_userClient != null)
+        {
+            var permissionCheck = await _userClient.CheckBuyerPermissionAsync(buyerId, "buy", ct);
+            if (!permissionCheck.IsAllowed)
+            {
+                throw new CommerceDomainException(
+                    permissionCheck.ErrorCode ?? "BUYER_ACTION_RESTRICTED",
+                    permissionCheck.Message ?? "User has an active restriction prohibiting purchase actions.",
+                    403);
+            }
+        }
+
         // BATCH KIỂM TRA BIẾN ĐỘNG GIÁ VÀ TRẠNG THÁI SKU TỪ CATALOG (ASYMMETRIC PRICE DRIFT POLICY - CHỐNG N+1)
         var allQuoteItems = cachedQuote.Response.Shops.SelectMany(s => s.Items).ToList();
         var allSkuIds = allQuoteItems.Select(i => i.SkuId).Distinct().ToList();
@@ -287,7 +314,7 @@ public sealed class OrderService : IOrderService
                 cachedQuote.Request.ContactPhone,
                 cachedQuote.Request.ShippingAddress.Street,
                 cachedQuote.Request.ShippingAddress.Ward,
-                cachedQuote.Request.ShippingAddress.District,
+                cachedQuote.Request.ShippingAddress.District ?? string.Empty,
                 cachedQuote.Request.ShippingAddress.Province,
                 cachedQuote.Request.ShippingAddress.GhnDistrictId ?? 0,
                 cachedQuote.Request.ShippingAddress.GhnWardCode ?? "",
@@ -755,42 +782,144 @@ public sealed class OrderService : IOrderService
     {
         var order = await _dbContext.Orders
             .Include(o => o.SubOrders)
+                .ThenInclude(s => s.Items)
             .FirstOrDefaultAsync(o => o.Id == orderId, ct)
             ?? throw new EntityNotFoundException("ORDER_NOT_FOUND", "Order", orderId);
 
-        if (order.BuyerId != currentUserId)
+        bool isBuyer = order.BuyerId == currentUserId;
+        bool isSeller = order.SubOrders.Any(s => s.SellerId == currentUserId);
+
+        if (!isBuyer && !isSeller)
         {
             throw new CommerceDomainException("FORBIDDEN", "You do not have permission to cancel this order.", 403);
         }
 
-        if (order.Status != OrderStatus.PendingPayment)
+        var targetSubOrders = isBuyer
+            ? order.SubOrders.ToList()
+            : order.SubOrders.Where(s => s.SellerId == currentUserId).ToList();
+
+        var hasShippedOrCompletedSubOrder = targetSubOrders.Any(
+            so => so.Status == SubOrderStatus.Shipping || so.Status == SubOrderStatus.Delivered || so.Status == SubOrderStatus.Completed);
+
+        if ((order.Status != OrderStatus.PendingPayment && order.Status != OrderStatus.Paid) || hasShippedOrCompletedSubOrder)
         {
-            throw new CommerceDomainException("ORDER_CANNOT_BE_CANCELLED", "Order cannot be cancelled in its current status.");
+            throw new CommerceDomainException("ORDER_CANNOT_BE_CANCELLED", "Order cannot be cancelled once shipped, delivered, or completed.");
         }
 
-        order.Status = OrderStatus.Cancelled;
-        foreach (var so in order.SubOrders)
+        if (isBuyer || order.SubOrders.All(s => s.SellerId == currentUserId || s.Status == SubOrderStatus.Cancelled))
         {
+            order.Status = OrderStatus.Cancelled;
+        }
+
+        foreach (var so in targetSubOrders)
+        {
+            if (so.Status == SubOrderStatus.Cancelled)
+            {
+                continue;
+            }
+
+            var wasConfirmedOrPaid = so.PaidAt.HasValue || so.Status == SubOrderStatus.Paid || so.Status == SubOrderStatus.Confirmed;
+            var wasPaid = so.PaidAt.HasValue || so.Status == SubOrderStatus.Paid;
             so.Status = SubOrderStatus.Cancelled;
             so.CancelledAt = DateTimeOffset.UtcNow;
 
+            var cancellationId = Guid.NewGuid();
             _dbContext.OrderCancellations.Add(new OrderCancellation
             {
-                Id = Guid.NewGuid(),
+                Id = cancellationId,
                 SubOrderId = so.Id,
                 CancelledBy = currentUserId,
-                ActorRole = OrderActorRole.Buyer,
+                ActorRole = isBuyer ? OrderActorRole.Buyer : OrderActorRole.Seller,
                 ReasonCode = request.ReasonCode,
                 ReasonNote = request.ReasonText,
-                WasPaid = false,
+                WasPaid = wasPaid,
                 InventoryReleased = true
             });
+
+            // TỰ ĐỘNG CHẾ TÀI PHẠT ĐIỂM NẾU SELLER TỰ Ý HỦY ĐƠN ĐÃ XÁC NHẬN (INT-06)
+            bool isViolation = isSeller && wasConfirmedOrPaid &&
+                (request.ReasonCode == CancellationReasonCode.CancellationWithoutReason ||
+                 request.ReasonCode == CancellationReasonCode.SellerRejected);
+
+            if (isViolation && _userClient != null)
+            {
+                try
+                {
+                    await _userClient.CreatePenaltyAsync(new UserPenaltyRequest(
+                        UserId: so.SellerId,
+                        TargetRole: "Seller",
+                        ViolationType: "CancellationWithoutReason",
+                        ReferenceType: "Order",
+                        ReferenceId: so.SubOrderNo,
+                        Reason: request.ReasonText ?? $"Seller cancelled confirmed order {so.SubOrderNo} without acceptable explanation.",
+                        CustomScoreDeduction: 5,
+                        PolicyClauseCode: "POLICY-SEC-3.2"
+                    ), ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to apply penalty on Seller '{SellerId}' for unjustified cancellation.", so.SellerId);
+                }
+            }
+
+            if (wasPaid)
+            {
+                var refund = new OrderRefund
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = so.Id,
+                    OrderId = so.OrderId,
+                    CancellationId = cancellationId,
+                    RefundType = RefundType.Full,
+                    Amount = so.TotalAmount,
+                    Status = RefundStatus.Requested,
+                    ReasonCode = isBuyer ? "BUYER_CANCELLED" : "SELLER_CANCELLED",
+                    ReasonNote = request.ReasonText ?? (isBuyer ? "Buyer cancelled order before shipping." : "Seller cancelled order."),
+                    ActorRole = isBuyer ? OrderActorRole.Buyer : OrderActorRole.Seller,
+                    RequestedBy = currentUserId,
+                    RequestedAt = DateTimeOffset.UtcNow
+                };
+
+                try
+                {
+                    var refundSucceeded = await _walletClient.RefundSubOrderPaymentAsync(
+                        so.Id,
+                        so.BuyerId.ToString(),
+                        so.TotalAmount,
+                        request.ReasonText ?? (isBuyer ? "Buyer cancelled order before shipping." : "Seller cancelled order."),
+                        idempotencyKey: $"refund-suborder-cancel-{so.Id}",
+                        cancellationToken: ct);
+
+                    if (refundSucceeded)
+                    {
+                        refund.Status = RefundStatus.Completed;
+                        refund.CompletedAt = DateTimeOffset.UtcNow;
+                        _logger.LogInformation("SubOrder '{SubOrderId}' refund on cancel succeeded via WalletClient. Amount: {Amount}", so.Id, so.TotalAmount);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to automatically refund wallet balance on cancel for SubOrder '{SubOrderId}'.", so.Id);
+                }
+
+                _dbContext.OrderRefunds.Add(refund);
+            }
         }
 
         await _dbContext.SaveChangesAsync(ct);
 
-        // Nhả tồn kho lại cho Fulfillment Service (CHK-02)
-        await _fulfillmentClient.ReleaseStockAsync(order.Id, ct);
+        // Nhả tồn kho lại cho Fulfillment Service (CHK-02 / FUL-10)
+        if (isBuyer)
+        {
+            await _fulfillmentClient.ReleaseStockAsync(order.Id, ct);
+        }
+        else
+        {
+            var itemsToRelease = targetSubOrders
+                .SelectMany(so => so.Items.Select(i => new StockReservationItem(i.SkuId, i.Quantity, so.SellerId)))
+                .ToList();
+            await _fulfillmentClient.ReleaseSubOrderStockAsync(order.Id, itemsToRelease, ct);
+        }
     }
 
     public async Task SellerAcceptSubOrderAsync(Guid sellerId, Guid orderId, SellerAcceptOrderRequest request, CancellationToken ct = default)
@@ -859,6 +988,33 @@ public sealed class OrderService : IOrderService
             InventoryReleased = true
         };
         _dbContext.OrderCancellations.Add(cancellation);
+
+        // TỰ ĐỘNG CHẾ TÀI PHẠT ĐIỂM NẾU SELLER TỰ Ý HỦY ĐƠN ĐÃ XÁC NHẬN (INT-06)
+        var wasConfirmedOrPaid = wasPaid || so.SellerAcceptedAt.HasValue;
+        bool isViolation = wasConfirmedOrPaid &&
+            (request.ReasonCode == CancellationReasonCode.CancellationWithoutReason ||
+             request.ReasonCode == CancellationReasonCode.SellerRejected);
+
+        if (isViolation && _userClient != null)
+        {
+            try
+            {
+                await _userClient.CreatePenaltyAsync(new UserPenaltyRequest(
+                    UserId: so.SellerId,
+                    TargetRole: "Seller",
+                    ViolationType: "CancellationWithoutReason",
+                    ReferenceType: "Order",
+                    ReferenceId: so.SubOrderNo,
+                    Reason: request.ReasonText ?? $"Seller cancelled confirmed order {so.SubOrderNo} without acceptable explanation.",
+                    CustomScoreDeduction: 5,
+                    PolicyClauseCode: "POLICY-SEC-3.2"
+                ), ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to apply penalty on Seller '{SellerId}' for unjustified rejection.", so.SellerId);
+            }
+        }
 
         // TỰ ĐỘNG HOÀN TIỀN VÍ NẾU ĐƠN CON ĐÃ THANH TOÁN (BUG-B)
         if (wasPaid)
@@ -964,6 +1120,37 @@ public sealed class OrderService : IOrderService
             _logger.LogError(ex, "Error calling WalletService to settle escrow for SubOrder '{SubOrderId}'. Flagged for reconciliation.", so.Id);
         }
 
+        // TỰ ĐỘNG CỘNG ĐIỂM UY TÍN CHO SELLER (INT-07)
+        if (_userClient != null)
+        {
+            try
+            {
+                await _userClient.AdjustReputationAsync(new ReputationAdjustRequest(
+                    UserId: so.SellerId,
+                    TargetRole: "Seller",
+                    PartnerUserId: so.BuyerId,
+                    ScoreDelta: 1,
+                    Reason: "OrderCompleted",
+                    ReferenceType: "Order",
+                    ReferenceId: so.SubOrderNo,
+                    Note: $"Reward for successfully completed sub-order {so.SubOrderNo}."
+                ), ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to adjust reputation for Seller '{SellerId}' on sub-order '{SubOrderId}'.", so.SellerId, so.Id);
+            }
+        }
+
+        var parentOrder = await _dbContext.Orders
+            .Include(o => o.SubOrders)
+            .FirstOrDefaultAsync(o => o.Id == so.OrderId, ct);
+
+        if (parentOrder != null && parentOrder.SubOrders.All(s => s.Id == so.Id || s.Status == SubOrderStatus.Completed || s.Status == SubOrderStatus.Cancelled))
+        {
+            parentOrder.Status = OrderStatus.Completed;
+        }
+
         await _dbContext.SaveChangesAsync(ct);
 
         return new ConfirmReceiptResponse(
@@ -972,6 +1159,92 @@ public sealed class OrderService : IOrderService
             CompletedAt: completedAt,
             EscrowSettled: settled,
             AmountSettled: so.SellerReceiveAmount
+        );
+    }
+
+    public async Task<OrderCompleteResponse> CompleteOrderAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default)
+    {
+        var order = await _dbContext.Orders
+            .Include(o => o.SubOrders)
+            .FirstOrDefaultAsync(o => o.Id == orderId, ct)
+            ?? throw new EntityNotFoundException("ORDER_NOT_FOUND", "Order", orderId);
+
+        if (order.BuyerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to complete this order.", 403);
+        }
+
+        if (order.Status == OrderStatus.Cancelled || order.Status == OrderStatus.Expired)
+        {
+            throw new CommerceDomainException("INVALID_STATUS", "Order cannot be completed in its current status.");
+        }
+
+        var completedAt = DateTimeOffset.UtcNow;
+        var completedSubOrderIds = new List<Guid>();
+
+        foreach (var so in order.SubOrders)
+        {
+            if (so.Status == SubOrderStatus.Cancelled)
+            {
+                continue;
+            }
+
+            if (so.Status != SubOrderStatus.Completed)
+            {
+                so.Status = SubOrderStatus.Completed;
+                so.CompletedAt = completedAt;
+                so.UpdatedAt = completedAt;
+
+                try
+                {
+                    await _walletClient.SettleSellerSubOrderAsync(
+                        so.Id,
+                        so.SellerId,
+                        so.SellerReceiveAmount,
+                        idempotencyKey: $"settle-{so.Id}",
+                        cancellationToken: ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error settling escrow for SubOrder '{SubOrderId}' during master order complete.", so.Id);
+                }
+            }
+
+            completedSubOrderIds.Add(so.Id);
+
+            if (_userClient != null)
+            {
+                try
+                {
+                    await _userClient.AdjustReputationAsync(new ReputationAdjustRequest(
+                        UserId: so.SellerId,
+                        TargetRole: "Seller",
+                        PartnerUserId: order.BuyerId,
+                        ScoreDelta: 1,
+                        Reason: "OrderCompleted",
+                        ReferenceType: "Order",
+                        ReferenceId: so.SubOrderNo,
+                        Note: $"Reward for successfully completed order {so.SubOrderNo}."
+                    ), ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to adjust reputation for Seller '{SellerId}' on order complete.", so.SellerId);
+                }
+            }
+        }
+
+        order.Status = OrderStatus.Completed;
+        await _dbContext.SaveChangesAsync(ct);
+
+        var orderNo = $"ORD-{order.Id.ToString()[..8].ToUpperInvariant()}";
+        return new OrderCompleteResponse(
+            OrderId: order.Id,
+            OrderNo: orderNo,
+            Status: order.Status.ToString(),
+            CompletedAt: completedAt,
+            CompletedSubOrderCount: completedSubOrderIds.Count,
+            CompletedSubOrderIds: completedSubOrderIds
         );
     }
 

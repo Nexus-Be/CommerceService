@@ -8,5 +8,6 @@ public enum CancellationReasonCode
     SellerRejected = 3,
     Other = 4,
     DeliveryFailed = 5,
-    PackageReturned = 6
+    PackageReturned = 6,
+    CancellationWithoutReason = 7
 }

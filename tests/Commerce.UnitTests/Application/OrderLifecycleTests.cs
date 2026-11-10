@@ -26,6 +26,7 @@ public class OrderLifecycleTests : IDisposable
     private readonly Mock<IWalletClient> _mockWalletClient = new();
     private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
+    private readonly Mock<IUserClient> _mockUserClient = new();
     private readonly Mock<ILogger<OrderService>> _mockLogger = new();
     private readonly IDistributedCache _cache;
 
@@ -33,6 +34,14 @@ public class OrderLifecycleTests : IDisposable
     {
         _dbContext = TestDbContextFactory.CreateInMemoryDbContext();
         _cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
+
+        _mockUserClient
+            .Setup(u => u.AdjustReputationAsync(It.IsAny<ReputationAdjustRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ReputationAdjustResponse(Guid.NewGuid(), "Seller", false, false, 65, 66, 1, "Standard"));
+
+        _mockUserClient
+            .Setup(u => u.CreatePenaltyAsync(It.IsAny<UserPenaltyRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UserPenaltyResponse(Guid.NewGuid(), "Seller", false, Guid.NewGuid(), 66, 61, -5, "Standard"));
 
         _mockFulfillmentClient
             .Setup(f => f.ReleaseStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -67,6 +76,7 @@ public class OrderLifecycleTests : IDisposable
             _mockWalletClient.Object,
             _mockFulfillmentClient.Object,
             _mockCatalogClient.Object,
+            _mockUserClient.Object,
             _cache,
             _mockLogger.Object);
     }
@@ -149,12 +159,53 @@ public class OrderLifecycleTests : IDisposable
     }
 
     [Fact]
-    public async Task CancelOrderAsync_ShouldThrowException_WhenOrderIsAlreadyPaid()
+    public async Task CancelOrderAsync_ShouldCancelOrderAndRefund_WhenOrderIsPaidAndNotShipped()
     {
         // Arrange
         var buyerId = Guid.NewGuid();
         var sellerId = Guid.NewGuid();
-        var (order, _) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Paid);
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Paid);
+
+        _mockWalletClient.Setup(w => w.RefundSubOrderPaymentAsync(
+            subOrder.Id,
+            buyerId.ToString(),
+            subOrder.TotalAmount,
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var service = CreateOrderService();
+        var request = new CancelOrderRequest(CancellationReasonCode.BuyerChangedMind, "Cancelled before shipment");
+
+        // Act
+        await service.CancelOrderAsync(buyerId, order.Id, request, CancellationToken.None);
+
+        // Assert
+        var updatedOrder = await _dbContext.Orders.Include(o => o.SubOrders).FirstOrDefaultAsync(o => o.Id == order.Id);
+        updatedOrder!.Status.Should().Be(OrderStatus.Cancelled);
+        updatedOrder.SubOrders.First().Status.Should().Be(SubOrderStatus.Cancelled);
+
+        // Verify Wallet refund was invoked
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
+            subOrder.Id,
+            buyerId.ToString(),
+            subOrder.TotalAmount,
+            It.IsAny<string>(),
+            It.Is<string>(key => key.StartsWith("refund-suborder-cancel-")),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Verify stock was released
+        _mockFulfillmentClient.Verify(f => f.ReleaseStockAsync(order.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelOrderAsync_ShouldThrowException_WhenSubOrderIsAlreadyShipped()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, _) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Shipping);
 
         var service = CreateOrderService();
         var request = new CancelOrderRequest(CancellationReasonCode.BuyerChangedMind);
@@ -295,5 +346,84 @@ public class OrderLifecycleTests : IDisposable
         // Assert
         await act.Should().ThrowAsync<CommerceDomainException>()
             .Where(e => e.ErrorCode == "INVALID_STATUS");
+    }
+
+    [Fact]
+    public async Task CompleteOrder_ShouldRewardSellerReputation_WhenOrderDelivered()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Delivered);
+
+        var service = CreateOrderService();
+
+        // Act
+        var response = await service.CompleteOrderAsync(buyerId, order.Id, CancellationToken.None);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.Status.Should().Be(OrderStatus.Completed.ToString());
+        response.CompletedSubOrderCount.Should().Be(1);
+
+        var updatedOrder = await _dbContext.Orders.FirstOrDefaultAsync(o => o.Id == order.Id);
+        updatedOrder!.Status.Should().Be(OrderStatus.Completed);
+
+        var updatedSubOrder = await _dbContext.SubOrders.FirstOrDefaultAsync(s => s.Id == subOrder.Id);
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Completed);
+
+        _mockUserClient.Verify(u => u.AdjustReputationAsync(
+            It.Is<ReputationAdjustRequest>(r => r.UserId == sellerId && r.ScoreDelta == 1 && r.Reason == "OrderCompleted"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ConfirmReceipt_ShouldRewardSellerReputation()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Delivered);
+
+        var service = CreateOrderService();
+
+        // Act
+        var response = await service.BuyerConfirmSubOrderReceiptAsync(buyerId, subOrder.Id, CancellationToken.None);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.Status.Should().Be(SubOrderStatus.Completed.ToString());
+
+        var updatedOrder = await _dbContext.Orders.FirstOrDefaultAsync(o => o.Id == order.Id);
+        updatedOrder!.Status.Should().Be(OrderStatus.Completed);
+
+        _mockUserClient.Verify(u => u.AdjustReputationAsync(
+            It.Is<ReputationAdjustRequest>(r => r.UserId == sellerId && r.ScoreDelta == 1 && r.Reason == "OrderCompleted"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelOrder_ShouldPenalizeSeller_WhenCancelledWithoutReason()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Confirmed);
+
+        var service = CreateOrderService();
+        var cancelRequest = new CancelOrderRequest(
+            CancellationReasonCode.CancellationWithoutReason,
+            "Seller cancelled without reason");
+
+        // Act
+        await service.CancelOrderAsync(sellerId, order.Id, cancelRequest, CancellationToken.None);
+
+        // Assert
+        var updatedSubOrder = await _dbContext.SubOrders.FirstOrDefaultAsync(s => s.Id == subOrder.Id);
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Cancelled);
+
+        _mockUserClient.Verify(u => u.CreatePenaltyAsync(
+            It.Is<UserPenaltyRequest>(p => p.UserId == sellerId && p.CustomScoreDeduction == 5 && p.ViolationType == "CancellationWithoutReason"),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 }

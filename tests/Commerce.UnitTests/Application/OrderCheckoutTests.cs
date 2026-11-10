@@ -28,6 +28,7 @@ public class OrderCheckoutTests : IDisposable
     private readonly Mock<IWalletClient> _mockWalletClient = new();
     private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
+    private readonly Mock<IUserClient> _mockUserClient = new();
     private readonly Mock<ILogger<OrderService>> _mockLogger = new();
     private readonly IDistributedCache _cache;
 
@@ -35,6 +36,10 @@ public class OrderCheckoutTests : IDisposable
     {
         _dbContext = TestDbContextFactory.CreateInMemoryDbContext();
         _cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
+
+        _mockUserClient
+            .Setup(u => u.CheckBuyerPermissionAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UserPermissionCheckResult(true, null, null));
 
         // Default mock behaviors
         _mockFulfillmentClient
@@ -81,6 +86,7 @@ public class OrderCheckoutTests : IDisposable
             _mockWalletClient.Object,
             _mockFulfillmentClient.Object,
             _mockCatalogClient.Object,
+            _mockUserClient.Object,
             _cache,
             _mockLogger.Object);
     }
@@ -453,5 +459,44 @@ public class OrderCheckoutTests : IDisposable
         // Assert
         orderResponse.Status.Should().Be(OrderStatus.PendingPayment.ToString());
         _mockFulfillmentClient.Verify(f => f.CommitStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateOrder_ShouldThrowBuyerActionRestricted_WhenUserIsRestricted()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, skuId, sellerId, 100000m, 1);
+        var service = CreateOrderService();
+
+        var quoteRequest = new CheckoutQuoteRequest(
+            new List<Guid> { cart.Items.First().Id },
+            new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Phuong Ben Nghe", "Quan 1", "TP. Ho Chi Minh", 1442, "20101"),
+            "0901234567",
+            PaymentMethod.Wallet);
+
+        var quote = await service.QuoteCheckoutAsync(buyerId, quoteRequest);
+
+        // Configure mock to deny buyer permission
+        _mockUserClient
+            .Setup(u => u.CheckBuyerPermissionAsync(buyerId, "buy", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UserPermissionCheckResult(false, "BUYER_ACTION_RESTRICTED", "User has an active restriction prohibiting purchase actions."));
+
+        var createOrderRequest = new CreateOrderRequest(
+            quote.QuoteId,
+            PaymentMethod.Wallet,
+            "123 Le Loi, Phuong Ben Nghe, Quan 1, TP. Ho Chi Minh",
+            "0901234567");
+
+        // Act & Assert
+        var act = async () => await service.CreateOrderAsync(buyerId, createOrderRequest);
+
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "BUYER_ACTION_RESTRICTED" && e.Message == "User has an active restriction prohibiting purchase actions.");
+
+        _mockFulfillmentClient.Verify(f => f.ReserveStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockWalletClient.Verify(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

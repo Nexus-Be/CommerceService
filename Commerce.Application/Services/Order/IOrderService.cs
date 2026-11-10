@@ -35,6 +35,9 @@ public interface IOrderService
     /// <summary>Người mua xác nhận đã nhận hàng (SubOrderStatus -> Completed), kích hoạt giải ngân sang ví Seller.</summary>
     Task<ConfirmReceiptResponse> BuyerConfirmSubOrderReceiptAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default);
 
+    /// <summary>Người mua xác nhận hoàn tất toàn bộ đơn hàng (OrderStatus -> Completed), kích hoạt thưởng điểm uy tín cho các Seller đối tác.</summary>
+    Task<OrderCompleteResponse> CompleteOrderAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default);
+
     /// <summary>Người bán tra cứu danh sách đơn hàng con thuộc Shop của mình, có phân trang database và lọc status.</summary>
     Task<PagedData<SubOrderSummaryResponse>> ListSellerSubOrdersAsync(Guid sellerId, int page, int pageSize, SubOrderStatus? status = null, CancellationToken ct = default);
 

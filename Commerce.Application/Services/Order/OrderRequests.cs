@@ -9,8 +9,8 @@ public sealed record ShippingAddressInput(
     string ContactPhone,
     string Street,
     string Ward,
-    string District,
-    string Province,
+    string? District = null,
+    string Province = "",
     int? GhnDistrictId = null,
     string? GhnWardCode = null);
 

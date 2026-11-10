@@ -1,5 +1,7 @@
 namespace Commerce.Domain.ValueObjects;
 
+using System.Linq;
+
 public class ShippingAddressSnapshot
 {
     public string ReceiverName { get; set; } = string.Empty;
@@ -19,7 +21,7 @@ public class ShippingAddressSnapshot
         string contactPhone,
         string street,
         string ward,
-        string district,
+        string? district,
         string province,
         int ghnDistrictId = 0,
         string ghnWardCode = "",
@@ -29,10 +31,20 @@ public class ShippingAddressSnapshot
         ContactPhone = contactPhone;
         Street = street;
         Ward = ward;
-        District = district;
+        District = district ?? string.Empty;
         Province = province;
         GhnDistrictId = ghnDistrictId;
         GhnWardCode = ghnWardCode;
-        FullAddressText = fullAddressText ?? $"{street}, {ward}, {district}, {province}".Trim().TrimStart(',').Trim();
+
+        if (!string.IsNullOrWhiteSpace(fullAddressText))
+        {
+            FullAddressText = fullAddressText;
+        }
+        else
+        {
+            var parts = new[] { street, ward, district, province }
+                .Where(p => !string.IsNullOrWhiteSpace(p));
+            FullAddressText = string.Join(", ", parts);
+        }
     }
 }

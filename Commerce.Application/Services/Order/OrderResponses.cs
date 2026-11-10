@@ -146,3 +146,12 @@ public sealed record ConfirmReceiptResponse(
     bool EscrowSettled,
     decimal AmountSettled
 );
+
+public sealed record OrderCompleteResponse(
+    Guid OrderId,
+    string OrderNo,
+    string Status,
+    DateTimeOffset CompletedAt,
+    int CompletedSubOrderCount,
+    List<Guid> CompletedSubOrderIds
+);

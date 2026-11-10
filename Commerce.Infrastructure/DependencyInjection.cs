@@ -8,6 +8,7 @@ using Commerce.Application.Interfaces;
 using Commerce.Infrastructure.Persistence;
 using Commerce.Infrastructure.Services.Catalog;
 using Commerce.Infrastructure.Services.Fulfillment;
+using Commerce.Infrastructure.Services.User;
 using Commerce.Infrastructure.Services.Wallet;
 
 public static class DependencyInjection
@@ -96,6 +97,29 @@ public static class DependencyInjection
         services.AddHttpClient<IFulfillmentClient, FulfillmentClient>(client =>
         {
             client.BaseAddress = new Uri(fulfillmentBaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(10);
+
+            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
+                ?? configuration["INTERNAL_SERVICE_SECRET"]
+                ?? configuration["InternalSecurity:ServiceKey"]
+                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
+
+            if (!string.IsNullOrWhiteSpace(internalServiceKey))
+            {
+                client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
+            }
+        }).AddHttpMessageHandler<Services.Common.IdentityPropagationHandler>();
+
+        // REST User Client
+        var userBaseUrl = Environment.GetEnvironmentVariable("USER_SERVICE_URL")
+            ?? configuration["USER_SERVICE_URL"]
+            ?? configuration["Services:User:BaseUrl"]
+            ?? configuration["UserService:BaseUrl"]
+            ?? "http://localhost:8001/";
+
+        services.AddHttpClient<IUserClient, UserClient>(client =>
+        {
+            client.BaseAddress = new Uri(userBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
 
             var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")

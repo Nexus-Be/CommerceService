@@ -108,19 +108,21 @@ public class OrdersController : ControllerBase
         return Ok(subOrder);
     }
 
-    /// <summary>R80: Người mua hoặc hệ thống hủy đơn hàng đang chờ thanh toán.</summary>
+    /// <summary>R80: Người mua hoặc Người bán hủy đơn hàng / đơn con khi chưa giao.</summary>
     [HttpPost("{orderId:guid}/cancel")]
+    [HttpPut("{orderId:guid}/cancel")]
     public async Task<IActionResult> CancelOrder(
         [FromRoute] Guid orderId,
-        [FromBody] CancelOrderRequest request,
-        CancellationToken ct)
+        [FromBody] CancelOrderRequest? request = null,
+        CancellationToken ct = default)
     {
         if (!this.TryGetUserId(out var currentUserId, out var authError))
         {
             return authError;
         }
 
-        await _orderService.CancelOrderAsync(currentUserId, orderId, request, ct);
+        var effectiveRequest = request ?? new CancelOrderRequest(CancellationReasonCode.BuyerChangedMind, "Buyer cancelled order");
+        await _orderService.CancelOrderAsync(currentUserId, orderId, effectiveRequest, ct);
         return Ok(new { orderId, status = "Cancelled", cancelledAt = DateTimeOffset.UtcNow });
     }
 
@@ -173,6 +175,21 @@ public class OrdersController : ControllerBase
 
         var tracking = await _orderService.GetShipmentTrackingAsync(currentUserId, orderId, ct);
         return Ok(tracking);
+    }
+
+    /// <summary>Người mua xác nhận hoàn tất toàn bộ đơn hàng (OrderStatus to Completed), tự động kích hoạt thưởng điểm uy tín cho các Seller đối tác.</summary>
+    [HttpPost("{orderId:guid}/complete")]
+    public async Task<IActionResult> CompleteOrder(
+        [FromRoute] Guid orderId,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var buyerId, out var authError))
+        {
+            return authError;
+        }
+
+        var response = await _orderService.CompleteOrderAsync(buyerId, orderId, ct);
+        return Ok(response);
     }
 
     /// <summary>Người mua xác nhận đã nhận hàng (SubOrderStatus to Completed), tự động kích hoạt giải ngân Escrow sang ví Seller.</summary>

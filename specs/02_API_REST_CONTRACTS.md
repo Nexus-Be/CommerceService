@@ -36,12 +36,16 @@ Chuẩn hóa 10 RESTful endpoints chính thức phục vụ luồng Quote-Based 
 * `POST /api/v1/orders/{orderId}/accept`: Người bán xác nhận nhận đơn con (`SubOrderStatus.Confirmed`) (`R83` / `ORD-04`).
 * `POST /api/v1/orders/{orderId}/reject`: Người bán từ chối đơn con (`SubOrderStatus.Cancelled` + `cancellationReason: "SellerRejected"`) (`R84` / `ORD-05`).
 * `GET /api/v1/shipments/order/{orderId}`: Tra cứu tiến độ vận chuyển đơn hàng (`R87`).
+* `POST /api/v1/orders/{orderId}/complete`: Người mua xác nhận hoàn tất toàn bộ đơn hàng (`OrderStatus.Completed`), kích hoạt giải ngân và thưởng điểm uy tín đối tác (`INT-07`).
 * `POST /api/v1/sub-orders/{subOrderId}/refund`: Yêu cầu hoàn tiền đơn con (`R99` / `ORD-13`).
 
 ### 1.3. Hợp đồng Gọi ra Ngoài (Outbound Service Contract)
 * `POST /api/v1/wallets/checkout/direct`: Endpoint thuộc quyền sở hữu của `WalletService` (Port 8008). CommerceService **không mở Controller** cho route này mà tương tác qua Typed Client `IWalletClient.CheckoutDirectPaymentAsync(...)` (`R181`).
 * `POST /api/v1/fulfillment/inventory/reserve`: Giữ kho vật lý 15 phút tại `FulfillmentService` (Port 8005) qua `IFulfillmentClient.ReserveStockAsync(...)`.
 * `GET /api/v1/catalog/skus/{skuId}`: Lấy giá niêm yết thời gian thực từ `CatalogService` (Port 8002) qua `ICatalogClient.GetSkuDetailsAsync(...)`.
+* `GET /api/v1/internal/users/{buyerId}/permission-check?action=buy`: Thẩm định quyền mua hàng tại `UserService` (Port 8001) qua `IUserClient.CheckBuyerPermissionAsync(...)` (`INT-01`).
+* `POST /api/v1/internal/users/reputation-adjust`: Thưởng điểm uy tín Seller tại `UserService` qua `IUserClient.AdjustReputationAsync(...)` (`INT-07`).
+* `POST /api/v1/internal/users/penalties`: Phạt điểm uy tín khi Seller hủy đơn vi phạm tại `UserService` qua `IUserClient.CreatePenaltyAsync(...)` (`INT-06`).
 
 ---
 
