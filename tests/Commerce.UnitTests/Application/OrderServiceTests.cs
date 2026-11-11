@@ -50,6 +50,10 @@ public class OrderServiceTests
             .ReturnsAsync(500000m);
 
         _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletPaymentResult.Success("tx-default-123"));
+
+        _mockWalletClient
             .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(WalletPaymentResult.Success("tx-default-123"));
 
@@ -196,6 +200,10 @@ public class OrderServiceTests
         _mockFulfillmentClient
             .Setup(f => f.ReleaseStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+
+        _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), 100000m, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletPaymentResult.Success("tx-success-123"));
 
         _mockWalletClient
             .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), 100000m, It.IsAny<string?>(), It.IsAny<CancellationToken>()))

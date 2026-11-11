@@ -118,6 +118,10 @@ public class EndToEndFlowTests : IDisposable
             .ReturnsAsync(1500000m);
 
         _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WalletPaymentResult(true, TransactionId: Guid.NewGuid().ToString(), BalanceAfter: 1500000m));
+
+        _mockWalletClient
             .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WalletPaymentResult(true, TransactionId: Guid.NewGuid().ToString(), BalanceAfter: 1500000m));
 
@@ -306,7 +310,7 @@ public class EndToEndFlowTests : IDisposable
         _mockFulfillmentClient.Verify(f => f.CommitStockAsync(order.OrderId, It.IsAny<CancellationToken>()), Times.Once);
 
         // Verify: Tiền ví đã được trừ
-        _mockWalletClient.Verify(w => w.PayOrderAsync(order.OrderId, order.TotalAmount, null, It.IsAny<CancellationToken>()), Times.Once);
+        _mockWalletClient.Verify(w => w.PayOrderAsync(order.OrderId, _buyerId, order.TotalAmount, null, It.IsAny<CancellationToken>()), Times.Once);
 
         // Verify: Giỏ hàng đã dọn sạch món đã mua
         var remainingCart = await cartService.GetOrCreateActiveCartAsync(_buyerId, CancellationToken.None);

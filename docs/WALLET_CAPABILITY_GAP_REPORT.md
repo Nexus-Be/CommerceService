@@ -4,31 +4,33 @@
 > **Mã tài liệu:** `DOC-GAP-WALLET-202611`  
 > **Dịch vụ sở hữu:** CommerceService (Port 8003)  
 > **Dịch vụ đối tác:** WalletService (Port 8008)  
-> **Mục đích:** Ghi nhận chi tiết các chức năng ví chưa đáp ứng kỳ vọng thiết kế ban đầu, giải pháp ứng phó tạm thời của Commerce, và hướng dẫn kích hoạt nhanh (Fast-track) khi WalletService bổ sung tính năng trong tương lai.
+> **Cập nhật:** 2026-11-10 — Đã kích hoạt toàn diện theo Hợp đồng tích hợp 2026-11-10 (`specs/017-wallet-contract-alignment`).  
+> **Trạng thái:** ✅ ĐÃ GIẢI QUYẾT 100% CÁC GAPs P0/P1 (GAP-01, GAP-02, GAP-04, GAP-05, GAP-06).
 
 ---
 
 ## 1. TỔNG QUAN HIỆN TRẠNG (EXECUTIVE SUMMARY)
 
-Theo tài liệu bàn giao chính thức từ team Wallet (`COMMERCE_WALLET_HANDOFF.md`), WalletService hiện tại chỉ cung cấp **DUY NHẤT một endpoint nội bộ**:
-- `POST /api/v1/internal/wallet/orders/{orderId}/payment` (Body: `{ "amount": <decimal> }`, Auth: `Bearer <buyer_jwt>`).
+Theo hợp đồng tích hợp chính thức từ WalletService bàn giao ngày 2026-11-10 (`integration-contract.md`), WalletService đã cung cấp đầy đủ các API liên dịch vụ:
+- `POST /api/v1/wallets/orders/{orderId}/payment` (Header `x-user-id: <buyer-uuid>`).
+- `POST /api/v1/wallets/sub-orders/{subOrderId}/settle` (Escrow release).
+- `POST /api/v1/wallets/orders/{orderId}/refund` & `POST /api/v1/wallets/sub-orders/{subOrderId}/refund`.
+- `POST /api/v1/wallets/checkout/direct` & `GET /api/v1/wallets/checkout/direct/{orderId}`.
 
-Toàn bộ các tính năng thanh toán nâng cao thường thấy trong mô hình Thương mại Điện tử Đa Nhà Bán Hàng (Multi-vendor Marketplace) như: **Hoàn tiền tự động (Refund)**, **Ký quỹ & Chia tiền cho Shop (Escrow & Seller Payout)**, **Kiểm tra số dư trước checkout**, **Cổng thanh toán trực tiếp cho đơn hàng (VNPay/Momo)** và **Truy vấn đối soát trạng thái giao dịch** hiện **CHƯA ĐƯỢC** WalletService hỗ trợ.
-
-Để CommerceService vận hành ổn định và không bị block, CommerceService đã chủ động thiết kế kiến trúc đệm (Graceful Fallback & Pre-wired Stubs). Khi WalletService phát triển thêm các API này, team Commerce có thể kích hoạt chỉ trong **15 - 30 phút** mà không cần tái cấu trúc core logic.
+Toàn bộ các khoảng trống (GAP-01 đến GAP-06) đã được CommerceService hiện thực hóa và kiểm chứng thông qua feature `017-wallet-contract-alignment`.
 
 ---
 
-## 2. MA TRẬN KHOẢNG TRỐNG CHỨC NĂNG (CAPABILITY GAP MATRIX)
+## 2. MA TRẬN KHOẢNG TRỐNG CHỨC NĂNG (CAPABILITY GAP MATRIX - RESOLVED)
 
-| Mã GAP | Tên Chức Năng | Kỳ Vọng Ban Đầu Của Commerce | Thực Trạng Wallet Hiện Tại | Trạng Thái Pre-wired Tại Commerce | Thời Gian Kích Hoạt Dự Kiến |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **GAP-01** | Hoàn tiền tự động (Automated Refund) | API hoàn tiền tự động khi Shop hủy đơn, Đổi trả, hoặc rollback DB | Không có API hoàn tiền | Đã có `IWalletClient.RefundOrderPaymentAsync`, Entity `OrderRefund` | 15 phút |
-| **GAP-02** | Ký quỹ & Quyết toán Nhà bán (Escrow & Seller Payout) | Giữ tiền ví tạm thời, giải ngân về ví Shop khi SubOrder hoàn tất | Tiền trừ thẳng về ví tổng, không có Escrow / Payout API | Mô hình `SubOrder` đã chia rõ `SellerId`, số tiền hàng, phí ship | 30 phút |
-| **GAP-03** | Kiểm tra số dư trước khi mua (Pre-checkout Balance) | API tra cứu số dư để hiển thị tại trang Checkout Quote | Không có API tra cứu số dư theo Buyer ID cho nội bộ | Đã có `IWalletClient.GetWalletBalanceAsync`, DTO `CheckoutQuoteResponse` | 10 phút |
-| **GAP-04** | Thanh toán đơn hàng qua Cổng VNPay (Direct Order Gateway) | Sinh URL thanh toán VNPay gắn với `orderId` | Chỉ có nạp tiền ví cá nhân (`/wallets/topup/vnpay`) | Đã có enum `PaymentMethod.VnPay`, handler thanh toán | 30 phút |
-| **GAP-05** | Truy vấn trạng thái & Đối soát (Payment Query & Reconciliation) | API GET tra cứu trạng thái thanh toán theo `orderId` | Không có GET status, gọi lại POST trả `409 ALREADY_PAID` | Đã có cờ `IsTransientFailure`, Background worker stub | 20 phút |
-| **GAP-06** | Chuẩn hóa kiểu UUID Transaction ID | Transaction ID trả về chuẩn UUID v4 (`Guid`) | Trả về chuỗi tự do (string id) | Đã bọc `Guid.TryParse` an toàn chống vỡ dữ liệu | 5 phút |
+| Mã GAP | Tên Chức Năng | Kỳ Vọng Ban Đầu Của Commerce | Trạng Thái Hợp Đồng Wallet 2026-11-10 | Trạng Thái Tại CommerceService | Kết Luận |
+| :--- | :--- | :--- | :--- | :--- | :---: |
+| **GAP-01** | Hoàn tiền tự động (Automated Refund) | API hoàn tiền tự động khi Shop hủy đơn, Đổi trả, hoặc rollback DB | Đã hỗ trợ `POST .../orders/{orderId}/refund` và `.../sub-orders/{subOrderId}/refund` | ✅ Đã kết nối trong `OrderService` và `WalletClient` | **ĐÃ GIẢI QUYẾT** |
+| **GAP-02** | Ký quỹ & Quyết toán Nhà bán (Escrow & Seller Payout) | Giải ngân về ví Shop khi SubOrder hoàn tất | Đã hỗ trợ `POST .../sub-orders/{subOrderId}/settle` | ✅ Đã kết nối trong `OrderService.BuyerConfirmSubOrderReceiptAsync` | **ĐÃ GIẢI QUYẾT** |
+| **GAP-03** | Kiểm tra số dư trước khi mua (Pre-checkout Balance) | API tra cứu số dư để hiển thị tại trang Checkout Quote | Đã hỗ trợ `GET /api/v1/wallets/me` nhận `x-user-id` | ✅ Đã kết nối trong `QuoteCheckoutAsync` | **ĐÃ GIẢI QUYẾT** |
+| **GAP-04** | Thanh toán đơn hàng qua Cổng VNPay (Direct Order Gateway) | Sinh URL thanh toán VNPay gắn với `orderId` | Đã hỗ trợ `POST /api/v1/wallets/checkout/direct` | ✅ Đã kết nối sinh link thật và lưu `paymentUrl` | **ĐÃ GIẢI QUYẾT** |
+| **GAP-05** | Truy vấn trạng thái & Đối soát (Payment Query & Reconciliation) | API GET tra cứu trạng thái thanh toán theo `orderId` | Đã hỗ trợ `GET /api/v1/wallets/checkout/direct/{orderId}` | ✅ Đã có `VnPayPaymentPollingWorker` chạy nền 30s | **ĐÃ GIẢI QUYẾT** |
+| **GAP-06** | Chuẩn hóa kiểu UUID Transaction ID | Transaction ID trả về chuẩn UUID v4 (`Guid`) | 100% ID trả về chuỗi UUID v4 | ✅ Đã lưu chuẩn `Guid` vào `orders.wallet_transaction_id` | **ĐÃ GIẢI QUYẾT** |
 
 ---
 

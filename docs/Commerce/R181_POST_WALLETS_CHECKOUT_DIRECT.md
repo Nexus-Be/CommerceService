@@ -3,8 +3,8 @@
 > **Phân hệ thụ lý:** `CommerceService`  
 > **Tên tính năng:** `Orders`  
 > **Mã tham chiếu Excel:** ``WAL-05B``  
-> **Trạng thái tài liệu:** `B_none (Chờ hoàn thiện & nghiệm thu)`  
-> **Trạng thái triển khai:** `⏳ IN_PROGRESS`  
+> **Trạng thái tài liệu:** `A_Active (Đã hoàn thiện & đồng bộ Hợp đồng 2026-11-10)`  
+> **Trạng thái triển khai:** `✅ COMPLETED`  
 
 ---
 
@@ -12,10 +12,9 @@
 
 * **Mô tả chức năng:** Tạo phiên thanh toán trực tiếp qua cổng VNPay cho đơn hàng (bỏ qua số dư ví)
 * **HTTP Method:** `POST`
-* **Đường dẫn chuẩn:** `/api/v1/wallets/checkout/direct`
-* **Đường dẫn gốc trong Excel:** `/api/v1/wallets/checkout/direct` (Đường dẫn đã tuân thủ chuẩn 100% số nhiều.)
-* **Quyền hạn truy cập (RBAC):** `Buyer`
-* **Yêu cầu Idempotency:** Tùy chọn (Khuyến nghị gửi header `Idempotency-Key: UUIDv4` để tránh gửi lặp)
+* **Đường dẫn chuẩn:** `/api/v1/wallets/checkout/direct` (Do WalletService thụ lý; CommerceService gọi qua typed client)
+* **Quyền hạn truy cập (RBAC):** `Buyer` (`x-user-id` header)
+* **Worker thăm dò trạng thái:** `VnPayPaymentPollingWorker` định kỳ 30s gọi `GET /api/v1/wallets/checkout/direct/{orderId}` để commit kho khi thanh toán thành công.
 
 ---
 

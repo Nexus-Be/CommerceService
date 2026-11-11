@@ -408,7 +408,7 @@ public sealed class OrderService : IOrderService
         // Tích hợp thanh toán ví theo hợp đồng chuẩn của WalletService
         if (request.PaymentMethod == PaymentMethod.Wallet)
         {
-            var paymentResult = await _walletClient.PayOrderAsync(order.Id, order.TotalAmount, cancellationToken: ct);
+            var paymentResult = await _walletClient.PayOrderAsync(order.Id, order.BuyerId, order.TotalAmount, cancellationToken: ct);
 
             if (paymentResult?.IsSuccess == true)
             {
@@ -536,9 +536,35 @@ public sealed class OrderService : IOrderService
                 500);
         }
 
-        string? paymentUrl = request.PaymentMethod == PaymentMethod.VnPay
-            ? $"https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?orderId={order.Id}"
-            : null;
+        string? paymentUrl = null;
+        if (request.PaymentMethod == PaymentMethod.VnPay)
+        {
+            var checkoutResult = await _walletClient.InitiateDirectCheckoutAsync(
+                order.Id,
+                order.BuyerId,
+                order.TotalAmount,
+                returnUrl: null,
+                cancellationToken: ct);
+
+            if (checkoutResult.IsSuccess && !string.IsNullOrWhiteSpace(checkoutResult.PaymentUrl))
+            {
+                paymentUrl = checkoutResult.PaymentUrl;
+                if (checkoutResult.TransactionId.HasValue)
+                {
+                    order.WalletTransactionId = checkoutResult.TransactionId;
+                    foreach (var so in createdSubOrders)
+                    {
+                        so.WalletTransactionId = checkoutResult.TransactionId;
+                    }
+                    await _dbContext.SaveChangesAsync(ct);
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Failed to obtain direct VNPay payment URL for Order '{OrderId}': {ErrorCode} {Message}",
+                    order.Id, checkoutResult.ErrorCode, checkoutResult.ErrorMessage);
+            }
+        }
 
         return new CreateOrderResponse(
             order.Id,

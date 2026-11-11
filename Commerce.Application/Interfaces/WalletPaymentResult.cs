@@ -19,3 +19,24 @@ public sealed record WalletPaymentResult(
     public static WalletPaymentResult Transient(string errorCode, string errorMessage) =>
         new(false, ErrorCode: errorCode, ErrorMessage: errorMessage, IsTransientFailure: true);
 }
+
+public sealed record DirectCheckoutResult(
+    bool IsSuccess,
+    string? PaymentUrl,
+    Guid? TransactionId,
+    string? ErrorCode = null,
+    string? ErrorMessage = null)
+{
+    public static DirectCheckoutResult Success(string paymentUrl, Guid? transactionId) =>
+        new(true, PaymentUrl: paymentUrl, TransactionId: transactionId);
+
+    public static DirectCheckoutResult Failure(string errorCode, string errorMessage) =>
+        new(false, PaymentUrl: null, TransactionId: null, ErrorCode: errorCode, ErrorMessage: errorMessage);
+}
+
+public sealed record DirectCheckoutStatusResult(
+    Guid OrderId,
+    Guid? TransactionId,
+    string Status,
+    decimal Amount,
+    DateTimeOffset? PaidAt);

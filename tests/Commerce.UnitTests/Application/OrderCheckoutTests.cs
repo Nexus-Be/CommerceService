@@ -59,6 +59,10 @@ public class OrderCheckoutTests : IDisposable
             .ReturnsAsync(500000m);
 
         _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WalletPaymentResult(true, TransactionId: Guid.NewGuid().ToString(), BalanceAfter: 500000m));
+
+        _mockWalletClient
             .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WalletPaymentResult(true, TransactionId: Guid.NewGuid().ToString(), BalanceAfter: 500000m));
 
@@ -156,6 +160,7 @@ public class OrderCheckoutTests : IDisposable
         // Assert Quote
         quoteResponse.Should().NotBeNull();
         quoteResponse.GrandTotal.Should().Be(230000m); // (2 * 100,000) + 30,000 ship
+        quoteResponse.WalletBalance.Should().Be(500000m);
         quoteResponse.Shops.Should().HaveCount(1);
 
         // Act 2: Create Order from QuoteId
@@ -188,7 +193,7 @@ public class OrderCheckoutTests : IDisposable
 
         // Verify External Interactions
         _mockFulfillmentClient.Verify(f => f.ReserveStockAsync(orderResponse.OrderId, It.IsAny<List<StockReservationItem>>(), 15, It.IsAny<CancellationToken>()), Times.Once);
-        _mockWalletClient.Verify(w => w.PayOrderAsync(orderResponse.OrderId, 230000m, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockWalletClient.Verify(w => w.PayOrderAsync(orderResponse.OrderId, buyerId, 230000m, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
         _mockFulfillmentClient.Verify(f => f.CommitStockAsync(orderResponse.OrderId, It.IsAny<CancellationToken>()), Times.Once);
 
         // Verify Cart Cleanup: Món đã mua bị xóa khỏi Cart
@@ -326,6 +331,10 @@ public class OrderCheckoutTests : IDisposable
 
         // Giả lập Wallet Service gặp lỗi Transient (Timeout / 500)
         _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WalletPaymentResult(false, ErrorCode: "CONNECTION_ERROR", ErrorMessage: "Wallet service timed out", IsTransientFailure: true));
+
+        _mockWalletClient
             .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WalletPaymentResult(false, ErrorCode: "CONNECTION_ERROR", ErrorMessage: "Wallet service timed out", IsTransientFailure: true));
 
@@ -420,9 +429,10 @@ public class OrderCheckoutTests : IDisposable
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
-        // Assert: Gọi PayOrderAsync với đúng orderId và tổng tiền
+        // Assert: Gọi PayOrderAsync với đúng orderId, buyerId và tổng tiền
         _mockWalletClient.Verify(w => w.PayOrderAsync(
             orderResponse.OrderId,
+            buyerId,
             orderResponse.TotalAmount,
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()
@@ -444,6 +454,9 @@ public class OrderCheckoutTests : IDisposable
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
+        _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WalletPaymentResult(false, ErrorCode: "INSUFFICIENT_BALANCE", ErrorMessage: "Insufficient wallet balance"));
         _mockWalletClient
             .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WalletPaymentResult(false, ErrorCode: "INSUFFICIENT_BALANCE", ErrorMessage: "Insufficient wallet balance"));
@@ -497,6 +510,6 @@ public class OrderCheckoutTests : IDisposable
             .Where(e => e.ErrorCode == "BUYER_ACTION_RESTRICTED" && e.Message == "User has an active restriction prohibiting purchase actions.");
 
         _mockFulfillmentClient.Verify(f => f.ReserveStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
-        _mockWalletClient.Verify(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockWalletClient.Verify(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }
