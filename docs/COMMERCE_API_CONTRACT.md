@@ -1402,3 +1402,97 @@ export interface UpdateDeliveryStatusRequest {
   deliveredAt?: string | null;
 }
 ```
+
+---
+
+# PHẦN 9: BOUNDED CONTEXT 4 — PHÂN HỆ ĐƠN HÀNG ĐẤU GIÁ (`AUCTION-01` .. `AUCTION-08`)
+
+> **Cập nhật:** Feature `019-auction-order-lifecycle-and-settlement` (Alignment Contract v1.1.0 với Auction Service).  
+> **Bộ điều khiển:** `AuctionOrdersController` (`api/v1/auction-orders`).  
+> **Đặc tính:** 100% RESTful, Không RabbitMQ/MassTransit/Saga, Idempotency composite `(AuctionId, WinnerId)`, Fail-safe refund.
+
+### 9.1. Danh mục Endpoint Đơn hàng Đấu giá
+
+| Mã | Phương thức | Endpoint | Vai trò / Auth | Mô tả |
+|:---|:---:|:---|:---|:---|
+| `AUC-01` | `POST` | `/api/v1/auction-orders/settlement` | `X-Internal-Service-Key` | Auction Service đẩy kết quả đấu giá tạo đơn `PendingPayment` (Idempotent 200/201, hỗ trợ runner-up). |
+| `AUC-02` | `PUT` | `/api/v1/auction-orders/{auctionOrderId}/shipping` | Buyer | Winner nhập địa chỉ giao hàng, tính cước GHN qua Fulfillment Service và chốt `TotalAmount`. |
+| `AUC-03` | `POST` | `/api/v1/auction-orders/{auctionOrderId}/pay` | Buyer | Winner thanh toán qua ví Nexus, kích hoạt hạn Seller duyệt 24h và gửi callback `Paid` kèm `paidAt`. |
+| `AUC-04` | `POST` | `/api/v1/auction-orders/{auctionOrderId}/accept` | Seller | Seller tiếp nhận đơn trong 24h, chuyển `Confirmed`, tạo vận đơn GHN và gửi callback `SellerAccepted`. |
+| `AUC-05` | `POST` | `/api/v1/auction-orders/{auctionOrderId}/reject` | Seller | Seller từ chối đơn, chuyển `Cancelled`, tự động hoàn 100% tiền ví cho Buyer và gửi callback `SellerRejected`. |
+| `AUC-06` | `POST` | `/api/v1/auction-orders/{auctionOrderId}/confirm-receipt` | Buyer | Buyer xác nhận đã nhận hàng, chuyển `Completed` và giải ngân Escrow cho Seller. |
+| `AUC-07` | `GET` | `/api/v1/auction-orders/{auctionOrderId}` | Buyer / Seller | Xem chi tiết đơn hàng đấu giá. |
+| `AUC-08` | `GET` | `/api/v1/auction-orders/seller` | Seller | Danh sách đơn hàng đấu giá của Seller (hỗ trợ phân trang `page`, `pageSize`). |
+
+### 9.2. Outbound Callback đến Auction Service
+
+- **Endpoint mục tiêu**: `POST http://auction-service:8005/api/v1/auctions/{auctionId}/settlement/payment-status`
+- **Header xác thực**: `X-Internal-Service-Key`
+- **5 trạng thái callback tuần tự**:
+  1. `"Paid"`: Gửi ngay sau khi Buyer thanh toán ví thành công (kèm `paidAt` và `amount = winningAmount`).
+  2. `"SellerAccepted"`: Gửi khi Seller duyệt đơn trong 24h để Auction gọi Catalog khóa sản phẩm vĩnh viễn.
+  3. `"SellerRejected"`: Gửi khi Seller từ chối (sau khi ví Buyer đã được hoàn 100%).
+  4. `"SellerExpired"`: Gửi khi background worker tự hủy đơn do Seller không duyệt sau 24h (đã hoàn 100% tiền ví).
+  5. `"PaymentTimedOut"`: Gửi khi background worker tự hủy đơn do Buyer quá hạn thanh toán 24h.
+- **Fail-Safe Principle**: Toàn bộ thao tác hoàn tiền ví của Buyer và cập nhật trạng thái `Cancelled` phải được hoàn tất tại database trước khi gửi callback. Nếu kết nối mạng đến Auction Service bị lỗi (5xx, timeout), hệ thống ghi log cảnh báo và retry mà tuyệt đối KHÔNG rollback tiền của Buyer.
+
+### 9.3. TypeScript Type Definitions cho Đơn Đấu Giá
+
+```typescript
+export interface AuctionSettlementRequest {
+  auctionId: string;
+  winnerId: string;
+  sellerId: string;
+  winningBidId: string;
+  productId: string;
+  skuId?: string | null;
+  productName: string;
+  productImageUrl?: string | null;
+  skuAttributes?: string | null;
+  winningAmount: number;
+  paymentDeadlineAt: string;
+  shippingAddress?: ShippingAddressDto | null;
+  contactPhone?: string | null;
+}
+
+export interface AuctionSettlementResponse {
+  orderId: string;
+  orderNo: string;
+  auctionId: string;
+  winnerId: string;
+  status: string;
+  paymentDeadlineAt: string;
+}
+
+export interface SubmitAuctionShippingRequest {
+  shippingAddress: ShippingAddressDto;
+  contactPhone: string;
+}
+
+export interface PayAuctionOrderResponse {
+  orderId: string;
+  orderNo: string;
+  status: string;
+  paidAt: string;
+  sellerRespondDeadlineAt: string;
+  walletTransactionId: string;
+}
+
+export interface SellerRespondResponse {
+  orderId: string;
+  orderNo: string;
+  status: string;
+  action: "Accepted" | "Rejected";
+  respondedAt: string;
+  trackingCode?: string | null;
+  refundAmount?: number | null;
+}
+
+export interface ConfirmReceiptResponse {
+  orderId: string;
+  orderNo: string;
+  status: string;
+  completedAt: string;
+}
+```
+

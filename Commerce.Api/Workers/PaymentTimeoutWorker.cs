@@ -52,6 +52,8 @@ public sealed class PaymentTimeoutWorker : BackgroundService
         using var scope = _serviceProvider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ICommerceDbContext>();
         var fulfillmentClient = scope.ServiceProvider.GetRequiredService<IFulfillmentClient>();
+        var auctionClient = scope.ServiceProvider.GetService<IAuctionClient>();
+        var walletClient = scope.ServiceProvider.GetService<IWalletClient>();
 
         var now = DateTimeOffset.UtcNow;
 
@@ -138,7 +140,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
             }
         }
 
-        // 2. Quét đơn đấu giá quá hạn 24 giờ
+        // 2. Quét đơn đấu giá quá hạn thanh toán 24 giờ
         var expiredAuctionOrders = await dbContext.AuctionOrders
             .Where(a => a.Status == SubOrderStatus.PendingPayment && a.PaymentDeadlineAt < now)
             .OrderBy(a => a.PaymentDeadlineAt)
@@ -157,7 +159,8 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                     dbContext.OrderCancellations.Add(new OrderCancellation
                     {
                         Id = Guid.NewGuid(),
-                        SubOrderId = auctionOrder.Id,
+                        AuctionOrderId = auctionOrder.Id,
+                        SubOrderId = null,
                         CancelledBy = null,
                         ActorRole = OrderActorRole.System,
                         ReasonCode = CancellationReasonCode.PaymentTimeout,
@@ -165,14 +168,155 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                         WasPaid = false,
                         InventoryReleased = true
                     });
+
+                    dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+                    {
+                        Id = Guid.NewGuid(),
+                        AuctionOrderId = auctionOrder.Id,
+                        FromStatus = SubOrderStatus.PendingPayment,
+                        ToStatus = SubOrderStatus.Cancelled,
+                        ActorRole = OrderActorRole.System,
+                        Reason = "Auction payment deadline expired after 24 hours."
+                    });
                 }
 
                 await dbContext.SaveChangesAsync(ct);
                 _logger.LogInformation("[PaymentTimeoutWorker] Auto-cancelled {Count} expired AuctionOrders in batch.", expiredAuctionOrders.Count);
+
+                if (auctionClient != null)
+                {
+                    foreach (var auctionOrder in expiredAuctionOrders)
+                    {
+                        try
+                        {
+                            await auctionClient.NotifyPaymentStatusAsync(
+                                auctionOrder.AuctionId,
+                                new AuctionPaymentStatusCallbackRequest(
+                                    OrderId: auctionOrder.Id,
+                                    WinnerId: auctionOrder.BuyerId,
+                                    Status: "PaymentTimedOut",
+                                    EventId: Guid.NewGuid()
+                                ),
+                                ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "[PaymentTimeoutWorker] Failed to dispatch PaymentTimedOut callback for AuctionOrder '{OrderId}'.", auctionOrder.Id);
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[PaymentTimeoutWorker] Failed to cancel expired AuctionOrders batch.");
+            }
+        }
+
+        // 3. Quét đơn đấu giá đã thanh toán nhưng Seller không duyệt sau 24 giờ
+        var expiredSellerOrders = await dbContext.AuctionOrders
+            .Where(a => a.Status == SubOrderStatus.Paid && a.SellerRespondDeadlineAt.HasValue && a.SellerRespondDeadlineAt < now)
+            .OrderBy(a => a.SellerRespondDeadlineAt)
+            .Take(50)
+            .ToListAsync(ct);
+
+        if (expiredSellerOrders.Count > 0)
+        {
+            try
+            {
+                foreach (var auctionOrder in expiredSellerOrders)
+                {
+                    auctionOrder.Status = SubOrderStatus.Cancelled;
+                    auctionOrder.CancelledAt = now;
+
+                    var cancellationId = Guid.NewGuid();
+                    dbContext.OrderCancellations.Add(new OrderCancellation
+                    {
+                        Id = cancellationId,
+                        AuctionOrderId = auctionOrder.Id,
+                        SubOrderId = null,
+                        CancelledBy = null,
+                        ActorRole = OrderActorRole.System,
+                        ReasonCode = CancellationReasonCode.SellerRejected,
+                        ReasonNote = "Seller response deadline expired after 24 hours.",
+                        WasPaid = true,
+                        InventoryReleased = true
+                    });
+
+                    var refundAmount = auctionOrder.TotalAmount ?? auctionOrder.WinningAmount;
+                    bool refundSuccess = false;
+                    if (walletClient != null)
+                    {
+                        try
+                        {
+                            refundSuccess = await walletClient.RefundOrderPaymentAsync(
+                                auctionOrder.Id,
+                                auctionOrder.BuyerId.ToString(),
+                                refundAmount,
+                                "Seller response deadline expired after 24 hours.",
+                                null,
+                                ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "[PaymentTimeoutWorker] Failed to refund wallet for expired seller AuctionOrder '{OrderId}'.", auctionOrder.Id);
+                        }
+                    }
+
+                    dbContext.OrderRefunds.Add(new OrderRefund
+                    {
+                        Id = Guid.NewGuid(),
+                        AuctionOrderId = auctionOrder.Id,
+                        CancellationId = cancellationId,
+                        RefundType = RefundType.Full,
+                        Amount = refundAmount,
+                        Status = refundSuccess ? RefundStatus.Completed : RefundStatus.Requested,
+                        ReasonCode = "SellerExpired",
+                        ReasonNote = "Seller response deadline expired after 24 hours.",
+                        ActorRole = OrderActorRole.System,
+                        RequestedBy = null,
+                        CompletedAt = refundSuccess ? now : null
+                    });
+
+                    dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+                    {
+                        Id = Guid.NewGuid(),
+                        AuctionOrderId = auctionOrder.Id,
+                        FromStatus = SubOrderStatus.Paid,
+                        ToStatus = SubOrderStatus.Cancelled,
+                        ActorRole = OrderActorRole.System,
+                        Reason = "Seller response deadline expired after 24 hours."
+                    });
+                }
+
+                await dbContext.SaveChangesAsync(ct);
+                _logger.LogInformation("[PaymentTimeoutWorker] Auto-cancelled and refunded {Count} seller-expired AuctionOrders.", expiredSellerOrders.Count);
+
+                if (auctionClient != null)
+                {
+                    foreach (var auctionOrder in expiredSellerOrders)
+                    {
+                        try
+                        {
+                            await auctionClient.NotifyPaymentStatusAsync(
+                                auctionOrder.AuctionId,
+                                new AuctionPaymentStatusCallbackRequest(
+                                    OrderId: auctionOrder.Id,
+                                    WinnerId: auctionOrder.BuyerId,
+                                    Status: "SellerExpired",
+                                    EventId: Guid.NewGuid()
+                                ),
+                                ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "[PaymentTimeoutWorker] Failed to dispatch SellerExpired callback for AuctionOrder '{OrderId}'.", auctionOrder.Id);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[PaymentTimeoutWorker] Failed to process seller-expired AuctionOrders batch.");
             }
         }
     }

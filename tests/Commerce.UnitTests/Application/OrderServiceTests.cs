@@ -11,6 +11,7 @@ using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using Commerce.Application.Interfaces;
 using Commerce.Application.Services.Order;
+using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
 using Commerce.Domain.Exceptions;
 using Commerce.UnitTests.Common;
@@ -909,5 +910,53 @@ public class OrderServiceTests
         result.Pagination.TotalCount.Should().Be(2);
         result.Items.Select(x => x.SubOrderId).Should().Contain(new[] { subOrder1.Id, subOrder2.Id });
         result.Items.Select(x => x.SubOrderId).Should().NotContain(otherSubOrder.Id);
+    }
+
+    [Fact]
+    public async Task UpdateSubOrderDeliveryStatusAsync_WhenIdIsAuctionOrder_ShouldUpdateAuctionOrderStatusAndTimestamps()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var auctionOrderId = Guid.NewGuid();
+        var auctionOrder = new AuctionOrder
+        {
+            Id = auctionOrderId,
+            OrderNo = "AO-20261111-00099",
+            AuctionId = Guid.NewGuid(),
+            BuyerId = Guid.NewGuid(),
+            SellerId = Guid.NewGuid(),
+            WinningBidId = Guid.NewGuid(),
+            ProductId = Guid.NewGuid(),
+            ProductNameSnapshot = "Antique Vase",
+            WinningAmount = 1500000m,
+            SellerReceiveAmount = 1425000m,
+            PlatformFeeAmount = 75000m,
+            Status = SubOrderStatus.Shipped,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddDays(-1),
+            PaidAt = DateTimeOffset.UtcNow.AddDays(-1),
+            ShippedAt = DateTimeOffset.UtcNow.AddHours(-10)
+        };
+
+        dbContext.AuctionOrders.Add(auctionOrder);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var deliveryTime = DateTimeOffset.UtcNow;
+
+        // Act
+        await service.UpdateSubOrderDeliveryStatusAsync(auctionOrderId, "Delivered", deliveryTime, CancellationToken.None);
+
+        // Assert
+        var updated = await dbContext.AuctionOrders.FirstAsync(a => a.Id == auctionOrderId);
+        updated.Status.Should().Be(SubOrderStatus.Delivered);
+        updated.DeliveredAt.Should().BeCloseTo(deliveryTime, TimeSpan.FromSeconds(1));
     }
 }

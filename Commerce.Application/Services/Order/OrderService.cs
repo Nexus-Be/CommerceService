@@ -1385,8 +1385,21 @@ public sealed class OrderService : IOrderService
     public async Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, string status, DateTimeOffset? deliveredAt, CancellationToken ct = default)
     {
         var so = await _dbContext.SubOrders
-            .FirstOrDefaultAsync(s => s.Id == subOrderId, ct)
-            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
+            .FirstOrDefaultAsync(s => s.Id == subOrderId, ct);
+
+        if (so == null)
+        {
+            var auctionOrder = await _dbContext.AuctionOrders
+                .FirstOrDefaultAsync(a => a.Id == subOrderId, ct);
+
+            if (auctionOrder != null)
+            {
+                await UpdateAuctionOrderDeliveryStatusAsync(auctionOrder, status, deliveredAt, ct);
+                return;
+            }
+
+            throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
+        }
 
         var timestamp = deliveredAt ?? DateTimeOffset.UtcNow;
 
@@ -1466,6 +1479,111 @@ public sealed class OrderService : IOrderService
 
         await _dbContext.SaveChangesAsync(ct);
         _logger.LogInformation("[OrderService] SubOrder '{SubOrderId}' delivery status updated to '{Status}'.", subOrderId, so.Status);
+    }
+
+    private async Task UpdateAuctionOrderDeliveryStatusAsync(AuctionOrder auctionOrder, string status, DateTimeOffset? deliveredAt, CancellationToken ct)
+    {
+        var timestamp = deliveredAt ?? DateTimeOffset.UtcNow;
+        var previousStatus = auctionOrder.Status;
+
+        if (string.Equals(status, "ReadyToPick", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(status, "Picking", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(status, "Packed", StringComparison.OrdinalIgnoreCase))
+        {
+            // Preparation phases: Idempotent without altering status
+        }
+        else if (string.Equals(status, "HandedOver", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "InTransit", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "Shipped", StringComparison.OrdinalIgnoreCase))
+        {
+            auctionOrder.Status = SubOrderStatus.Shipped;
+            auctionOrder.ShippedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                AuctionOrderId = auctionOrder.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Shipped,
+                ActorRole = OrderActorRole.System,
+                Reason = $"Carrier delivery status update: {status}."
+            });
+        }
+        else if (string.Equals(status, "Delivered", StringComparison.OrdinalIgnoreCase))
+        {
+            auctionOrder.Status = SubOrderStatus.Delivered;
+            auctionOrder.DeliveredAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                AuctionOrderId = auctionOrder.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Delivered,
+                ActorRole = OrderActorRole.System,
+                Reason = $"Carrier delivery status update: {status}."
+            });
+        }
+        else if (string.Equals(status, "Cancelled", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "DeliveryFailed", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase))
+        {
+            var isReturned = string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase);
+            auctionOrder.Status = SubOrderStatus.Cancelled;
+            auctionOrder.CancelledAt = timestamp;
+
+            var cancellationId = Guid.NewGuid();
+            var cancellation = new OrderCancellation
+            {
+                Id = cancellationId,
+                AuctionOrderId = auctionOrder.Id,
+                SubOrderId = null,
+                CancelledBy = null,
+                ActorRole = OrderActorRole.System,
+                ReasonCode = isReturned ? CancellationReasonCode.PackageReturned : CancellationReasonCode.DeliveryFailed,
+                ReasonNote = $"Shipment delivery carrier status: {status}.",
+                WasPaid = auctionOrder.PaidAt.HasValue,
+                InventoryReleased = false
+            };
+            _dbContext.OrderCancellations.Add(cancellation);
+
+            if (auctionOrder.PaidAt.HasValue)
+            {
+                var refundAmount = auctionOrder.TotalAmount ?? auctionOrder.WinningAmount;
+                var refund = new OrderRefund
+                {
+                    Id = Guid.NewGuid(),
+                    AuctionOrderId = auctionOrder.Id,
+                    CancellationId = cancellationId,
+                    RefundType = RefundType.Full,
+                    Amount = refundAmount,
+                    Status = RefundStatus.Requested,
+                    ReasonCode = isReturned ? "PACKAGE_RETURNED" : "DELIVERY_FAILED",
+                    ReasonNote = $"Automated refund request created due to delivery carrier status: {status}.",
+                    ActorRole = OrderActorRole.System,
+                    RequestedBy = null,
+                    RequestedAt = timestamp
+                };
+                _dbContext.OrderRefunds.Add(refund);
+            }
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                AuctionOrderId = auctionOrder.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Cancelled,
+                ActorRole = OrderActorRole.System,
+                Reason = $"Carrier delivery status update: {status}."
+            });
+        }
+        else
+        {
+            throw new CommerceDomainException("INVALID_DELIVERY_STATUS", "The provided delivery status is not supported.", 400);
+        }
+
+        await _dbContext.SaveChangesAsync(ct);
+        _logger.LogInformation("[OrderService] AuctionOrder '{AuctionOrderId}' delivery status updated to '{Status}'.", auctionOrder.Id, auctionOrder.Status);
     }
 
     public async Task<OrderDto> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)

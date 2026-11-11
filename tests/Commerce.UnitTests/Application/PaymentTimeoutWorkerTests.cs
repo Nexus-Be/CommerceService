@@ -22,6 +22,8 @@ public class PaymentTimeoutWorkerTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IAuctionClient> _mockAuctionClient = new();
+    private readonly Mock<IWalletClient> _mockWalletClient = new();
     private readonly Mock<IServiceProvider> _mockServiceProvider = new();
     private readonly Mock<IServiceScope> _mockServiceScope = new();
     private readonly Mock<IServiceScopeFactory> _mockScopeFactory = new();
@@ -37,6 +39,8 @@ public class PaymentTimeoutWorkerTests : IDisposable
         var scopedServices = new Mock<IServiceProvider>();
         scopedServices.Setup(s => s.GetService(typeof(ICommerceDbContext))).Returns(_dbContext);
         scopedServices.Setup(s => s.GetService(typeof(IFulfillmentClient))).Returns(_mockFulfillmentClient.Object);
+        scopedServices.Setup(s => s.GetService(typeof(IAuctionClient))).Returns(_mockAuctionClient.Object);
+        scopedServices.Setup(s => s.GetService(typeof(IWalletClient))).Returns(_mockWalletClient.Object);
 
         _mockServiceScope.Setup(s => s.ServiceProvider).Returns(scopedServices.Object);
 
@@ -233,5 +237,135 @@ public class PaymentTimeoutWorkerTests : IDisposable
         _mockFulfillmentClient.Verify(
             f => f.BatchReleaseStockAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessExpiredOrdersAsync_WhenAuctionOrderPaymentExpired_SetsAuctionOrderIdAndNullSubOrderIdAndSendsPaymentTimedOutCallback()
+    {
+        // Arrange
+        var now = DateTimeOffset.UtcNow;
+        var orderId = Guid.NewGuid();
+        var auctionId = Guid.NewGuid();
+        var buyerId = Guid.NewGuid();
+
+        var expiredAuctionOrder = new AuctionOrder
+        {
+            Id = orderId,
+            OrderNo = "AO-20261111-00001",
+            AuctionId = auctionId,
+            BuyerId = buyerId,
+            SellerId = Guid.NewGuid(),
+            WinningBidId = Guid.NewGuid(),
+            ProductId = Guid.NewGuid(),
+            ProductNameSnapshot = "Rare Antique",
+            WinningAmount = 1000000m,
+            SellerReceiveAmount = 950000m,
+            PlatformFeeAmount = 50000m,
+            Status = SubOrderStatus.PendingPayment,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = now.AddMinutes(-10)
+        };
+
+        _dbContext.AuctionOrders.Add(expiredAuctionOrder);
+        await _dbContext.SaveChangesAsync();
+
+        _mockAuctionClient
+            .Setup(a => a.NotifyPaymentStatusAsync(auctionId, It.Is<AuctionPaymentStatusCallbackRequest>(r =>
+                r.OrderId == orderId &&
+                r.WinnerId == buyerId &&
+                r.Status == "PaymentTimedOut" &&
+                r.EventId.HasValue), default))
+            .ReturnsAsync(true);
+
+        var worker = new PaymentTimeoutWorker(_mockServiceProvider.Object, NullLogger<PaymentTimeoutWorker>.Instance);
+
+        // Act
+        await worker.ProcessExpiredOrdersAsync(CancellationToken.None);
+
+        // Assert
+        var orderInDb = await _dbContext.AuctionOrders.FindAsync(orderId);
+        orderInDb!.Status.Should().Be(SubOrderStatus.Cancelled);
+        orderInDb.CancelledAt.Should().NotBeNull();
+
+        var cancellations = await _dbContext.OrderCancellations.Where(c => c.AuctionOrderId == orderId).ToListAsync();
+        cancellations.Should().HaveCount(1);
+        cancellations[0].AuctionOrderId.Should().Be(orderId);
+        cancellations[0].SubOrderId.Should().BeNull(); // REMEDIATION VERIFIED!
+        cancellations[0].ActorRole.Should().Be(OrderActorRole.System);
+        cancellations[0].ReasonCode.Should().Be(CancellationReasonCode.PaymentTimeout);
+
+        _mockAuctionClient.Verify(a => a.NotifyPaymentStatusAsync(auctionId, It.IsAny<AuctionPaymentStatusCallbackRequest>(), default), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessExpiredOrdersAsync_WhenSellerRespondTimeoutExpired_CancelsPaidOrderRefundsBuyerAndSendsSellerExpiredCallback()
+    {
+        // Arrange
+        var now = DateTimeOffset.UtcNow;
+        var orderId = Guid.NewGuid();
+        var auctionId = Guid.NewGuid();
+        var buyerId = Guid.NewGuid();
+
+        var expiredPaidOrder = new AuctionOrder
+        {
+            Id = orderId,
+            OrderNo = "AO-20261111-00002",
+            AuctionId = auctionId,
+            BuyerId = buyerId,
+            SellerId = Guid.NewGuid(),
+            WinningBidId = Guid.NewGuid(),
+            ProductId = Guid.NewGuid(),
+            ProductNameSnapshot = "Rare Antique",
+            WinningAmount = 1000000m,
+            TotalAmount = 1050000m,
+            SellerReceiveAmount = 950000m,
+            PlatformFeeAmount = 50000m,
+            Status = SubOrderStatus.Paid,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = now.AddHours(-10),
+            PaidAt = now.AddHours(-25),
+            SellerRespondDeadlineAt = now.AddMinutes(-5) // Expired 24h respond deadline
+        };
+
+        _dbContext.AuctionOrders.Add(expiredPaidOrder);
+        await _dbContext.SaveChangesAsync();
+
+        _mockWalletClient
+            .Setup(w => w.RefundOrderPaymentAsync(orderId, buyerId.ToString(), 1050000m, It.IsAny<string>(), null, default))
+            .ReturnsAsync(true);
+
+        _mockAuctionClient
+            .Setup(a => a.NotifyPaymentStatusAsync(auctionId, It.Is<AuctionPaymentStatusCallbackRequest>(r =>
+                r.OrderId == orderId &&
+                r.WinnerId == buyerId &&
+                r.Status == "SellerExpired" &&
+                r.EventId.HasValue), default))
+            .ReturnsAsync(true);
+
+        var worker = new PaymentTimeoutWorker(_mockServiceProvider.Object, NullLogger<PaymentTimeoutWorker>.Instance);
+
+        // Act
+        await worker.ProcessExpiredOrdersAsync(CancellationToken.None);
+
+        // Assert
+        var orderInDb = await _dbContext.AuctionOrders.FindAsync(orderId);
+        orderInDb!.Status.Should().Be(SubOrderStatus.Cancelled);
+        orderInDb.CancelledAt.Should().NotBeNull();
+
+        var cancellations = await _dbContext.OrderCancellations.Where(c => c.AuctionOrderId == orderId).ToListAsync();
+        cancellations.Should().HaveCount(1);
+        cancellations[0].AuctionOrderId.Should().Be(orderId);
+        cancellations[0].SubOrderId.Should().BeNull();
+        cancellations[0].ActorRole.Should().Be(OrderActorRole.System);
+        cancellations[0].ReasonCode.Should().Be(CancellationReasonCode.SellerRejected);
+        cancellations[0].WasPaid.Should().BeTrue();
+
+        var refunds = await _dbContext.OrderRefunds.Where(r => r.AuctionOrderId == orderId).ToListAsync();
+        refunds.Should().HaveCount(1);
+        refunds[0].Amount.Should().Be(1050000m);
+        refunds[0].Status.Should().Be(RefundStatus.Completed);
+
+        _mockWalletClient.Verify(w => w.RefundOrderPaymentAsync(orderId, buyerId.ToString(), 1050000m, It.IsAny<string>(), null, default), Times.Once);
+        _mockAuctionClient.Verify(a => a.NotifyPaymentStatusAsync(auctionId, It.IsAny<AuctionPaymentStatusCallbackRequest>(), default), Times.Once);
     }
 }

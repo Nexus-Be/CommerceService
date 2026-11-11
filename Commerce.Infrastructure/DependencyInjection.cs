@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Commerce.Application.Interfaces;
 using Commerce.Infrastructure.Persistence;
+using Commerce.Infrastructure.Services.Auction;
 using Commerce.Infrastructure.Services.Catalog;
 using Commerce.Infrastructure.Services.Fulfillment;
 using Commerce.Infrastructure.Services.User;
@@ -120,6 +121,29 @@ public static class DependencyInjection
         services.AddHttpClient<IUserClient, UserClient>(client =>
         {
             client.BaseAddress = new Uri(userBaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(10);
+
+            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
+                ?? configuration["INTERNAL_SERVICE_SECRET"]
+                ?? configuration["InternalSecurity:ServiceKey"]
+                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
+
+            if (!string.IsNullOrWhiteSpace(internalServiceKey))
+            {
+                client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
+            }
+        }).AddHttpMessageHandler<Services.Common.IdentityPropagationHandler>();
+
+        // REST Auction Client
+        var auctionBaseUrl = Environment.GetEnvironmentVariable("AUCTION_SERVICE_URL")
+            ?? configuration["AUCTION_SERVICE_URL"]
+            ?? configuration["Services:Auction:BaseUrl"]
+            ?? configuration["AuctionService:BaseUrl"]
+            ?? "http://localhost:8005/";
+
+        services.AddHttpClient<IAuctionClient, AuctionClient>(client =>
+        {
+            client.BaseAddress = new Uri(auctionBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
 
             var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")

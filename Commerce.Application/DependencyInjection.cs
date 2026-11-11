@@ -1,6 +1,7 @@
 namespace Commerce.Application;
 
 using Microsoft.Extensions.DependencyInjection;
+using Commerce.Application.Services.AuctionOrder;
 using Commerce.Application.Services.Cart;
 using Commerce.Application.Services.Order;
 
@@ -10,6 +11,7 @@ public static class DependencyInjection
     {
         services.AddScoped<ICartService, CartService>();
         services.AddScoped<IOrderService, OrderService>();
+        services.AddScoped<IAuctionOrderService, AuctionOrderService>();
         return services;
     }
 }
