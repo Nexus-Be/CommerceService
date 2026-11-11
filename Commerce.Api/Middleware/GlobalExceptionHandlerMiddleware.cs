@@ -3,6 +3,7 @@ namespace Commerce.Api.Middleware;
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Commerce.Domain.Exceptions;
 
@@ -55,6 +56,11 @@ public sealed class GlobalExceptionHandlerMiddleware
                 "VAL_INVALID_ARGUMENT",
                 GetStatusTitle(StatusCodes.Status400BadRequest, "Invalid argument"),
                 aex.Message),
+            DbUpdateConcurrencyException => (
+                StatusCodes.Status409Conflict,
+                "CONCURRENCY_CONFLICT",
+                GetStatusTitle(StatusCodes.Status409Conflict, "Data concurrency conflict"),
+                "The resource was modified or deleted by another operation. Please refresh and try again."),
             _ => (
                 StatusCodes.Status500InternalServerError,
                 "INTERNAL_SERVER_ERROR",

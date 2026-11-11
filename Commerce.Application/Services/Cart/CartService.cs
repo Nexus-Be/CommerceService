@@ -110,6 +110,8 @@ public sealed class CartService : ICartService
             _dbContext.Carts.Add(cart);
         }
 
+        var isExistingItem = cart.Items.Any(i => i.SkuId == skuInfo.SkuId);
+
         var cartItem = cart.AddOrUpdateItem(
             productId: request.ProductId ?? skuInfo.ProductId,
             skuId: skuInfo.SkuId,
@@ -118,12 +120,34 @@ public sealed class CartService : ICartService
             quantity: request.Quantity,
             unitPrice: skuInfo.UnitPrice);
 
-        if (!_dbContext.CartItems.Local.Any(ci => ci.Id == cartItem.Id))
+        if (!isExistingItem)
         {
             _dbContext.CartItems.Add(cartItem);
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException dbEx) when (IsUniqueConstraintViolation(dbEx))
+        {
+            (_dbContext as DbContext)?.ChangeTracker.Clear();
+
+            var refreshedCart = await GetActiveCartEntityAsync(buyerId, asNoTracking: false, cancellationToken)
+                ?? throw new CommerceDomainException("CART_NOT_FOUND", "Active cart not found for the user.", 404);
+
+            refreshedCart.AddOrUpdateItem(
+                productId: request.ProductId ?? skuInfo.ProductId,
+                skuId: skuInfo.SkuId,
+                sellerId: skuInfo.SellerId,
+                productName: skuInfo.ProductName,
+                quantity: request.Quantity,
+                unitPrice: skuInfo.UnitPrice);
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return MapToDto(refreshedCart);
+        }
+
         return MapToDto(cart);
     }
 
@@ -362,6 +386,7 @@ public sealed class CartService : ICartService
         {
             cart.SubtotalAmount = cart.Items.Sum(i => i.Quantity * i.UnitPriceSnapshot);
             cart.LastActivityAt = DateTimeOffset.UtcNow;
+            cart.RowVersion++;
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
 
@@ -398,13 +423,19 @@ public sealed class CartService : ICartService
             var isStockAvailable = await _fulfillmentClient.CheckStockAvailabilityAsync(guestItem.SkuId, guestItem.Quantity, cancellationToken);
             if (!isStockAvailable) continue;
 
-            cart.AddOrUpdateItem(
+            var isExistingItem = cart.Items.Any(i => i.SkuId == sku.SkuId);
+            var cartItem = cart.AddOrUpdateItem(
                 productId: guestItem.ProductId ?? sku.ProductId,
                 skuId: sku.SkuId,
                 sellerId: sku.SellerId,
                 productName: sku.ProductName,
                 quantity: guestItem.Quantity,
                 unitPrice: sku.UnitPrice);
+
+            if (!isExistingItem)
+            {
+                _dbContext.CartItems.Add(cartItem);
+            }
         }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -646,5 +677,13 @@ public sealed class CartService : ICartService
             cart.SubtotalAmount,
             items,
             cart.LastActivityAt);
+    }
+
+    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
+    {
+        var message = ex.InnerException?.Message ?? ex.Message;
+        return message.Contains("23505", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("IX_CartItems_CartId_SkuId", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("unique constraint", StringComparison.OrdinalIgnoreCase);
     }
 }

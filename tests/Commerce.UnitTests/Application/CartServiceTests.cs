@@ -110,6 +110,42 @@ public class CartServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AddItemAsync_ShouldMarkEntityAsAdded_WhenAddingNewSkuToExistingCart()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId1 = Guid.NewGuid();
+        var skuId2 = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuId1, productId, sellerId, "Product 1", 50000m, true, 100));
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId2, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuId2, productId, sellerId, "Product 2", 70000m, true, 100));
+
+        var service = CreateService();
+
+        // 1. Thêm món đầu tiên để tạo Cart
+        await service.AddItemAsync(buyerId, new AddCartItemRequest(skuId1, 1, productId), CancellationToken.None);
+
+        // 2. Thêm món thứ hai (khác SKU) vào giỏ hàng đã có sẵn
+        var result = await service.AddItemAsync(buyerId, new AddCartItemRequest(skuId2, 2, productId), CancellationToken.None);
+
+        // Assert
+        result.ItemCount.Should().Be(2);
+        result.Items.Should().HaveCount(2);
+        result.SubtotalAmount.Should().Be(50000m + (2 * 70000m));
+
+        var dbCart = await _dbContext.Carts.Include(c => c.Items).FirstOrDefaultAsync(c => c.BuyerId == buyerId);
+        dbCart.Should().NotBeNull();
+        dbCart!.Items.Should().HaveCount(2);
+    }
+
+    [Fact]
     public async Task AddItemAsync_ShouldThrowException_WhenQuantityIsZeroOrNegative()
     {
         // Arrange
@@ -712,5 +748,144 @@ public class CartServiceTests : IDisposable
         var dbItem1 = dbCart.Items.First(i => i.SkuId == sku1);
         dbItem1.UnitPriceSnapshot.Should().Be(120000m);
         dbCart.SubtotalAmount.Should().Be(2 * 120000m + 1 * 50000m);
+        dbCart.RowVersion.Should().BeGreaterThan(1);
+    }
+
+    [Fact]
+    public async Task ValidateCartAsync_ShouldIncrementRowVersion_WhenPriceSnapshotsAreUpdated()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuId, Guid.NewGuid(), sellerId, "Item", 100000m, true, 100));
+
+        var service = CreateService();
+        await service.AddItemAsync(buyerId, new AddCartItemRequest(skuId, 1), CancellationToken.None);
+
+        var initialCart = await _dbContext.Carts.FirstAsync(c => c.BuyerId == buyerId);
+        var initialRowVersion = initialCart.RowVersion;
+
+        // Catalog changes price from 100k to 150k
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, CatalogProductCheckResult>
+            {
+                [skuId] = new CatalogProductCheckResult(skuId, Guid.NewGuid(), sellerId, "Item", 150000m, true, 100)
+            });
+
+        // Act
+        var result = await service.ValidateCartAsync(buyerId, new ValidateCartRequest(), CancellationToken.None);
+
+        // Assert
+        result.HasPriceChanges.Should().BeTrue();
+        var updatedCart = await _dbContext.Carts.FirstAsync(c => c.BuyerId == buyerId);
+        updatedCart.RowVersion.Should().Be(initialRowVersion + 1);
+    }
+
+    [Fact]
+    public async Task MergeGuestCartAsync_ShouldMarkNewItemsAsAdded_WhenMergingIntoExistingCart()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var existingSku = Guid.NewGuid();
+        var guestNewSku = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(existingSku, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(existingSku, Guid.NewGuid(), sellerId, "Existing Item", 100000m, true, 100));
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(guestNewSku, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(guestNewSku, Guid.NewGuid(), sellerId, "Guest New Item", 60000m, true, 100));
+
+        var service = CreateService();
+
+        // 1. Tạo giỏ hàng có sẵn với 1 món
+        await service.AddItemAsync(buyerId, new AddCartItemRequest(existingSku, 1), CancellationToken.None);
+
+        // 2. Merge giỏ hàng guest chứa 1 món mới và 1 món trùng SKU
+        var mergeRequest = new MergeGuestCartRequest(new List<GuestCartItem>
+        {
+            new GuestCartItem(existingSku, 2),
+            new GuestCartItem(guestNewSku, 3)
+        });
+
+        // Act
+        var result = await service.MergeGuestCartAsync(buyerId, mergeRequest, CancellationToken.None);
+
+        // Assert
+        result.ItemCount.Should().Be(2);
+        result.Items.Should().HaveCount(2);
+
+        var existingMerged = result.Items.First(i => i.SkuId == existingSku);
+        existingMerged.Quantity.Should().Be(3); // 1 + 2 = 3
+
+        var newMerged = result.Items.First(i => i.SkuId == guestNewSku);
+        newMerged.Quantity.Should().Be(3);
+
+        var dbCart = await _dbContext.Carts.Include(c => c.Items).FirstAsync(c => c.BuyerId == buyerId);
+        dbCart.Items.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task AddItemAsync_ShouldRecoverGracefully_WhenUniqueConstraintViolatedByConcurrentInsert()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuId, productId, sellerId, "Test Product", 50000m, true, 100));
+
+        var dbName = Guid.NewGuid().ToString();
+        var options = new DbContextOptionsBuilder<TestCommerceDbContext>()
+            .UseInMemoryDatabase(dbName)
+            .Options;
+
+        var throwingContext = new MockThrowingDbContext(options);
+        throwingContext.Database.EnsureCreated();
+
+        var service = new CartService(throwingContext, _mockCatalogClient.Object, _mockFulfillmentClient.Object);
+
+        // 1. Lần thêm đầu tiên tạo Cart và CartItem
+        await service.AddItemAsync(buyerId, new AddCartItemRequest(skuId, 1, productId), CancellationToken.None);
+
+        // 2. Kích hoạt giả lập DbUpdateException vi phạm Unique Constraint một lần
+        throwingContext.ThrowUniqueConstraintOnce = true;
+
+        // Act
+        var result = await service.AddItemAsync(buyerId, new AddCartItemRequest(skuId, 2, productId), CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Quantity.Should().Be(3);
+    }
+
+    private class MockThrowingDbContext : TestCommerceDbContext
+    {
+        public bool ThrowUniqueConstraintOnce { get; set; }
+
+        public MockThrowingDbContext(DbContextOptions<TestCommerceDbContext> options) : base(options)
+        {
+        }
+
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            if (ThrowUniqueConstraintOnce)
+            {
+                ThrowUniqueConstraintOnce = false;
+                throw new DbUpdateException("Simulated constraint violation", new Exception("23505: duplicate key value violates unique constraint IX_CartItems_CartId_SkuId"));
+            }
+            return base.SaveChangesAsync(cancellationToken);
+        }
     }
 }
