@@ -67,6 +67,8 @@ Khi phiên đấu giá kết thúc thành công, Auction Service gọi sang Comm
 }
 ```
 
+> **Ghi chú về trường `skuAttributes`**: Trường `skuAttributes` là **hoàn toàn tùy chọn (Optional)**. Trường hợp sản phẩm đấu giá không có thuộc tính phân loại hoặc Auction Service không truyền trường này, Commerce Service tự động gán giá trị mặc định `"{}"` và **tuyệt đối KHÔNG báo lỗi 400**.
+
 * **Xử lý phản hồi**:
   * **HTTP 201 Created**: Tạo đơn đấu giá mới thành công.
     ```json
@@ -119,9 +121,9 @@ Commerce Service gọi lại Auction Service qua HTTP REST để đồng bộ c�
 |:---|:---|:---|:---|
 | **`Paid`** | Buyer hoàn tất thanh toán ví Nexus Wallet | `amount = WinningAmount`<br>`paidAt = UtcNow`<br>`eventId` | Cập nhật phiên sang trạng thái đã thanh toán; ghi nhận mốc thời gian hoàn tất nghĩa vụ tài chính của Winner. |
 | **`SellerAccepted`** | Seller bấm chấp thuận đơn trong hạn 24h | `eventId` | Gọi sang Catalog Service để khóa/chốt vĩnh viễn sản phẩm đã bán đấu giá (`mark-auctioned`). |
-| **`SellerRejected`** | Seller bấm từ chối đơn hàng (lỗi hàng/hết hàng) | `eventId` | Trừ điểm uy tín Seller; cho phép Seller relist lại sản phẩm nếu muốn sau khi chỉnh lý. |
-| **`SellerExpired`** | Worker tự động hủy đơn sau 24h Seller im lặng | `eventId` | Phạt hạ uy tín Seller do bỏ rơi đơn; hoàn tất đóng phiên đấu giá. |
-| **`PaymentTimedOut`** | Worker tự động hủy đơn sau 24h Buyer không thanh toán | `eventId` | Phạt uy tín Buyer; kích hoạt luồng **Mời người về nhì** (Runner-up) hoặc đóng phiên. |
+| **`SellerRejected`** | Seller bấm từ chối đơn hàng (lỗi hàng/hết hàng) | `eventId` | Cập nhật phiên đấu giá thất bại do Seller từ chối; đóng phiên hoặc cho phép Seller mở lại phiên nếu cần. *(Lưu ý: Auction Service KHÔNG xử lý điểm uy tín/phạt; việc trừ điểm uy tín Seller sẽ do Commerce Service phối hợp với User Service xử lý riêng qua `/api/v1/internal/users/penalties`).* |
+| **`SellerExpired`** | Worker tự động hủy đơn sau 24h Seller im lặng | `eventId` | Cập nhật phiên đấu giá thất bại do Seller quá hạn duyệt 24h; hoàn tất đóng phiên. *(Lưu ý: Auction Service KHÔNG xử lý điểm uy tín/phạt; việc xử phạt Seller do Commerce Service và User Service xử lý riêng).* |
+| **`PaymentTimedOut`** | Worker tự động hủy đơn sau 24h Buyer không thanh toán | `eventId` | Cập nhật phiên thất bại do Buyer quá hạn thanh toán 24h; kích hoạt luồng **Mời người về nhì** (Runner-up) hoặc đóng phiên. *(Lưu ý: Auction Service KHÔNG xử lý điểm uy tín/phạt; việc xử lý vi phạm của Buyer do Commerce Service và User Service xử lý riêng).* |
 
 ---
 
