@@ -158,7 +158,7 @@ sequenceDiagram
     Worker->>Commerce: Quét đơn (Status == PendingPayment && PaymentDeadlineAt < now)
     Commerce->>Commerce: Set Status = Cancelled, Reason: PaymentTimeout, WasPaid = false
     Commerce->>Auction: POST /api/v1/auctions/{auctionId}/settlement/payment-status<br/>{ status: "PaymentTimedOut", eventId: "guid" }
-    Auction-->>Commerce: 200 OK (Auction tịch thu cọc Buyer / hạ uy tín)
+    Auction-->>Commerce: 200 OK (Auction update trạng thái phiên / kích hoạt mời runner-up)
 ```
 
 ---
@@ -241,10 +241,11 @@ sequenceDiagram
 #### Bảng giá trị chuẩn của Enum `status`:
 | Giá trị `status` | Thời điểm phát sinh tại Commerce | Hành động mong đợi phía Auction |
 |---|---|---|
-| `"Paid"` | Buyer thanh toán ví thành công 100% tiền đơn. | Cập nhật phiên sang trạng thái đã thanh toán; kích hoạt hoàn cọc cho Winner (nếu có). |
-| `"SellerRejected"`| Seller chủ động bấm từ chối đơn hàng con. Commerce đã hoàn 100% tiền đơn về ví Buyer. | Xử phạt uy tín Seller; tịch thu cọc Seller (nếu có) / bồi thường Buyer. |
-| `"SellerExpired"` | Hết 24h duyệt (`SellerRespondDeadlineAt`), Seller không duyệt. Commerce tự hủy và hoàn 100% tiền ví Buyer. | Xử phạt uy tín Seller do treo đơn quá hạn. |
-| `"PaymentTimedOut"`| Hết 24h thanh toán (`PaymentDeadlineAt`), Buyer không trả tiền. Commerce tự hủy đơn chưa thanh toán. | Tịch thu cọc đấu giá của Buyer; trừ điểm uy tín Buyer; chuyển phiên sang xử lý người về nhì hoặc mở lại phiên. |
+| `"Paid"` | Buyer thanh toán ví thành công 100% tiền đơn. | Cập nhật phiên sang trạng thái đã thanh toán; ghi nhận mốc thời gian hoàn thành nghĩa vụ của Winner. |
+| `"SellerAccepted"` | Seller chấp nhận đơn trong 24h. | Gọi Catalog Service khóa/chốt vĩnh viễn sản phẩm đã bán (`mark-auctioned`). |
+| `"SellerRejected"`| Seller chủ động bấm từ chối đơn hàng con. Commerce đã hoàn 100% tiền đơn về ví Buyer. | Cập nhật phiên sang trạng thái thất bại do Seller từ chối; đóng phiên hoặc cho phép Seller relist lại. *(Lưu ý: Auction Service KHÔNG xử lý điểm uy tín/phạt; việc trừ điểm uy tín Seller do Commerce Service phối hợp với User Service xử lý riêng qua `/api/v1/internal/users/penalties`).* |
+| `"SellerExpired"` | Hết 24h duyệt (`SellerRespondDeadlineAt`), Seller không duyệt. Commerce tự hủy và hoàn 100% tiền ví Buyer. | Cập nhật phiên sang trạng thái thất bại do Seller quá hạn duyệt 24h; hoàn tất đóng phiên. *(Lưu ý: Việc xử phạt Seller do Commerce Service và User Service xử lý riêng).* |
+| `"PaymentTimedOut"`| Hết 24h thanh toán (`PaymentDeadlineAt`), Buyer không trả tiền. Commerce tự hủy đơn chưa thanh toán. | Cập nhật phiên thất bại do Buyer quá hạn thanh toán 24h; kích hoạt luồng **Mời người về nhì** (Runner-up) hoặc đóng phiên. *(Lưu ý: Việc xử lý vi phạm của Buyer do Commerce Service và User Service xử lý riêng).* |
 
 #### Response mong đợi từ Auction Service:
 * HTTP Code: `200 OK`
