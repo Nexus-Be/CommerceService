@@ -1104,6 +1104,7 @@ public sealed class OrderService : IOrderService
     public async Task<ConfirmReceiptResponse> BuyerConfirmSubOrderReceiptAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default)
     {
         var so = await _dbContext.SubOrders
+            .Include(s => s.Items)
             .FirstOrDefaultAsync(s => s.Id == subOrderId, ct)
             ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
 
@@ -1168,6 +1169,20 @@ public sealed class OrderService : IOrderService
             }
         }
 
+        // TỰ ĐỘNG ĐỒNG BỘ ĐƠN MUA HÀNG SANG CATALOG SERVICE ĐỂ MỞ QUYỀN ĐÁNH GIÁ (INT-08)
+        if (_catalogClient != null && so.Items.Count > 0)
+        {
+            try
+            {
+                var productIds = so.Items.Select(i => i.ProductId);
+                await _catalogClient.SyncPurchasesBatchAsync(so.BuyerId, so.Id, productIds, completedAt, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to sync purchase records to Catalog for SubOrder '{SubOrderId}'.", so.Id);
+            }
+        }
+
         var parentOrder = await _dbContext.Orders
             .Include(o => o.SubOrders)
             .FirstOrDefaultAsync(o => o.Id == so.OrderId, ct);
@@ -1192,6 +1207,7 @@ public sealed class OrderService : IOrderService
     {
         var order = await _dbContext.Orders
             .Include(o => o.SubOrders)
+                .ThenInclude(so => so.Items)
             .FirstOrDefaultAsync(o => o.Id == orderId, ct)
             ?? throw new EntityNotFoundException("ORDER_NOT_FOUND", "Order", orderId);
 
@@ -1256,6 +1272,20 @@ public sealed class OrderService : IOrderService
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to adjust reputation for Seller '{SellerId}' on order complete.", so.SellerId);
+                }
+            }
+
+            // TỰ ĐỘNG ĐỒNG BỘ ĐƠN MUA HÀNG SANG CATALOG SERVICE ĐỂ MỞ QUYỀN ĐÁNH GIÁ (INT-08)
+            if (_catalogClient != null && so.Items.Count > 0)
+            {
+                try
+                {
+                    var productIds = so.Items.Select(i => i.ProductId);
+                    await _catalogClient.SyncPurchasesBatchAsync(order.BuyerId, so.Id, productIds, completedAt, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to sync purchase records to Catalog for SubOrder '{SubOrderId}' during master order complete.", so.Id);
                 }
             }
         }

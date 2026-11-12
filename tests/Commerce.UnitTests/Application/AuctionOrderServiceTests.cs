@@ -19,6 +19,7 @@ public class AuctionOrderServiceTests
     private readonly Mock<IWalletClient> _walletClientMock = new();
     private readonly Mock<IFulfillmentClient> _fulfillmentClientMock = new();
     private readonly Mock<IAuctionClient> _auctionClientMock = new();
+    private readonly Mock<ICatalogClient> _catalogClientMock = new();
     private readonly Mock<ILogger<AuctionOrderService>> _loggerMock = new();
     private readonly AuctionOrderService _service;
 
@@ -30,6 +31,7 @@ public class AuctionOrderServiceTests
             _walletClientMock.Object,
             _fulfillmentClientMock.Object,
             _auctionClientMock.Object,
+            _catalogClientMock.Object,
             _loggerMock.Object);
     }
 
@@ -840,6 +842,63 @@ public class AuctionOrderServiceTests
         updatedOrder.CompletedAt.Should().NotBeNull();
 
         _walletClientMock.Verify(w => w.SettleSellerSubOrderAsync(orderId, sellerId, 4750000m, null, default), Times.Once);
+
+        _catalogClientMock.Verify(c => c.SyncPurchaseRecordAsync(
+            It.Is<CatalogPurchaseSyncRequest>(r => r.BuyerId == buyerId && r.OrderId == orderId && r.ProductId == auctionOrder.ProductId),
+            It.IsAny<System.Threading.CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ConfirmReceiptAsync_WhenCatalogSyncThrowsException_StillCompletesOrderAndSettlesEscrow()
+    {
+        // Arrange
+        var sellerId = Guid.NewGuid();
+        var buyerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+
+        var auctionOrder = new AuctionOrder
+        {
+            Id = orderId,
+            OrderNo = "AO-20261111-00002",
+            AuctionId = Guid.NewGuid(),
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            WinningBidId = Guid.NewGuid(),
+            ProductId = Guid.NewGuid(),
+            ProductNameSnapshot = "Sculpture",
+            WinningAmount = 1000000m,
+            TotalAmount = 1030000m,
+            SellerReceiveAmount = 950000m,
+            PlatformFeeAmount = 50000m,
+            Status = SubOrderStatus.Delivered,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddDays(-1),
+            PaidAt = DateTimeOffset.UtcNow.AddDays(-1),
+            DeliveredAt = DateTimeOffset.UtcNow.AddHours(-1)
+        };
+        _dbContext.AuctionOrders.Add(auctionOrder);
+        await _dbContext.SaveChangesAsync();
+
+        _walletClientMock
+            .Setup(w => w.SettleSellerSubOrderAsync(orderId, sellerId, 950000m, null, default))
+            .ReturnsAsync(true);
+
+        _catalogClientMock
+            .Setup(c => c.SyncPurchaseRecordAsync(It.IsAny<CatalogPurchaseSyncRequest>(), It.IsAny<System.Threading.CancellationToken>()))
+            .ThrowsAsync(new System.Net.Http.HttpRequestException("Catalog connection timeout"));
+
+        // Act
+        var response = await _service.ConfirmReceiptAsync(orderId, buyerId);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.Status.Should().Be("Completed");
+
+        var updatedOrder = await _dbContext.AuctionOrders.FindAsync(orderId);
+        updatedOrder!.Status.Should().Be(SubOrderStatus.Completed);
+        updatedOrder.CompletedAt.Should().NotBeNull();
+
+        _walletClientMock.Verify(w => w.SettleSellerSubOrderAsync(orderId, sellerId, 950000m, null, default), Times.Once);
     }
 
     [Fact]

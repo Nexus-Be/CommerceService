@@ -18,6 +18,7 @@ public class AuctionOrderService : IAuctionOrderService
     private readonly IWalletClient _walletClient;
     private readonly IFulfillmentClient _fulfillmentClient;
     private readonly IAuctionClient _auctionClient;
+    private readonly ICatalogClient _catalogClient;
     private readonly ILogger<AuctionOrderService> _logger;
     private const decimal DefaultPlatformFeeRate = 0.05m; // 5%
 
@@ -31,12 +32,14 @@ public class AuctionOrderService : IAuctionOrderService
         IWalletClient walletClient,
         IFulfillmentClient fulfillmentClient,
         IAuctionClient auctionClient,
+        ICatalogClient catalogClient,
         ILogger<AuctionOrderService> logger)
     {
         _dbContext = dbContext;
         _walletClient = walletClient;
         _fulfillmentClient = fulfillmentClient;
         _auctionClient = auctionClient;
+        _catalogClient = catalogClient;
         _logger = logger;
     }
 
@@ -575,6 +578,25 @@ public class AuctionOrderService : IAuctionOrderService
         catch (Exception ex)
         {
             _logger.LogError(ex, "[AuctionOrder] Escrow settlement failed for Order '{OrderId}'. Manual settlement may be required.", auctionOrder.Id);
+        }
+
+        // TỰ ĐỘNG ĐỒNG BỘ ĐƠN MUA HÀNG SANG CATALOG SERVICE ĐỂ MỞ QUYỀN ĐÁNH GIÁ (INT-08)
+        if (_catalogClient != null && auctionOrder.ProductId != Guid.Empty)
+        {
+            try
+            {
+                await _catalogClient.SyncPurchaseRecordAsync(new CatalogPurchaseSyncRequest(
+                    auctionOrder.BuyerId,
+                    auctionOrder.Id,
+                    auctionOrder.ProductId,
+                    now
+                ), cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[AuctionOrder] Failed to sync purchase record to Catalog for Order '{OrderId}', Product '{ProductId}'.",
+                    auctionOrder.Id, auctionOrder.ProductId);
+            }
         }
 
         return new ConfirmReceiptResponse(

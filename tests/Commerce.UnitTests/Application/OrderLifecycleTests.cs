@@ -426,4 +426,210 @@ public class OrderLifecycleTests : IDisposable
             It.Is<UserPenaltyRequest>(p => p.UserId == sellerId && p.CustomScoreDeduction == 5 && p.ViolationType == "CancellationWithoutReason"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task ConfirmReceipt_ShouldSyncPurchasesToCatalog_WithDistinctProductIds()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Delivered);
+
+        var product1 = Guid.NewGuid();
+        var product2 = Guid.NewGuid();
+
+        var item1 = new SubOrderItem
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            ProductId = product1,
+            SkuId = Guid.NewGuid(),
+            SellerId = sellerId,
+            ProductNameSnapshot = "Product 1 Variant A",
+            Quantity = 1,
+            UnitPrice = 100000m,
+            UnitPriceAfterDiscount = 100000m,
+            LineTotal = 100000m
+        };
+        var item2 = new SubOrderItem
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            ProductId = product1, // Duplicate parent product
+            SkuId = Guid.NewGuid(),
+            SellerId = sellerId,
+            ProductNameSnapshot = "Product 1 Variant B",
+            Quantity = 2,
+            UnitPrice = 100000m,
+            UnitPriceAfterDiscount = 100000m,
+            LineTotal = 200000m
+        };
+        var item3 = new SubOrderItem
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            ProductId = product2,
+            SkuId = Guid.NewGuid(),
+            SellerId = sellerId,
+            ProductNameSnapshot = "Product 2",
+            Quantity = 1,
+            UnitPrice = 50000m,
+            UnitPriceAfterDiscount = 50000m,
+            LineTotal = 50000m
+        };
+        _dbContext.SubOrderItems.AddRange(item1, item2, item3);
+        await _dbContext.SaveChangesAsync();
+
+        _mockCatalogClient
+            .Setup(c => c.SyncPurchasesBatchAsync(buyerId, subOrder.Id, It.IsAny<IEnumerable<Guid>>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2);
+
+        var service = CreateOrderService();
+
+        // Act
+        var response = await service.BuyerConfirmSubOrderReceiptAsync(buyerId, subOrder.Id, CancellationToken.None);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.Status.Should().Be(SubOrderStatus.Completed.ToString());
+
+        _mockCatalogClient.Verify(c => c.SyncPurchasesBatchAsync(
+            buyerId,
+            subOrder.Id,
+            It.Is<IEnumerable<Guid>>(ids => ids.Count() == 3),
+            It.IsAny<DateTimeOffset?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ConfirmReceipt_ShouldNotFail_WhenCatalogSyncThrowsException()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Delivered);
+
+        var item = new SubOrderItem
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            ProductId = Guid.NewGuid(),
+            SkuId = Guid.NewGuid(),
+            SellerId = sellerId,
+            ProductNameSnapshot = "Product 1",
+            Quantity = 1,
+            UnitPrice = 100000m,
+            UnitPriceAfterDiscount = 100000m,
+            LineTotal = 100000m
+        };
+        _dbContext.SubOrderItems.Add(item);
+        await _dbContext.SaveChangesAsync();
+
+        _mockCatalogClient
+            .Setup(c => c.SyncPurchasesBatchAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<Guid>>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new System.Net.Http.HttpRequestException("Catalog connection failed"));
+
+        var service = CreateOrderService();
+
+        // Act
+        var response = await service.BuyerConfirmSubOrderReceiptAsync(buyerId, subOrder.Id, CancellationToken.None);
+
+        // Assert: Non-blocking fail-safe: order still completes
+        response.Should().NotBeNull();
+        response.Status.Should().Be(SubOrderStatus.Completed.ToString());
+
+        var updatedSubOrder = await _dbContext.SubOrders.FirstOrDefaultAsync(s => s.Id == subOrder.Id);
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Completed);
+    }
+
+    [Fact]
+    public async Task CompleteOrder_ShouldSyncPurchasesToCatalog_ForAllSubOrders()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var seller1 = Guid.NewGuid();
+        var (order, subOrder1) = await SeedOrderWithSubOrderAsync(buyerId, seller1, OrderStatus.Paid, SubOrderStatus.Delivered);
+
+        var product1 = Guid.NewGuid();
+        var item1 = new SubOrderItem
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder1.Id,
+            ProductId = product1,
+            SkuId = Guid.NewGuid(),
+            SellerId = seller1,
+            ProductNameSnapshot = "Product 1",
+            Quantity = 1,
+            UnitPrice = 100000m,
+            UnitPriceAfterDiscount = 100000m,
+            LineTotal = 100000m
+        };
+        _dbContext.SubOrderItems.Add(item1);
+
+        var seller2 = Guid.NewGuid();
+        var subOrder2 = new SubOrder
+        {
+            Id = Guid.NewGuid(),
+            SubOrderNo = $"SUB-{DateTime.UtcNow:yyyyMMdd}-002",
+            OrderId = order.Id,
+            BuyerId = buyerId,
+            SellerId = seller2,
+            Status = SubOrderStatus.Delivered,
+            PaymentMethod = PaymentMethod.Wallet,
+            ShippingAddress = new ShippingAddressSnapshot("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 150000m,
+            ShippingFeeAmount = 30000m,
+            TotalAmount = 180000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            PaidAt = DateTimeOffset.UtcNow
+        };
+
+        var product2 = Guid.NewGuid();
+        var item2 = new SubOrderItem
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder2.Id,
+            ProductId = product2,
+            SkuId = Guid.NewGuid(),
+            SellerId = seller2,
+            ProductNameSnapshot = "Product 2",
+            Quantity = 1,
+            UnitPrice = 150000m,
+            UnitPriceAfterDiscount = 150000m,
+            LineTotal = 150000m
+        };
+        subOrder2.Items.Add(item2);
+
+        _dbContext.SubOrders.Add(subOrder2);
+        await _dbContext.SaveChangesAsync();
+
+        _mockCatalogClient
+            .Setup(c => c.SyncPurchasesBatchAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<Guid>>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+
+        var service = CreateOrderService();
+
+        // Act
+        var response = await service.CompleteOrderAsync(buyerId, order.Id, CancellationToken.None);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.Status.Should().Be(OrderStatus.Completed.ToString());
+        response.CompletedSubOrderCount.Should().Be(2);
+
+        _mockCatalogClient.Verify(c => c.SyncPurchasesBatchAsync(
+            buyerId,
+            subOrder1.Id,
+            It.Is<IEnumerable<Guid>>(ids => ids.Contains(product1)),
+            It.IsAny<DateTimeOffset?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        _mockCatalogClient.Verify(c => c.SyncPurchasesBatchAsync(
+            buyerId,
+            subOrder2.Id,
+            It.Is<IEnumerable<Guid>>(ids => ids.Contains(product2)),
+            It.IsAny<DateTimeOffset?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

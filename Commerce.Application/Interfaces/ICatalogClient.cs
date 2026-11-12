@@ -25,6 +25,12 @@ public sealed record CatalogVariantSwitchResult(
     bool IsPurchasable,
     int WeightGrams = 200);
 
+public sealed record CatalogPurchaseSyncRequest(
+    Guid BuyerId,
+    Guid OrderId,
+    Guid ProductId,
+    DateTimeOffset? CompletedAt = null);
+
 public interface ICatalogClient
 {
     Task<CatalogProductCheckResult?> GetSkuDetailsAsync(
@@ -38,5 +44,16 @@ public interface ICatalogClient
     Task<CatalogVariantSwitchResult> ValidateVariantSwitchAsync(
         Guid currentSkuId,
         Guid newSkuId,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> SyncPurchaseRecordAsync(
+        CatalogPurchaseSyncRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<int> SyncPurchasesBatchAsync(
+        Guid buyerId,
+        Guid orderId,
+        IEnumerable<Guid> productIds,
+        DateTimeOffset? completedAt = null,
         CancellationToken cancellationToken = default);
 }

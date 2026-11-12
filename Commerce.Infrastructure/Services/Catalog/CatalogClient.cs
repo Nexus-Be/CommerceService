@@ -191,6 +191,71 @@ public sealed class CatalogClient : ICatalogClient
         }
     }
 
+    public async Task<bool> SyncPurchaseRecordAsync(
+        CatalogPurchaseSyncRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var payload = new
+            {
+                buyerId = request.BuyerId,
+                orderId = request.OrderId,
+                productId = request.ProductId,
+                completedAt = request.CompletedAt ?? DateTimeOffset.UtcNow
+            };
+
+            var response = await _httpClient.PostAsJsonAsync("api/v1/internal/purchases", payload, JsonOptions, cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("[REST Catalog Client] Successfully synced purchase for Buyer '{BuyerId}', Order '{OrderId}', Product '{ProductId}' (Status: {StatusCode}).",
+                    request.BuyerId, request.OrderId, request.ProductId, response.StatusCode);
+                return true;
+            }
+
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("[REST Catalog Client] Purchase sync rejected by Catalog Service ({StatusCode}): {Body}",
+                response.StatusCode, errorBody);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[REST Catalog Client] Connection error during purchase sync for Buyer '{BuyerId}', Order '{OrderId}', Product '{ProductId}'.",
+                request.BuyerId, request.OrderId, request.ProductId);
+            return false;
+        }
+    }
+
+    public async Task<int> SyncPurchasesBatchAsync(
+        Guid buyerId,
+        Guid orderId,
+        IEnumerable<Guid> productIds,
+        DateTimeOffset? completedAt = null,
+        CancellationToken cancellationToken = default)
+    {
+        var distinctProductIds = productIds
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        if (distinctProductIds.Count == 0)
+        {
+            return 0;
+        }
+
+        var tasks = distinctProductIds.Select(productId =>
+            SyncPurchaseRecordAsync(new CatalogPurchaseSyncRequest(buyerId, orderId, productId, completedAt), cancellationToken)
+        );
+
+        var results = await Task.WhenAll(tasks);
+        var successCount = results.Count(r => r);
+
+        _logger.LogInformation("[REST Catalog Client] Synced {SuccessCount}/{TotalCount} purchase records for Order '{OrderId}'.",
+            successCount, distinctProductIds.Count, orderId);
+
+        return successCount;
+    }
+
     private sealed class CatalogBatchVariantResponse
     {
         public List<CatalogVariantRawItem>? Items { get; set; }
