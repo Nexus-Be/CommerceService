@@ -57,7 +57,7 @@ Trạng thái của khối này: ✅ **entity/property đã có** (đọc/ghi sc
    - `SubOrderNo`: `string` (Unique Index, định dạng `ORD-YYYYMMDD-NNNNNN` — format chỉ là quy ước, chưa có hàm sinh); `OrderId`: `Guid` (FK → `Order.Id`, `OnDelete` = `Restrict` — `OrderConfiguration.cs:23`); `BuyerId`, `SellerId`: `Guid`.
    - `Status`: `SubOrderStatus` — ⚠️ **enum có alias trùng giá trị**: `PendingPayment = 0`, `Paid = 1`, `Confirmed = 2` **và** `SellerAccepted = 2`, `Shipping = 3` **và** `Shipped = 3`, `Delivered = 4`, `Completed = 5`, `Cancelled = 6`, `Refunded = 7` (`Commerce.Domain/Enums/SubOrderStatus.cs:5-14`).
    - `PaymentMethod`: `PaymentMethod` (`Wallet = 0`, `VnPay = 1`, `Cod = 2`).
-   - `WalletTransactionId`: `Guid?`; `ShippingAddress`, `ContactPhone`: `string`.
+   - `WalletTransactionId`: `Guid?`; `ShippingAddress`: `ShippingAddressSnapshot` (PostgreSQL `jsonb` qua EF Core 8 `.ToJson()`, chứa: `ReceiverName`, `ContactPhone`, `Street`, `Ward`, `District`, `Province`, `GhnDistrictId`, `GhnWardCode`, `FullAddressText`); `ContactPhone`: `string`.
    - `ItemsAmount`, `ProductDiscountAmount`, `ShopDiscountAmount`, `PlatformMarkupAmount`, `SystemDiscountAmount`, `ShippingFeeAmount`, `TotalAmount`, `SellerReceiveAmount`, `PlatformFeeAmount`: `decimal`.
    - Invariant tổng tiền: `TotalAmount = SellerReceiveAmount + PlatformFeeAmount + ShippingFeeAmount` — ⚠️ chỉ là đặc tả, **không** được enforce trong code.
    - `PaymentDeadlineAt` (bắt buộc), `SellerRespondDeadlineAt`, `PaidAt`, `SellerAcceptedAt`, `ShippedAt`, `DeliveredAt`, `CompletedAt`, `CancelledAt`: `DateTimeOffset?`.

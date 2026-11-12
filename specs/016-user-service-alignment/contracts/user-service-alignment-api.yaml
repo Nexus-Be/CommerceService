@@ -1,0 +1,343 @@
+openapi: 3.0.3
+info:
+  title: Commerce Service - User Service Alignment API Contract
+  version: 1.0.0
+  description: OpenAPI contract covering buyer permission verification, order completion reputation rewards, and seller cancellation penalties.
+
+paths:
+  /api/v1/orders/{orderId}/complete:
+    post:
+      summary: Buyer or System completes master order
+      description: Marks all delivered sub-orders and the master order as Completed, settles escrows, and triggers seller reputation rewards via UserService.
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order successfully completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderCompleteResponse'
+        '403':
+          description: Forbidden - Not owner of order
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Order not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/orders/{orderId}/cancel:
+    post:
+      summary: Buyer or Seller cancels order or sub-order
+      description: Cancels order prior to shipping. If a seller cancels confirmed order without valid reason, penalizes seller via UserService.
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelOrderRequest'
+      responses:
+        '200':
+          description: Order cancelled successfully
+        '400':
+          description: Order cannot be cancelled in its current state
+        '403':
+          description: Forbidden
+
+  # Outbound UserService Endpoints
+  /api/v1/internal/users/{buyerId}/permission-check:
+    get:
+      summary: Outbound call to UserService to verify buyer purchase capability
+      parameters:
+        - name: buyerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          required: true
+          schema:
+            type: string
+            example: buy
+      responses:
+        '200':
+          description: Buyer authorized to purchase
+        '403':
+          description: Buyer restricted from purchasing
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/internal/users/reputation-adjust:
+    post:
+      summary: Outbound call to UserService to adjust seller reputation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReputationAdjustRequest'
+      responses:
+        '200':
+          description: Reputation adjustment processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReputationAdjustResponse'
+
+  /api/v1/internal/users/penalties:
+    post:
+      summary: Outbound call to UserService to record violation penalty
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserPenaltyRequest'
+      responses:
+        '200':
+          description: Penalty recorded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPenaltyResponse'
+
+components:
+  schemas:
+    OrderCompleteResponse:
+      type: object
+      required:
+        - orderId
+        - orderNo
+        - status
+        - completedAt
+        - completedSubOrderCount
+        - completedSubOrderIds
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        orderNo:
+          type: string
+          example: ORD-20261110-A1B2C3
+        status:
+          type: string
+          example: Completed
+        completedAt:
+          type: string
+          format: date-time
+        completedSubOrderCount:
+          type: integer
+          example: 2
+        completedSubOrderIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    CancelOrderRequest:
+      type: object
+      properties:
+        reasonCode:
+          type: string
+          enum:
+            - BuyerChangedMind
+            - OutOfStock
+            - PaymentTimeout
+            - SellerRejected
+            - Other
+            - DeliveryFailed
+            - PackageReturned
+            - CancellationWithoutReason
+        reasonText:
+          type: string
+          nullable: true
+
+    ReputationAdjustRequest:
+      type: object
+      required:
+        - userId
+        - targetRole
+        - partnerUserId
+        - scoreDelta
+        - reason
+        - referenceType
+        - referenceId
+        - note
+      properties:
+        userId:
+          type: string
+          format: uuid
+        targetRole:
+          type: string
+          example: Seller
+        partnerUserId:
+          type: string
+          format: uuid
+        scoreDelta:
+          type: integer
+          example: 1
+        reason:
+          type: string
+          example: OrderCompleted
+        referenceType:
+          type: string
+          example: Order
+        referenceId:
+          type: string
+          example: ORD-20261107-0091
+        note:
+          type: string
+
+    ReputationAdjustResponse:
+      type: object
+      required:
+        - userId
+        - targetRole
+        - isDuplicate
+        - cooldownSuppressed
+        - previousScore
+        - newScore
+        - appliedDelta
+        - newTrustLevel
+      properties:
+        userId:
+          type: string
+          format: uuid
+        targetRole:
+          type: string
+          example: Seller
+        isDuplicate:
+          type: boolean
+        cooldownSuppressed:
+          type: boolean
+        previousScore:
+          type: integer
+          example: 65
+        newScore:
+          type: integer
+          example: 66
+        appliedDelta:
+          type: integer
+          example: 1
+        newTrustLevel:
+          type: string
+          example: Standard
+
+    UserPenaltyRequest:
+      type: object
+      required:
+        - userId
+        - targetRole
+        - violationType
+        - referenceType
+        - referenceId
+        - reason
+        - customScoreDeduction
+        - policyClauseCode
+      properties:
+        userId:
+          type: string
+          format: uuid
+        targetRole:
+          type: string
+          example: Seller
+        violationType:
+          type: string
+          example: CancellationWithoutReason
+        referenceType:
+          type: string
+          example: Order
+        referenceId:
+          type: string
+          example: ORD-20261107-0091
+        reason:
+          type: string
+        customScoreDeduction:
+          type: integer
+          example: 5
+        policyClauseCode:
+          type: string
+          example: POLICY-SEC-3.2
+
+    UserPenaltyResponse:
+      type: object
+      required:
+        - userId
+        - targetRole
+        - isDuplicate
+        - penaltyId
+        - previousScore
+        - newScore
+        - appliedDelta
+        - newTrustLevel
+      properties:
+        userId:
+          type: string
+          format: uuid
+        targetRole:
+          type: string
+          example: Seller
+        isDuplicate:
+          type: boolean
+        penaltyId:
+          type: string
+          format: uuid
+          nullable: true
+        previousScore:
+          type: integer
+          example: 66
+        newScore:
+          type: integer
+          example: 61
+        appliedDelta:
+          type: integer
+          example: -5
+        newTrustLevel:
+          type: string
+          example: Standard
+
+    ProblemDetails:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - errorCode
+        - detail
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+          example: BUYER_ACTION_RESTRICTED
+        detail:
+          type: string
+          example: User has an active restriction prohibiting purchase actions.
+        traceId:
+          type: string
+          nullable: true

@@ -6,7 +6,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Commerce.Application.Interfaces;
 using Commerce.Infrastructure.Persistence;
+using Commerce.Infrastructure.Services.Auction;
 using Commerce.Infrastructure.Services.Catalog;
+using Commerce.Infrastructure.Services.Fulfillment;
+using Commerce.Infrastructure.Services.User;
 using Commerce.Infrastructure.Services.Wallet;
 
 public static class DependencyInjection
@@ -31,6 +34,14 @@ public static class DependencyInjection
 
         services.AddScoped<ICommerceDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
+        services.AddHttpContextAccessor();
+
+        // Distributed Cache for Checkout Quotes & Idempotency
+        services.AddDistributedMemoryCache();
+
+        // Identity propagation delegating handler for outgoing inter-service HTTP requests
+        services.AddTransient<Services.Common.IdentityPropagationHandler>();
+
         // REST Wallet Client
         var walletBaseUrl = Environment.GetEnvironmentVariable("WALLET_SERVICE_URL")
             ?? configuration["WALLET_SERVICE_URL"]
@@ -38,13 +49,21 @@ public static class DependencyInjection
             ?? configuration["WalletService:BaseUrl"]
             ?? "http://localhost:8008/";
 
-        // Internal service key handler is temporarily disabled. Inter-service calls use plain REST routes.
-        // services.AddTransient<Services.Common.InternalServiceAuthHandler>();
         services.AddHttpClient<IWalletClient, WalletClient>(client =>
         {
             client.BaseAddress = new Uri(walletBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
-        });
+
+            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
+                ?? configuration["INTERNAL_SERVICE_SECRET"]
+                ?? configuration["InternalSecurity:ServiceKey"]
+                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
+
+            if (!string.IsNullOrWhiteSpace(internalServiceKey))
+            {
+                client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
+            }
+        }).AddHttpMessageHandler<Services.Common.IdentityPropagationHandler>();
 
         // REST Catalog Client
         var catalogBaseUrl = Environment.GetEnvironmentVariable("CATALOG_SERVICE_URL")
@@ -57,7 +76,86 @@ public static class DependencyInjection
         {
             client.BaseAddress = new Uri(catalogBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
-        });
+
+            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
+                ?? configuration["INTERNAL_SERVICE_SECRET"]
+                ?? configuration["InternalSecurity:ServiceKey"]
+                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
+
+            if (!string.IsNullOrWhiteSpace(internalServiceKey))
+            {
+                client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
+            }
+        }).AddHttpMessageHandler<Services.Common.IdentityPropagationHandler>();
+
+        // REST Fulfillment Client
+        var fulfillmentBaseUrl = Environment.GetEnvironmentVariable("FULFILLMENT_SERVICE_URL")
+            ?? configuration["FULFILLMENT_SERVICE_URL"]
+            ?? configuration["Services:Fulfillment:BaseUrl"]
+            ?? configuration["FulfillmentService:BaseUrl"]
+            ?? "http://localhost:8006/";
+
+        services.AddHttpClient<IFulfillmentClient, FulfillmentClient>(client =>
+        {
+            client.BaseAddress = new Uri(fulfillmentBaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(10);
+
+            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
+                ?? configuration["INTERNAL_SERVICE_SECRET"]
+                ?? configuration["InternalSecurity:ServiceKey"]
+                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
+
+            if (!string.IsNullOrWhiteSpace(internalServiceKey))
+            {
+                client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
+            }
+        }).AddHttpMessageHandler<Services.Common.IdentityPropagationHandler>();
+
+        // REST User Client
+        var userBaseUrl = Environment.GetEnvironmentVariable("USER_SERVICE_URL")
+            ?? configuration["USER_SERVICE_URL"]
+            ?? configuration["Services:User:BaseUrl"]
+            ?? configuration["UserService:BaseUrl"]
+            ?? "http://localhost:8001/";
+
+        services.AddHttpClient<IUserClient, UserClient>(client =>
+        {
+            client.BaseAddress = new Uri(userBaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(10);
+
+            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
+                ?? configuration["INTERNAL_SERVICE_SECRET"]
+                ?? configuration["InternalSecurity:ServiceKey"]
+                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
+
+            if (!string.IsNullOrWhiteSpace(internalServiceKey))
+            {
+                client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
+            }
+        }).AddHttpMessageHandler<Services.Common.IdentityPropagationHandler>();
+
+        // REST Auction Client
+        var auctionBaseUrl = Environment.GetEnvironmentVariable("AUCTION_SERVICE_URL")
+            ?? configuration["AUCTION_SERVICE_URL"]
+            ?? configuration["Services:Auction:BaseUrl"]
+            ?? configuration["AuctionService:BaseUrl"]
+            ?? "http://localhost:8005/";
+
+        services.AddHttpClient<IAuctionClient, AuctionClient>(client =>
+        {
+            client.BaseAddress = new Uri(auctionBaseUrl.TrimEnd('/') + "/");
+            client.Timeout = TimeSpan.FromSeconds(10);
+
+            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
+                ?? configuration["INTERNAL_SERVICE_SECRET"]
+                ?? configuration["InternalSecurity:ServiceKey"]
+                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
+
+            if (!string.IsNullOrWhiteSpace(internalServiceKey))
+            {
+                client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
+            }
+        }).AddHttpMessageHandler<Services.Common.IdentityPropagationHandler>();
 
         return services;
     }
