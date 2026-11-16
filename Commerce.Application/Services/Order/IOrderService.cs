@@ -44,11 +44,20 @@ public interface IOrderService
     /// <summary>R87: Theo dõi tiến độ giao hàng và thông tin vận chuyển.</summary>
     Task<ShipmentTrackingResponse> GetShipmentTrackingAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default);
 
+    /// <summary>Theo dõi dòng thời gian hành trình giao hàng chi tiết cho đơn con.</summary>
+    Task<ShipmentTimelineResponse> GetShipmentTimelineAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default);
+
+    /// <summary>Tạo lại vận đơn giao hàng khi đơn con đã xác nhận nhưng gặp sự cố mạng tạm thời với GHN.</summary>
+    Task<RetryShipmentResponse> RetryCreateShipmentAsync(Guid sellerId, Guid subOrderId, CancellationToken ct = default);
+
     /// <summary>R99: Khởi tạo yêu cầu hoàn tiền cho đơn con.</summary>
     Task RefundSubOrderAsync(Guid currentUserId, Guid subOrderId, SubOrderRefundRequest request, CancellationToken ct = default);
 
     /// <summary>Cập nhật trạng thái giao hàng của SubOrder từ Webhook/Fulfillment Service.</summary>
     Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, string status, DateTimeOffset? deliveredAt, CancellationToken ct = default);
+
+    /// <summary>Cập nhật trạng thái giao hàng của SubOrder từ Webhook/Fulfillment Service với đầy đủ chi tiết sự kiện.</summary>
+    Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, UpdateDeliveryStatusRequest request, CancellationToken ct = default);
 
     /// <summary>Passive Guard: Kiểm tra và hủy đơn hàng nếu đã quá hạn thanh toán.</summary>
     Task<bool> ExpireOrderIfOverdueAsync(Guid orderId, CancellationToken ct = default);

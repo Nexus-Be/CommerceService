@@ -26,8 +26,11 @@ public sealed record AuctionSettlementRequest(
     string? SkuAttributes,
     [Range(0.01, double.MaxValue)] decimal WinningAmount,
     [Required] DateTimeOffset PaymentDeadlineAt,
+    decimal? DepositAmount = 0,
+    string? Source = "WINNER",
     ShippingAddressDto? ShippingAddress = null,
-    string? ContactPhone = null
+    string? ContactPhone = null,
+    string? ImageUrl = null
 );
 
 public sealed record SubmitAuctionShippingRequest(

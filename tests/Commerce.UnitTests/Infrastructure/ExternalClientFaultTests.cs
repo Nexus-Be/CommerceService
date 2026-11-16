@@ -221,7 +221,7 @@ public class ExternalClientFaultTests : IDisposable
 
         var quoteRequest = new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { item.Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
             ContactPhone: "0901234567"
         );
 

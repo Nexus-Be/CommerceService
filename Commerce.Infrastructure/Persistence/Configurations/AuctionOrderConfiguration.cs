@@ -15,12 +15,20 @@ public class AuctionOrderConfiguration : IEntityTypeConfiguration<AuctionOrder>
         builder.Property(x => x.ImageUrlSnapshot).HasMaxLength(1000);
         builder.Property(x => x.SkuAttributesSnapshot).HasColumnType("jsonb");
         builder.Property(x => x.WinningAmount).HasPrecision(18, 2);
+        builder.Property(x => x.DepositAmount).HasPrecision(18, 2).HasDefaultValue(0m);
+        builder.Property(x => x.RemainingAmount).HasPrecision(18, 2);
+        builder.Property(x => x.OrderSource).HasConversion<string>().HasMaxLength(32).HasDefaultValue(Commerce.Domain.Enums.AuctionOrderSource.Winner);
         builder.Property(x => x.ShippingAddress).HasColumnType("jsonb");
         builder.Property(x => x.ContactPhone).HasMaxLength(50);
         builder.Property(x => x.ShippingFeeAmount).HasPrecision(18, 2);
         builder.Property(x => x.TotalAmount).HasPrecision(18, 2);
         builder.Property(x => x.SellerReceiveAmount).HasPrecision(18, 2);
         builder.Property(x => x.PlatformFeeAmount).HasPrecision(18, 2);
+        builder.Property(x => x.CarrierCode).HasMaxLength(50);
+        builder.Property(x => x.TrackingCode).HasMaxLength(100);
+        builder.HasIndex(x => x.TrackingCode);
+        builder.Property(x => x.LabelPrintUrl).HasMaxLength(500);
+        builder.Property(x => x.EstimatedDeliveryAt);
         builder.Property(x => x.RowVersion).IsConcurrencyToken();
 
         builder.HasMany(ao => ao.StatusHistories)

@@ -66,6 +66,9 @@ public interface IFulfillmentClient
     /// <summary>Nhả hàng cho kho chỉ riêng các món thuộc về 1 SubOrder khi Shop từ chối đơn con (truyền Master orderId và danh sách items).</summary>
     Task<bool> ReleaseSubOrderStockAsync(Guid orderId, List<StockReservationItem> items, CancellationToken ct = default);
 
+    /// <summary>Nhả hàng cho kho chỉ riêng các món thuộc về 1 SubOrder kèm lý do cụ thể (SubOrderRejected, PackageReturned).</summary>
+    Task<bool> ReleaseSubOrderStockAsync(Guid orderId, List<StockReservationItem> items, string reason, CancellationToken ct = default);
+
     /// <summary>Tính cước phí ship GHN động theo từng Shop khi xem trước báo giá (CHK-01).</summary>
     Task<decimal> CalculateShopShippingFeeAsync(ShopShippingQuoteRequest request, CancellationToken ct = default);
 

@@ -221,7 +221,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cartItemId },
-            ShippingAddress: new ShippingAddressInput("Tran Van B", "0909999999", "456 Nguyen Hue", "Ben Nghe", "Quan 1", "TP.HCM"),
+            ShippingAddress: new ShippingAddressInput("Tran Van B", "0909999999", "456 Nguyen Hue", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
             ContactPhone: "0909999999",
             PaymentMethod: PaymentMethod.Cod
         ), CancellationToken.None);
@@ -282,7 +282,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -325,7 +325,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -373,7 +373,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -417,7 +417,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -450,7 +450,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -511,5 +511,75 @@ public class OrderCheckoutTests : IDisposable
 
         _mockFulfillmentClient.Verify(f => f.ReserveStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockWalletClient.Verify(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // =========================================================================
+    // US5: DYNAMIC WEIGHT CALCULATION & ADDRESS VALIDATION TESTS (T026)
+    // =========================================================================
+
+    [Theory]
+    [InlineData(0, "20101")]
+    [InlineData(null, "20101")]
+    [InlineData(1442, "")]
+    [InlineData(1442, null)]
+    public async Task QuoteCheckoutAsync_ShouldThrowInvalidShippingAddress_WhenGhnDistrictOrWardIsMissing(int? districtId, string? wardCode)
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, skuId, sellerId, 100000m, 1);
+        var service = CreateOrderService();
+
+        var request = new CheckoutQuoteRequest(
+            CartItemIds: new List<Guid> { cart.Items.First().Id },
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", districtId, wardCode),
+            ContactPhone: "0901234567"
+        );
+
+        // Act
+        var act = () => service.QuoteCheckoutAsync(buyerId, request, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "INVALID_SHIPPING_ADDRESS");
+    }
+
+    [Fact]
+    public async Task QuoteCheckoutAsync_ShouldCalculateDynamicItemWeights_ForCarrierShippingQuote()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, skuId, sellerId, 100000m, 3); // 3 items * 200g = 600g
+        var service = CreateOrderService();
+
+        _mockFulfillmentClient
+            .Setup(f => f.CalculateShopShippingFeeAsync(It.IsAny<ShopShippingQuoteRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(45000m);
+
+        var request = new CheckoutQuoteRequest(
+            CartItemIds: new List<Guid> { cart.Items.First().Id },
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ContactPhone: "0901234567"
+        );
+
+        // Act
+        var response = await service.QuoteCheckoutAsync(buyerId, request, CancellationToken.None);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.Shops.Should().HaveCount(1);
+        response.Shops[0].ShippingFeeAmount.Should().Be(45000m);
+
+        _mockFulfillmentClient.Verify(f => f.CalculateShopShippingFeeAsync(
+            It.Is<ShopShippingQuoteRequest>(r =>
+                r.SellerId == sellerId &&
+                r.GhnDistrictId == 1442 &&
+                r.GhnWardCode == "20101" &&
+                r.Items.Count == 1 &&
+                r.Items[0].WeightGrams == 600), // 3 * 200g
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 }

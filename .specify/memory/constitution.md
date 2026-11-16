@@ -55,7 +55,7 @@ All deployment, network, and communication configurations are immutable project 
 All error messages, exceptions, problem details, and API validation responses MUST adhere strictly to the universal 3-part standard:
 - **100% English**: All human-facing messages MUST be written in clear English (never Vietnamese).
 - **Sentence Case**: Descriptions MUST capitalize only the first letter (e.g., `"Cart item not found in the user cart."`, `"Order cannot be cancelled in its current status."`).
-- **SCREAMING_SNAKE_CASE Codes**: Technical error codes MUST adhere to `docs/gaps_decisions.md` and the standardized error codes (e.g., `VALIDATION_ERROR`, `VAL_IDEMPOTENCY_KEY_REQUIRED`, `CART_NOT_FOUND`, `CHECKOUT_ALREADY_OPEN`, `ORDER_INVALID_STATUS`, `FULFILLMENT_SERVICE_UNAVAILABLE`).
+- **SCREAMING_SNAKE_CASE Codes**: Technical error codes MUST adhere to `docs/COMMERCE_API_CONTRACT.md` and the standardized error codes (e.g., `VALIDATION_ERROR`, `VAL_IDEMPOTENCY_KEY_REQUIRED`, `CART_NOT_FOUND`, `CHECKOUT_ALREADY_OPEN`, `ORDER_INVALID_STATUS`, `FULFILLMENT_SERVICE_UNAVAILABLE`).
 
 ### V. Self-Contained Repository & Inward-Only Boundaries
 CommerceService is an independent, self-contained Git repository (`Commerce.sln`):

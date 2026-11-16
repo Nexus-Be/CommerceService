@@ -19,6 +19,7 @@ public class AuctionOrderService : IAuctionOrderService
     private readonly IFulfillmentClient _fulfillmentClient;
     private readonly IAuctionClient _auctionClient;
     private readonly ICatalogClient _catalogClient;
+    private readonly IUserClient _userClient;
     private readonly ILogger<AuctionOrderService> _logger;
     private const decimal DefaultPlatformFeeRate = 0.05m; // 5%
 
@@ -33,6 +34,7 @@ public class AuctionOrderService : IAuctionOrderService
         IFulfillmentClient fulfillmentClient,
         IAuctionClient auctionClient,
         ICatalogClient catalogClient,
+        IUserClient userClient,
         ILogger<AuctionOrderService> logger)
     {
         _dbContext = dbContext;
@@ -40,6 +42,7 @@ public class AuctionOrderService : IAuctionOrderService
         _fulfillmentClient = fulfillmentClient;
         _auctionClient = auctionClient;
         _catalogClient = catalogClient;
+        _userClient = userClient;
         _logger = logger;
     }
 
@@ -47,16 +50,31 @@ public class AuctionOrderService : IAuctionOrderService
         AuctionSettlementRequest request,
         CancellationToken cancellationToken = default)
     {
+        var depositAmount = request.DepositAmount ?? 0m;
+        var source = string.Equals(request.Source, "SECOND_CHANCE", StringComparison.OrdinalIgnoreCase)
+            ? AuctionOrderSource.SecondChance
+            : AuctionOrderSource.Winner;
+
+        if (request.WinningAmount <= 0 || depositAmount < 0)
+        {
+            throw new CommerceDomainException("INVALID_AMOUNT", "Winning amount must be greater than zero and deposit amount cannot be negative.", 422);
+        }
+
+        if (depositAmount > request.WinningAmount)
+        {
+            throw new CommerceDomainException("DEPOSIT_EXCEEDS_WINNING_AMOUNT", "Deposit amount cannot exceed winning amount.", 422);
+        }
+
         var existingOrders = await _dbContext.AuctionOrders
             .Where(a => a.AuctionId == request.AuctionId)
             .ToListAsync(cancellationToken);
 
-        // Idempotency: exact (AuctionId, WinnerId) match returns existing order
-        var identicalOrder = existingOrders.FirstOrDefault(a => a.BuyerId == request.WinnerId);
+        // Idempotency: exact (AuctionId, OrderSource, BuyerId) match returns existing order
+        var identicalOrder = existingOrders.FirstOrDefault(a => a.BuyerId == request.WinnerId && a.OrderSource == source);
         if (identicalOrder != null)
         {
-            _logger.LogInformation("[AuctionOrder] Idempotent duplicate settlement for Auction '{AuctionId}', Winner '{WinnerId}'. Returning Order '{OrderId}'.",
-                request.AuctionId, request.WinnerId, identicalOrder.Id);
+            _logger.LogInformation("[AuctionOrder] Idempotent duplicate settlement for Auction '{AuctionId}', Source '{Source}', Winner '{WinnerId}'. Returning Order '{OrderId}'.",
+                request.AuctionId, source, request.WinnerId, identicalOrder.Id);
 
             return new AuctionSettlementResult(
                 new AuctionSettlementResponse(
@@ -71,20 +89,21 @@ public class AuctionOrderService : IAuctionOrderService
             );
         }
 
-        // Check if another winner already has an active (non-cancelled) order
-        var activeOtherOrder = existingOrders.FirstOrDefault(a => a.BuyerId != request.WinnerId && a.Status != SubOrderStatus.Cancelled);
+        // Check if an active (non-cancelled) order already exists for this auction
+        var activeOtherOrder = existingOrders.FirstOrDefault(a => a.Status != SubOrderStatus.Cancelled);
         if (activeOtherOrder != null)
         {
             _logger.LogWarning("[AuctionOrder] Conflicting settlement for Auction '{AuctionId}' with Winner '{WinnerId}'. Order '{OrderId}' is currently '{Status}'.",
                 request.AuctionId, request.WinnerId, activeOtherOrder.Id, activeOtherOrder.Status);
 
             throw new CommerceDomainException(
-                "AUCTION_ALREADY_SETTLED",
-                "An active auction order already exists for this auction with another winner.",
+                "SETTLEMENT_CONFLICT",
+                "An active auction order already exists for this auction.",
                 409);
         }
 
         // Calculate financials
+        var remainingAmount = request.WinningAmount - depositAmount;
         var platformFeeAmount = Math.Round(request.WinningAmount * DefaultPlatformFeeRate, 2);
         var sellerReceiveAmount = request.WinningAmount - platformFeeAmount;
         var orderId = Guid.NewGuid();
@@ -107,9 +126,12 @@ public class AuctionOrderService : IAuctionOrderService
             ProductId = request.ProductId,
             SkuId = request.SkuId,
             ProductNameSnapshot = request.ProductName,
-            ImageUrlSnapshot = request.ProductImageUrl,
+            ImageUrlSnapshot = request.ProductImageUrl ?? request.ImageUrl,
             SkuAttributesSnapshot = request.SkuAttributes ?? "{}",
             WinningAmount = request.WinningAmount,
+            DepositAmount = depositAmount,
+            RemainingAmount = remainingAmount,
+            OrderSource = source,
             ShippingAddress = shippingAddressJson,
             ContactPhone = request.ContactPhone ?? request.ShippingAddress?.PhoneNumber,
             ShippingFeeAmount = null,
@@ -197,7 +219,7 @@ public class AuctionOrderService : IAuctionOrderService
         auctionOrder.ShippingAddress = JsonSerializer.Serialize(request.ShippingAddress, JsonOptions);
         auctionOrder.ContactPhone = request.ContactPhone;
         auctionOrder.ShippingFeeAmount = shippingFee;
-        auctionOrder.TotalAmount = auctionOrder.WinningAmount + shippingFee;
+        auctionOrder.TotalAmount = auctionOrder.RemainingAmount + shippingFee;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -221,6 +243,9 @@ public class AuctionOrderService : IAuctionOrderService
             ImageUrl: order.ImageUrlSnapshot,
             SkuAttributes: order.SkuAttributesSnapshot,
             WinningAmount: order.WinningAmount,
+            DepositAmount: order.DepositAmount,
+            RemainingAmount: order.RemainingAmount,
+            OrderSource: order.OrderSource.ToString(),
             ShippingAddress: order.ShippingAddress,
             ContactPhone: order.ContactPhone,
             ShippingFeeAmount: order.ShippingFeeAmount,
@@ -326,7 +351,9 @@ public class AuctionOrderService : IAuctionOrderService
             Status: "Paid",
             Amount: auctionOrder.WinningAmount,
             PaidAt: now,
-            EventId: Guid.NewGuid()
+            EventId: Guid.NewGuid(),
+            OrderSource: auctionOrder.OrderSource.ToString().ToUpperInvariant(),
+            OccurredAt: now
         );
 
         await _auctionClient.NotifyPaymentStatusAsync(auctionOrder.AuctionId, callbackReq, cancellationToken);
@@ -394,7 +421,9 @@ public class AuctionOrderService : IAuctionOrderService
             OrderId: auctionOrder.Id,
             WinnerId: auctionOrder.BuyerId,
             Status: "SellerAccepted",
-            EventId: Guid.NewGuid()
+            EventId: Guid.NewGuid(),
+            OrderSource: auctionOrder.OrderSource.ToString().ToUpperInvariant(),
+            OccurredAt: now
         );
 
         await _auctionClient.NotifyPaymentStatusAsync(auctionOrder.AuctionId, callbackReq, cancellationToken);
@@ -456,7 +485,7 @@ public class AuctionOrderService : IAuctionOrderService
         decimal? refundAmount = null;
         if (previousStatus == SubOrderStatus.Paid)
         {
-            refundAmount = auctionOrder.TotalAmount ?? auctionOrder.WinningAmount;
+            refundAmount = auctionOrder.TotalAmount ?? auctionOrder.RemainingAmount;
 
             var refundSuccess = await _walletClient.RefundOrderPaymentAsync(
                 auctionOrder.Id,
@@ -497,6 +526,28 @@ public class AuctionOrderService : IAuctionOrderService
         _logger.LogInformation("[AuctionOrder] Seller rejected Order '{OrderId}'. RefundAmount: {RefundAmount}.",
             auctionOrder.Id, refundAmount);
 
+        // Fail-safe outbound penalty for seller rejection after payment
+        if (previousStatus == SubOrderStatus.Paid)
+        {
+            try
+            {
+                await _userClient.CreatePenaltyAsync(new UserPenaltyRequest(
+                    UserId: auctionOrder.SellerId,
+                    TargetRole: "Seller",
+                    ViolationType: "SellerRejected",
+                    ReferenceType: "AuctionOrder",
+                    ReferenceId: auctionOrder.OrderNo,
+                    Reason: request.ReasonNote ?? "Seller rejected the auction order after payment.",
+                    CustomScoreDeduction: 5,
+                    PolicyClauseCode: "POLICY-AUC-SELLER-REJECT"
+                ), cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[AuctionOrder] Fail-safe: Failed to apply penalty on Seller '{SellerId}' for Order '{OrderNo}'.", auctionOrder.SellerId, auctionOrder.OrderNo);
+            }
+        }
+
         // Fail-safe outbound callback: does not affect wallet refund
         try
         {
@@ -504,7 +555,9 @@ public class AuctionOrderService : IAuctionOrderService
                 OrderId: auctionOrder.Id,
                 WinnerId: auctionOrder.BuyerId,
                 Status: "SellerRejected",
-                EventId: Guid.NewGuid()
+                EventId: Guid.NewGuid(),
+                OrderSource: auctionOrder.OrderSource.ToString().ToUpperInvariant(),
+                OccurredAt: now
             );
 
             await _auctionClient.NotifyPaymentStatusAsync(auctionOrder.AuctionId, callbackReq, cancellationToken);

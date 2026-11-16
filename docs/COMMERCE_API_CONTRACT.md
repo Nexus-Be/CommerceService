@@ -1,13 +1,13 @@
 # COMMERCE SERVICE — MASTER REST API CONTRACT & INTEGRATION SPECIFICATION
 ## (Hợp Đồng Giao Tiếp RESTful Toàn Diện: Giỏ Hàng, Báo Giá, Đơn Hàng, Vận Chuyển & Liên Dịch Vụ)
 
-> **Phiên bản:** v3.3.0 (Master Unified REST Contract)  
+> **Phiên bản:** v3.4.0 (Master Unified REST Contract — Deposit & Runner-Up Settlement)  
 > **Phân hệ:** Commerce Service (`Commerce.Api`)  
 > **Cổng dịch vụ (Port):** `8003` (Container & Localhost)  
 > **Cơ sở dữ liệu:** PostgreSQL port `5435` (`commerce_db`)  
 > **Giao thức:** HTTP/1.1 & HTTP/2 RESTful Web API  
 > **Đối tượng sử dụng:** Frontend (Web & Mobile), API Gateway Team, Wallet Service Team, Catalog Service Team, Fulfillment Service Team, QA Engineers, DevOps & Software Engineers  
-> **Cập nhật lần cuối:** 2026-11-09  
+> **Cập nhật lần cuối:** 2026-11-15  
 > **Trạng thái:** ✅ ĐÃ CHUẨN HÓA 100% VỚI CODE THỰC THI (100% RESTFUL, PURE DTOS, PASS 100% TESTS)  
 
 ---
@@ -532,6 +532,8 @@ Toàn bộ các yêu cầu từ Frontend (Web/Mobile) gửi qua API Gateway đư
 | **`ORD-06 / R80`** | `POST` | `/api/v1/orders/{orderId}/cancel` | Người mua hủy đơn đang chờ thanh toán | `buyer` |
 | **`ORD-07`** | `POST` | `/api/v1/sub-orders/{subOrderId}/confirm-receipt` | Người mua xác nhận đã nhận hàng (`Completed` & giải ngân Escrow) | `buyer` |
 | **`ORD-08 / R87`** | `GET` | `/api/v1/shipments/order/{orderId}` | Tra cứu danh sách vận đơn và tiến độ giao hàng | `buyer`, `seller` |
+| **`ORD-08B / R101`** | `GET` | `/api/v1/sub-orders/{subOrderId}/shipments/timeline` | Theo dõi dòng thời gian hành trình giao hàng trực quan | `buyer`, `seller` |
+| **`ORD-04B / R100`** | `POST` | `/api/v1/sub-orders/{subOrderId}/shipments/retry` | Tạo lại vận đơn GHN khi gặp sự cố mạng tạm thời | `seller` |
 | **`ORD-13 / R99`** | `POST` | `/api/v1/sub-orders/{subOrderId}/refund` | Khởi tạo yêu cầu hoàn tiền cho đơn con | `buyer` |
 | **`LEGACY`** | `GET` | `/api/v1/orders/buyer/{buyerId}` | Tra cứu đơn hàng theo `buyerId` (Tương thích ngược) | `buyer`, `admin` |
 
@@ -827,31 +829,101 @@ Toàn bộ các yêu cầu từ Frontend (Web/Mobile) gửi qua API Gateway đư
   }
   ```
 
+#### `ORD-08B / R101`: Theo Dõi Dòng Thời Gian Vận Chuyển Đơn Con (Shipment Timeline)
+* **Endpoint:** `GET /api/v1/sub-orders/{subOrderId}/shipments/timeline`
+* **Quyền:** `buyer`, `seller` (sở hữu đơn hàng)
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
+    "subOrderNo": "SUB-20261112-9A0B1C",
+    "orderId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "carrierCode": "GHN",
+    "carrierName": "Giao Hang Nhanh",
+    "trackingCode": "GHN-SGN-1029384",
+    "labelPrintUrl": "https://api.ghn.vn/print/label-1029384.pdf",
+    "currentStatus": "InTransit",
+    "estimatedDeliveryAt": "2026-11-15T10:00:00Z",
+    "shippingAddress": {
+      "receiverName": "Nguyen Van A",
+      "contactPhone": "0901234567",
+      "street": "123 Le Loi",
+      "ward": "Ben Nghe",
+      "district": "Quan 1",
+      "province": "TP.HCM"
+    },
+    "timeline": [
+      {
+        "status": "Confirmed",
+        "title": "Order Confirmed",
+        "description": "Seller confirmed and is preparing order",
+        "occurredAt": "2026-11-12T08:00:00Z",
+        "location": null
+      },
+      {
+        "status": "Packed",
+        "title": "Package Packed",
+        "description": "Order has been packaged and ready for handover",
+        "occurredAt": "2026-11-12T09:30:00Z",
+        "location": null
+      },
+      {
+        "status": "InTransit",
+        "title": "In Transit",
+        "description": "Package departed sorting hub",
+        "occurredAt": "2026-11-12T11:00:00Z",
+        "location": "Tan Binh Hub"
+      }
+    ]
+  }
+  ```
+
+#### `ORD-04B / R100`: Tạo Lại Vận Đơn Giao Hàng Cho Đơn Con (Shipment Retry)
+* **Endpoint:** `POST /api/v1/sub-orders/{subOrderId}/shipments/retry`
+* **Quyền:** `seller`
+* **Quy tắc:** Chỉ được gọi khi đơn con đã `Confirmed`, chưa có mã vận đơn (`trackingCode == null`) và có cờ `shipmentPendingCreation == true`.
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
+    "subOrderNo": "SUB-20261112-9A0B1C",
+    "trackingCode": "GHN-SGN-1029384",
+    "carrierCode": "GHN",
+    "labelPrintUrl": "https://api.ghn.vn/print/label-1029384.pdf",
+    "createdAt": "2026-11-12T11:30:00Z"
+  }
+  ```
+
 ---
 
 # PHẦN 5: WEBHOOK TIẾP NHẬN TRẠNG THÁI GIAO VẬN
 
 ### Endpoint: `POST /api/v1/sub-orders/{subOrderId}/delivery-status`
-* **Bảo mật:** Webhook nội bộ từ Fulfillment Service.
+* **Bảo mật:** Webhook nội bộ từ Fulfillment Service (`X-Internal-Service-Key`).
 * **Request Body:**
   ```json
   {
-    "status": "Delivered",
-    "deliveredAt": "2026-11-09T14:30:00Z"
+    "status": "InTransit",
+    "deliveredAt": "2026-11-12T14:30:00Z",
+    "carrierCode": "GHN",
+    "trackingCode": "GHN-SGN-1029384",
+    "note": "Package arrived at destination hub",
+    "location": "Tan Binh Hub"
   }
   ```
 * **Ma trận 9 trạng thái giao vận từ Carrier (GHN):**
-  1. `ReadyToPick`, `Picking`, `Packed`: Cập nhật timestamp chuẩn bị hàng (Idempotent 200 OK).
-  2. `HandedOver`, `InTransit`, `Shipped`: Chuyển `SubOrderStatus.Shipped`, ghi nhận `ShippedAt`.
-  3. `Delivered`: Chuyển `SubOrderStatus.Delivered`, ghi nhận `DeliveredAt`.
-  4. `Cancelled`: Chuyển `SubOrderStatus.Cancelled`, ghi nhận `CancelledAt`.
-  5. `DeliveryFailed`, `Returned`: Chuyển `SubOrderStatus.Cancelled`, tự động ghi nhận bản ghi `OrderCancellation` (Lý do: `DeliveryFailed` hoặc `PackageReturned`) và tự động tạo `OrderRefund` (Status: `Requested`) nếu đơn đã thanh toán trước đó.
+  1. `ReadyToPick`, `Picking`, `Packed`: Cập nhật timestamp chuẩn bị hàng (Idempotent 200 OK), ghi nhận `OrderStatusHistory`.
+  2. `HandedOver`, `InTransit`, `OutForDelivery`, `Shipped`: Chuyển `SubOrderStatus.Shipped`, ghi nhận `ShippedAt` và `OrderStatusHistory` kèm địa điểm (`location`).
+  3. `Delivered`: Chuyển `SubOrderStatus.Delivered`, ghi nhận `DeliveredAt`. Đồng thời quét tất cả đơn con sibling trong cùng đơn cha `OrderId`: nếu 100% đơn con đã `Delivered`/`Completed`, tự động cập nhật `Order.Status = OrderStatus.Delivered`.
+  4. `DeliveryAttemptFailed`: Giữ nguyên `SubOrderStatus.Shipped`, ghi nhận dòng thời gian lý do giao thất bại tạm thời (không hủy đơn, không hoàn tiền).
+  5. `Returned`: Hàng hoàn về kho Shop. Chuyển `SubOrderStatus.Cancelled`, tự động ghi nhận bản ghi `OrderCancellation` (Lý do: `PackageReturned`), giải phóng tồn kho kho vận (`ReleaseSubOrderStockAsync` với reason `"PackageReturned"`), và tự động hoàn tiền 100% vào ví nếu đơn đã thanh toán trước đó.
+  6. `DeliveryFailed`, `Cancelled`: Chuyển `SubOrderStatus.Cancelled`, tự động ghi nhận `OrderCancellation` và tạo yêu cầu hoàn tiền nếu đã thanh toán.
 * **Response (HTTP 200 OK):**
   ```json
   {
     "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
-    "status": "Delivered",
-    "updatedAt": "2026-11-09T14:30:00Z"
+    "status": "InTransit",
+    "updatedAt": "2026-11-12T14:30:00Z"
   }
   ```
 
@@ -1407,36 +1479,62 @@ export interface UpdateDeliveryStatusRequest {
 
 # PHẦN 9: BOUNDED CONTEXT 4 — PHÂN HỆ ĐƠN HÀNG ĐẤU GIÁ (`AUCTION-01` .. `AUCTION-08`)
 
-> **Cập nhật:** Feature `019-auction-order-lifecycle-and-settlement` (Alignment Contract v1.1.0 với Auction Service).  
+> **Cập nhật:** Feature `022-auction-deposit-and-runner-up-settlement` (Alignment Contract v0.4 với Auction Service & Deposit Integration).  
 > **Bộ điều khiển:** `AuctionOrdersController` (`api/v1/auction-orders`).  
-> **Đặc tính:** 100% RESTful, Không RabbitMQ/MassTransit/Saga, Idempotency composite `(AuctionId, WinnerId)`, Fail-safe refund.
+> **Đặc tính:** 100% RESTful, Không RabbitMQ/MassTransit/Saga, Idempotency composite `(AuctionId, OrderSource, BuyerId)`, Hỗ trợ Runner-up SecondChance, Khấu trừ cọc trong giá thắng, Fail-safe refund.
 
 ### 9.1. Danh mục Endpoint Đơn hàng Đấu giá
 
 | Mã | Phương thức | Endpoint | Vai trò / Auth | Mô tả |
 |:---|:---:|:---|:---|:---|
-| `AUC-01` | `POST` | `/api/v1/auction-orders/settlement` | `X-Internal-Service-Key` | Auction Service đẩy kết quả đấu giá tạo đơn `PendingPayment` (Idempotent 200/201, hỗ trợ runner-up). |
-| `AUC-02` | `PUT` | `/api/v1/auction-orders/{auctionOrderId}/shipping` | Buyer | Winner nhập địa chỉ giao hàng, tính cước GHN qua Fulfillment Service và chốt `TotalAmount`. |
-| `AUC-03` | `POST` | `/api/v1/auction-orders/{auctionOrderId}/pay` | Buyer | Winner thanh toán qua ví Nexus, kích hoạt hạn Seller duyệt 24h và gửi callback `Paid` kèm `paidAt`. |
-| `AUC-04` | `POST` | `/api/v1/auction-orders/{auctionOrderId}/accept` | Seller | Seller tiếp nhận đơn trong 24h, chuyển `Confirmed`, tạo vận đơn GHN và gửi callback `SellerAccepted`. |
-| `AUC-05` | `POST` | `/api/v1/auction-orders/{auctionOrderId}/reject` | Seller | Seller từ chối đơn, chuyển `Cancelled`, tự động hoàn 100% tiền ví cho Buyer và gửi callback `SellerRejected`. |
+| `AUC-01` | `POST` | `/api/v1/auction-orders/settlement` | `X-Internal-Service-Key` | Auction Service đẩy kết quả đấu giá tạo đơn `PendingPayment` (Idempotent 200/201, hỗ trợ runner-up `SECOND_CHANCE` và khấu trừ `depositAmount`). |
+| `AUC-02` | `PUT` | `/api/v1/auction-orders/{auctionOrderId}/shipping` | Buyer | Winner nhập địa chỉ giao hàng, tính cước GHN qua Fulfillment Service và chốt `TotalAmount = RemainingAmount + ShippingFeeAmount`. |
+| `AUC-03` | `POST` | `/api/v1/auction-orders/{auctionOrderId}/pay` | Buyer | Winner thanh toán qua ví Nexus, kích hoạt hạn Seller duyệt 24h và gửi callback `Paid` kèm `paidAt`, `amount = winningAmount`, `orderSource`. |
+| `AUC-04` | `POST` | `/api/v1/auction-orders/{auctionOrderId}/accept` | Seller | Seller tiếp nhận đơn trong 24h, chuyển `Confirmed`, tạo vận đơn GHN và gửi callback `SellerAccepted` kèm `orderSource`. |
+| `AUC-05` | `POST` | `/api/v1/auction-orders/{auctionOrderId}/reject` | Seller | Seller từ chối đơn, chuyển `Cancelled`, tự động hoàn strictly `TotalAmount ?? RemainingAmount` cho Buyer (không hoàn cọc) và gửi callback `SellerRejected` kèm `orderSource`. |
 | `AUC-06` | `POST` | `/api/v1/auction-orders/{auctionOrderId}/confirm-receipt` | Buyer | Buyer xác nhận đã nhận hàng, chuyển `Completed` và giải ngân Escrow cho Seller. |
-| `AUC-07` | `GET` | `/api/v1/auction-orders/{auctionOrderId}` | Buyer / Seller | Xem chi tiết đơn hàng đấu giá. |
+| `AUC-07` | `GET` | `/api/v1/auction-orders/{auctionOrderId}` | Buyer / Seller | Xem chi tiết đơn hàng đấu giá (bổ sung `depositAmount`, `remainingAmount`, `orderSource`). |
 | `AUC-08` | `GET` | `/api/v1/auction-orders/seller` | Seller | Danh sách đơn hàng đấu giá của Seller (hỗ trợ phân trang `page`, `pageSize`). |
 
 ### 9.2. Outbound Callback đến Auction Service
 
 - **Endpoint mục tiêu**: `POST http://auction-service:8005/api/v1/auctions/{auctionId}/settlement/payment-status`
 - **Header xác thực**: `X-Internal-Service-Key`
+- **Các trường trong Callback Payload**:
+  - `orderId`: UUID đơn hàng đấu giá tại Commerce.
+  - `winnerId`: UUID người chiến thắng / người mua.
+  - `status`: Một trong 5 trạng thái: `"Paid"`, `"SellerAccepted"`, `"SellerRejected"`, `"SellerExpired"`, `"PaymentTimedOut"`.
+  - `amount`: Số tiền thắng đấu giá (`winningAmount`).
+  - `paidAt`: Thời điểm thanh toán ISO 8601 (chỉ gửi khi `status = "Paid"`).
+  - `occurredAt`: Thời điểm xảy ra sự kiện ISO 8601 UTC.
+  - `orderSource`: Chuỗi in hoa `"WINNER"` hoặc `"SECOND_CHANCE"`.
+  - `eventId`: UUID định danh sự kiện callback.
 - **5 trạng thái callback tuần tự**:
-  1. `"Paid"`: Gửi ngay sau khi Buyer thanh toán ví thành công (kèm `paidAt` và `amount = winningAmount`).
-  2. `"SellerAccepted"`: Gửi khi Seller duyệt đơn trong 24h để Auction gọi Catalog khóa sản phẩm vĩnh viễn.
-  3. `"SellerRejected"`: Gửi khi Seller từ chối (sau khi ví Buyer đã được hoàn 100%).
-  4. `"SellerExpired"`: Gửi khi background worker tự hủy đơn do Seller không duyệt sau 24h (đã hoàn 100% tiền ví).
-  5. `"PaymentTimedOut"`: Gửi khi background worker tự hủy đơn do Buyer quá hạn thanh toán 24h.
+  1. `"Paid"`: Gửi ngay sau khi Buyer thanh toán ví thành công (kèm `paidAt`, `amount = winningAmount`, `orderSource`).
+  2. `"SellerAccepted"`: Gửi khi Seller duyệt đơn trong 24h để Auction gọi Catalog khóa sản phẩm vĩnh viễn (kèm `orderSource`).
+  3. `"SellerRejected"`: Gửi khi Seller từ chối đơn (kèm `orderSource`, sau khi ví Buyer đã được hoàn strictly `TotalAmount ?? RemainingAmount`).
+  4. `"SellerExpired"`: Gửi khi background worker tự hủy đơn do Seller không duyệt sau 24h (kèm `orderSource`, đã hoàn strictly `TotalAmount ?? RemainingAmount`).
+  5. `"PaymentTimedOut"`: Gửi khi background worker tự hủy đơn do Buyer quá hạn thanh toán 24h (kèm `orderSource`). Commerce không tự ý nhả sản phẩm ở Catalog để Auction giữ quyền quyết định cho runner-up.
+- **Quy tắc Hoàn tiền Độc lập (Independent Refund Rule)**:
+  - Commerce Service **chỉ hoàn trả khoản tiền Buyer thực tế thanh toán qua Commerce** (`TotalAmount ?? RemainingAmount` gồm tiền hàng còn thiếu và phí vận chuyển).
+  - Khoản đặt cọc (`depositAmount`) **không nằm trong ví thanh toán Commerce**. Auction Service chịu trách nhiệm gọi độc lập sang Wallet W5 (`/internal/wallets/holds/{holdId}/refund-captured`) để hoàn tiền cọc cho Buyer.
 - **Fail-Safe Principle**: Toàn bộ thao tác hoàn tiền ví của Buyer và cập nhật trạng thái `Cancelled` phải được hoàn tất tại database trước khi gửi callback. Nếu kết nối mạng đến Auction Service bị lỗi (5xx, timeout), hệ thống ghi log cảnh báo và retry mà tuyệt đối KHÔNG rollback tiền của Buyer.
 
-### 9.3. TypeScript Type Definitions cho Đơn Đấu Giá
+### 9.3. Bảng Mã Lỗi Phân Hệ Đấu Giá
+
+| Mã Lỗi | HTTP Code | Diễn Giải & Nguyên Nhân |
+|:---|:---:|:---|
+| `INVALID_AMOUNT` | 422 | Giá thắng (`winningAmount`) phải lớn hơn 0 hoặc tiền cọc (`depositAmount`) không được âm. |
+| `DEPOSIT_EXCEEDS_WINNING_AMOUNT` | 422 | Tiền cọc (`depositAmount`) không được vượt quá giá trúng đấu giá (`winningAmount`). Áp dụng cho cả Winner và Second Chance. |
+| `SETTLEMENT_CONFLICT` | 409 | Phiên đấu giá này đã có một đơn hàng đang trong trạng thái xử lý hoạt động (chưa bị hủy). |
+| `ORDER_NOT_FOUND` | 404 | Không tìm thấy đơn hàng đấu giá với ID chỉ định. |
+| `FORBIDDEN` | 403 | Người dùng không có quyền truy cập hoặc thao tác trên đơn hàng đấu giá này. |
+| `PAYMENT_DEADLINE_EXPIRED` | 400 | Đã quá thời hạn thanh toán 24 giờ kể từ khi chốt phiên đấu giá. |
+| `SELLER_RESPOND_TIMEOUT` | 400 | Đã quá thời hạn người bán phản hồi 24 giờ kể từ khi người mua thanh toán. |
+| `SHIPPING_ADDRESS_REQUIRED` | 400 | Người mua chưa cung cấp địa chỉ giao hàng và chưa chốt tổng tiền vận chuyển. |
+| `INVALID_STATUS` | 400 | Trạng thái hiện tại của đơn hàng không hợp lệ cho thao tác yêu cầu. |
+
+### 9.4. TypeScript Type Definitions cho Đơn Đấu Giá
 
 ```typescript
 export interface AuctionSettlementRequest {
@@ -1451,6 +1549,8 @@ export interface AuctionSettlementRequest {
   skuAttributes?: string | null;
   winningAmount: number;
   paymentDeadlineAt: string;
+  depositAmount?: number | null;
+  source?: "WINNER" | "SECOND_CHANCE" | null;
   shippingAddress?: ShippingAddressDto | null;
   contactPhone?: string | null;
 }
@@ -1464,9 +1564,47 @@ export interface AuctionSettlementResponse {
   paymentDeadlineAt: string;
 }
 
+export interface AuctionOrderDetailResponse {
+  id: string;
+  orderNo: string;
+  auctionId: string;
+  buyerId: string;
+  sellerId: string;
+  winningBidId: string;
+  productId: string;
+  skuId?: string | null;
+  productName: string;
+  productImageUrl?: string | null;
+  skuAttributes?: string | null;
+  winningAmount: number;
+  depositAmount: number;
+  remainingAmount: number;
+  shippingFeeAmount?: number | null;
+  totalAmount?: number | null;
+  sellerReceiveAmount: number;
+  platformFeeAmount: number;
+  orderSource: "Winner" | "SecondChance";
+  status: string;
+  paymentMethod: string;
+  paymentDeadlineAt: string;
+  paidAt?: string | null;
+  sellerRespondDeadlineAt?: string | null;
+  sellerAcceptedAt?: string | null;
+  shippingAddress?: string | null;
+  trackingCode?: string | null;
+  shippingCarrier?: string | null;
+  shippingLabelUrl?: string | null;
+  shippedAt?: string | null;
+  deliveredAt?: string | null;
+  completedAt?: string | null;
+  cancelledAt?: string | null;
+  createdAt: string;
+}
+
 export interface SubmitAuctionShippingRequest {
   shippingAddress: ShippingAddressDto;
   contactPhone: string;
+  contactName?: string | null;
 }
 
 export interface PayAuctionOrderResponse {
@@ -1493,6 +1631,17 @@ export interface ConfirmReceiptResponse {
   orderNo: string;
   status: string;
   completedAt: string;
+}
+
+export interface AuctionPaymentStatusCallbackRequest {
+  orderId: string;
+  winnerId: string;
+  status: "Paid" | "SellerAccepted" | "SellerRejected" | "SellerExpired" | "PaymentTimedOut";
+  amount?: number | null;
+  paidAt?: string | null;
+  occurredAt: string; // ISO 8601 UTC
+  orderSource?: "WINNER" | "SECOND_CHANCE" | null;
+  eventId?: string | null;
 }
 ```
 

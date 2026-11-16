@@ -632,4 +632,156 @@ public class OrderLifecycleTests : IDisposable
             It.IsAny<DateTimeOffset?>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // =========================================================================
+    // US2: MILESTONE DELIVERY WEBHOOK & TIMELINE TESTS (T013, T014)
+    // =========================================================================
+
+    [Fact]
+    public async Task UpdateDeliveryStatus_ShouldAppendOrderStatusHistoryForMilestones()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Confirmed);
+
+        var service = CreateOrderService();
+
+        // Act: Sequential milestone callbacks
+        var time1 = DateTimeOffset.UtcNow.AddMinutes(-30);
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrder.Id, new UpdateDeliveryStatusRequest("Packed", time1, "GHN", "GHN-123", "Order packed"), CancellationToken.None);
+
+        var time2 = DateTimeOffset.UtcNow.AddMinutes(-20);
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrder.Id, new UpdateDeliveryStatusRequest("InTransit", time2, "GHN", "GHN-123", "Departed from hub", "Tan Binh Hub"), CancellationToken.None);
+
+        var time3 = DateTimeOffset.UtcNow.AddMinutes(-10);
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrder.Id, new UpdateDeliveryStatusRequest("Delivered", time3, "GHN", "GHN-123", "Delivered to customer"), CancellationToken.None);
+
+        // Assert
+        var updated = await _dbContext.SubOrders.Include(s => s.StatusHistories).FirstAsync(s => s.Id == subOrder.Id);
+        updated.Status.Should().Be(SubOrderStatus.Delivered);
+        updated.StatusHistories.Should().HaveCount(3);
+
+        var inTransitHistory = updated.StatusHistories.First(h => h.Reason != null && h.Reason.StartsWith("[InTransit]"));
+        inTransitHistory.Reason.Should().Contain("Tan Binh Hub");
+        inTransitHistory.ActorRole.Should().Be(OrderActorRole.System);
+    }
+
+    [Fact]
+    public async Task GetShipmentTimeline_ShouldReturnChronologicalEvents_WithOwnershipValidation()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var strangerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Confirmed);
+
+        subOrder.CarrierCode = "GHN";
+        subOrder.TrackingCode = "GHN-TL-001";
+        subOrder.LabelPrintUrl = "https://print.pdf";
+
+        var time1 = DateTimeOffset.UtcNow.AddMinutes(-30);
+        var time2 = DateTimeOffset.UtcNow.AddMinutes(-15);
+
+        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            FromStatus = SubOrderStatus.Paid,
+            ToStatus = SubOrderStatus.Confirmed,
+            ActorRole = OrderActorRole.Seller,
+            Reason = "Seller confirmed order",
+            CreatedAt = time1
+        });
+
+        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            FromStatus = SubOrderStatus.Confirmed,
+            ToStatus = SubOrderStatus.Shipped,
+            ActorRole = OrderActorRole.System,
+            Reason = "[InTransit] In transit to local hub | Location: Binh Thanh Hub",
+            CreatedAt = time2
+        });
+
+        await _dbContext.SaveChangesAsync();
+
+        var service = CreateOrderService();
+
+        // Act & Assert 1: Stranger access should throw 403 Forbidden
+        var unauthorizedAct = () => service.GetShipmentTimelineAsync(strangerId, subOrder.Id, CancellationToken.None);
+        await unauthorizedAct.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "FORBIDDEN");
+
+        // Act 2: Buyer access should succeed
+        var timelineResponse = await service.GetShipmentTimelineAsync(buyerId, subOrder.Id, CancellationToken.None);
+
+        // Assert 2:
+        timelineResponse.Should().NotBeNull();
+        timelineResponse.TrackingCode.Should().Be("GHN-TL-001");
+        timelineResponse.CarrierName.Should().Be("Giao Hang Nhanh");
+        timelineResponse.Timeline.Should().HaveCount(2);
+
+        var firstEvent = timelineResponse.Timeline[0];
+        firstEvent.Status.Should().Be("Confirmed");
+        firstEvent.Title.Should().Be("Order Confirmed");
+
+        var secondEvent = timelineResponse.Timeline[1];
+        secondEvent.Status.Should().Be("InTransit");
+        secondEvent.Title.Should().Be("In Transit");
+        secondEvent.Location.Should().Be("Binh Thanh Hub");
+    }
+
+    // =========================================================================
+    // US3: MASTER ORDER MULTI-SHOP AGGREGATION TEST (T021)
+    // =========================================================================
+
+    [Fact]
+    public async Task MasterOrder_ShouldTransitionToDelivered_OnlyWhenAllSubOrdersDelivered()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var seller1 = Guid.NewGuid();
+        var seller2 = Guid.NewGuid();
+
+        var (order, subOrder1) = await SeedOrderWithSubOrderAsync(buyerId, seller1, OrderStatus.Paid, SubOrderStatus.Shipped);
+
+        var subOrder2 = new SubOrder
+        {
+            Id = Guid.NewGuid(),
+            SubOrderNo = $"SUB-{DateTime.UtcNow:yyyyMMdd}-002",
+            OrderId = order.Id,
+            BuyerId = buyerId,
+            SellerId = seller2,
+            Status = SubOrderStatus.Shipped,
+            PaymentMethod = PaymentMethod.Wallet,
+            ShippingAddress = new ShippingAddressSnapshot("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 150000m,
+            ShippingFeeAmount = 30000m,
+            TotalAmount = 180000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            PaidAt = DateTimeOffset.UtcNow
+        };
+
+        _dbContext.SubOrders.Add(subOrder2);
+        await _dbContext.SaveChangesAsync();
+
+        var service = CreateOrderService();
+
+        // Act 1: Deliver SubOrder 1 only
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrder1.Id, new UpdateDeliveryStatusRequest("Delivered", DateTimeOffset.UtcNow), CancellationToken.None);
+
+        // Assert 1: Parent Order status should still be Paid
+        var orderAfterFirst = await _dbContext.Orders.FindAsync(order.Id);
+        orderAfterFirst!.Status.Should().Be(OrderStatus.Paid);
+
+        // Act 2: Deliver SubOrder 2
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrder2.Id, new UpdateDeliveryStatusRequest("Delivered", DateTimeOffset.UtcNow), CancellationToken.None);
+
+        // Assert 2: Parent Order status should now transition to Delivered
+        var orderAfterSecond = await _dbContext.Orders.FindAsync(order.Id);
+        orderAfterSecond!.Status.Should().Be(OrderStatus.Delivered);
+    }
 }

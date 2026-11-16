@@ -54,6 +54,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
         var fulfillmentClient = scope.ServiceProvider.GetRequiredService<IFulfillmentClient>();
         var auctionClient = scope.ServiceProvider.GetService<IAuctionClient>();
         var walletClient = scope.ServiceProvider.GetService<IWalletClient>();
+        var userClient = scope.ServiceProvider.GetService<IUserClient>();
 
         var now = DateTimeOffset.UtcNow;
 
@@ -195,7 +196,9 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                                     OrderId: auctionOrder.Id,
                                     WinnerId: auctionOrder.BuyerId,
                                     Status: "PaymentTimedOut",
-                                    EventId: Guid.NewGuid()
+                                    EventId: Guid.NewGuid(),
+                                    OrderSource: auctionOrder.OrderSource.ToString().ToUpperInvariant(),
+                                    OccurredAt: now
                                 ),
                                 ct);
                         }
@@ -205,6 +208,9 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                         }
                     }
                 }
+
+                // Lưu ý: Không tự gọi UserService trừ điểm uy tín Buyer tại đây.
+                // Auction Service sẽ chủ động gọi API 20 (auction-violations) để tăng ViolationStreak và trừ uy tín Buyer khi nhận callback PaymentTimedOut.
             }
             catch (Exception ex)
             {
@@ -242,7 +248,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                         InventoryReleased = true
                     });
 
-                    var refundAmount = auctionOrder.TotalAmount ?? auctionOrder.WinningAmount;
+                    var refundAmount = auctionOrder.TotalAmount ?? auctionOrder.RemainingAmount;
                     bool refundSuccess = false;
                     if (walletClient != null)
                     {
@@ -303,13 +309,39 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                                     OrderId: auctionOrder.Id,
                                     WinnerId: auctionOrder.BuyerId,
                                     Status: "SellerExpired",
-                                    EventId: Guid.NewGuid()
+                                    EventId: Guid.NewGuid(),
+                                    OrderSource: auctionOrder.OrderSource.ToString().ToUpperInvariant(),
+                                    OccurredAt: now
                                 ),
                                 ct);
                         }
                         catch (Exception ex)
                         {
                             _logger.LogWarning(ex, "[PaymentTimeoutWorker] Failed to dispatch SellerExpired callback for AuctionOrder '{OrderId}'.", auctionOrder.Id);
+                        }
+                    }
+                }
+
+                if (userClient != null)
+                {
+                    foreach (var auctionOrder in expiredSellerOrders)
+                    {
+                        try
+                        {
+                            await userClient.CreatePenaltyAsync(new UserPenaltyRequest(
+                                UserId: auctionOrder.SellerId,
+                                TargetRole: "Seller",
+                                ViolationType: "SellerResponseTimeout",
+                                ReferenceType: "AuctionOrder",
+                                ReferenceId: auctionOrder.OrderNo,
+                                Reason: "Seller response deadline expired after 24 hours.",
+                                CustomScoreDeduction: 5,
+                                PolicyClauseCode: "POLICY-AUC-SELLER-TIMEOUT"
+                            ), ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "[PaymentTimeoutWorker] Fail-safe: Failed to apply penalty on Seller '{SellerId}' for expired AuctionOrder '{OrderNo}'.", auctionOrder.SellerId, auctionOrder.OrderNo);
                         }
                     }
                 }

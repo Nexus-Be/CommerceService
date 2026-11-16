@@ -246,13 +246,43 @@ public class OrdersController : ControllerBase
             });
         }
 
-        await _orderService.UpdateSubOrderDeliveryStatusAsync(subOrderId, request.Status, request.DeliveredAt, ct);
+        await _orderService.UpdateSubOrderDeliveryStatusAsync(subOrderId, request, ct);
         return Ok(new
         {
             subOrderId,
             status = request.Status,
             updatedAt = DateTimeOffset.UtcNow
         });
+    }
+
+    /// <summary>R100: Tạo lại vận đơn giao hàng khi đơn con đã xác nhận nhưng gặp sự cố mạng tạm thời với GHN.</summary>
+    [HttpPost("/api/v1/sub-orders/{subOrderId:guid}/shipments/retry")]
+    public async Task<IActionResult> RetryCreateShipment(
+        [FromRoute] Guid subOrderId,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var sellerId, out var authError))
+        {
+            return authError;
+        }
+
+        var response = await _orderService.RetryCreateShipmentAsync(sellerId, subOrderId, ct);
+        return Ok(response);
+    }
+
+    /// <summary>R101: Theo dõi dòng thời gian hành trình giao hàng chi tiết cho đơn con.</summary>
+    [HttpGet("/api/v1/sub-orders/{subOrderId:guid}/shipments/timeline")]
+    public async Task<IActionResult> GetShipmentTimeline(
+        [FromRoute] Guid subOrderId,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var currentUserId, out var authError))
+        {
+            return authError;
+        }
+
+        var timeline = await _orderService.GetShipmentTimelineAsync(currentUserId, subOrderId, ct);
+        return Ok(timeline);
     }
 
     /// <summary>Tương thích ngược: Tra cứu danh sách đơn của buyer.</summary>

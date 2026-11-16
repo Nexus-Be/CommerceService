@@ -92,7 +92,36 @@ public sealed record SubOrderShipmentInfo(
     string? CarrierCode,
     string? TrackingCode,
     DateTimeOffset? ShippedAt,
-    DateTimeOffset? DeliveredAt);
+    DateTimeOffset? DeliveredAt,
+    string? LabelPrintUrl = null);
+
+public sealed record RetryShipmentResponse(
+    Guid SubOrderId,
+    string SubOrderNo,
+    string TrackingCode,
+    string CarrierCode,
+    string LabelPrintUrl,
+    DateTimeOffset CreatedAt);
+
+public sealed record TimelineEventDto(
+    string Status,
+    string Title,
+    string Description,
+    DateTimeOffset OccurredAt,
+    string? Location = null);
+
+public sealed record ShipmentTimelineResponse(
+    Guid SubOrderId,
+    string SubOrderNo,
+    Guid OrderId,
+    string? CarrierCode,
+    string? CarrierName,
+    string? TrackingCode,
+    string? LabelPrintUrl,
+    string CurrentStatus,
+    DateTimeOffset? EstimatedDeliveryAt,
+    Commerce.Domain.ValueObjects.ShippingAddressSnapshot ShippingAddress,
+    List<TimelineEventDto> Timeline);
 
 public sealed record ShipmentTrackingResponse(
     Guid OrderId,

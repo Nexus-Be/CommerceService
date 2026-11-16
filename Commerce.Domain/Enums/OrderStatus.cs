@@ -7,5 +7,6 @@ public enum OrderStatus
     Paid = 2,
     Cancelled = 3,
     Expired = 4,
-    Completed = 5
+    Completed = 5,
+    Delivered = 6
 }

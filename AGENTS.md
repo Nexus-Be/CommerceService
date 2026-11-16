@@ -19,9 +19,9 @@ This project is indexed by GitNexus as **CommerceService** (636 symbols, 799 rel
 
 # QUY CHUẨN VẬN HÀNH DÀNH CHO AI CODING AGENTS (COMMERCE SERVICE)
 
-> **Trạng thái triển khai (2026-10-30):** ✅ ĐÃ CHUẨN HÓA — 100% RESTful API (`CartsController`, `OrdersController`), Feature Co-location, cấm gRPC, bãi bỏ hoàn toàn RabbitMQ, MassTransit, Saga và Outbox tables.
-> **Nguồn sự thật:** code (`Commerce.sln`, `Commerce.Api/Controllers/CartsController.cs`, `Commerce.Api/Controllers/OrdersController.cs`).
-> **Cập nhật lần cuối:** 2026-10-30.
+> **Trạng thái triển khai (2026-11-16):** ✅ ĐÃ HOÀN THIỆN & CHUẨN HÓA — 100% RESTful API (`CartsController`, `OrdersController`, `AuctionOrdersController`), Clean Architecture 4 tầng, Feature Co-location, cấm gRPC, bãi bỏ hoàn toàn RabbitMQ, MassTransit, Saga và Outbox tables.
+> **Nguồn sự thật:** Toàn bộ code trong `Commerce.sln` và tài liệu kiến trúc [docs/COMMERCE_ARCHITECTURE_AND_FLOW_SPEC.md](docs/COMMERCE_ARCHITECTURE_AND_FLOW_SPEC.md) (v3.0).
+> **Cập nhật lần cuối:** 2026-11-16.
 
 ---
 
@@ -40,7 +40,7 @@ Một Plan chuẩn bắt buộc phải có:
 2. **Context & Files cần đọc**: Liệt kê các file nội bộ của CommerceService theo ma trận đọc file tại Nguyên tắc 3.
 3. **Phân tích rủi ro & Phạm vi ảnh hưởng (Impact Analysis)**: Dùng GitNexus `impact`.
 4. **Checklist các bước thực hiện (Step-by-Step Implementation)**.
-5. **Kế hoạch kiểm chứng (Verification)**: `dotnet build Commerce.sln -c Release`.
+5. **Kế hoạch kiểm chứng (Verification)**: `dotnet build Commerce.sln -c Release` và `dotnet test`.
 
 ---
 
@@ -56,12 +56,13 @@ CommerceService là một Git Repository độc lập:
 ## 📚 NGUYÊN TẮC 3: DANH MỤC FILE NỘI BỘ BẮT BUỘC PHẢI ĐỌC TẠI COMMERCE SERVICE
 
 Khi bắt đầu làm việc tại CommerceService, AI Agent **BẮT BUỘC PHẢI ĐỌC** các file nội bộ sau theo thứ tự:
-1. `specs/00_AGENT_MISSION_GUARDRAILS.md`: Bounded context giỏ hàng, đơn hàng; port `8003`; DB `5435` (`commerce_db`).
-2. `specs/01_CLEAN_ARCHITECTURE_LAYERS.md`: Cấu trúc 4 tầng Clean Architecture, No-Repository pattern over EF Core.
-3. `specs/02_API_REST_CONTRACTS.md`: Hợp đồng RESTful API: `CartsController`, `OrdersController`.
-4. `specs/03_EVENT_MESSAGING.md`: Trạng thái bãi bỏ RabbitMQ / MassTransit / Saga; giao tiếp REST trực tiếp.
-5. `specs/04_DATA_PERSISTENCE.md`: Schema PostgreSQL (`Carts`, `CartItems`, `Orders`, `SubOrders`...).
-6. `specs/05_DEV_VERIFICATION_CHECKLIST.md`: Lệnh build kiểm chứng service.
+1. `docs/COMMERCE_ARCHITECTURE_AND_FLOW_SPEC.md`: Tài liệu kiến trúc v3.0 toàn diện và chi tiết nhất về giỏ hàng, đơn hàng đa người bán, đấu giá, GHN và Escrow.
+2. `specs/00_AGENT_MISSION_GUARDRAILS.md`: Bounded context giỏ hàng, đơn hàng; port `8003`; DB `5435` (`commerce_db`).
+3. `specs/01_CLEAN_ARCHITECTURE_LAYERS.md`: Cấu trúc 4 tầng Clean Architecture, No-Repository pattern over EF Core.
+4. `specs/02_API_REST_CONTRACTS.md`: Hợp đồng RESTful API: `CartsController`, `OrdersController`, `AuctionOrdersController`.
+5. `specs/03_EVENT_MESSAGING.md`: Trạng thái bãi bỏ RabbitMQ / MassTransit / Saga; giao tiếp REST trực tiếp.
+6. `specs/04_DATA_PERSISTENCE.md`: Schema PostgreSQL (`Carts`, `CartItems`, `Orders`, `SubOrders`, `AuctionOrders`...).
+7. `specs/05_DEV_VERIFICATION_CHECKLIST.md`: Lệnh build & test kiểm chứng service (`Commerce.UnitTests`).
 
 ---
 
@@ -70,21 +71,21 @@ Khi bắt đầu làm việc tại CommerceService, AI Agent **BẮT BUỘC PH�
 1. **TUYỆT ĐỐI KHÔNG DÙNG REPOSITORY PATTERN BỌC NGOÀI EF CORE**: Sử dụng trực tiếp `AppDbContext` và `DbSet<T>` (hoặc interface `ICommerceDbContext`) trong tầng Application. Cấm tạo `IOrderRepository`, `ICartRepository`, `UnitOfWork`.
 2. **CẤU HÌNH PORT 8003 VÀ DATABASE 5435 LÀ BẤT BIẾN**.
 3. **CẤM SỬ DỤNG gRPC VÀ BÃI BỎ SAGA & MESSAGE BROKER — BẮT BUỘC DÙNG 100% RESTFUL API**:
-   - Toàn bộ giao tiếp đồng bộ sử dụng chuẩn **RESTful Web API** (JSON qua HTTP/1.1 hoặc HTTP/2) với quy chuẩn 100% số nhiều cho collections: `/api/v1/carts`, `/api/v1/orders`, `/api/v1/sub-orders`, `/api/v1/checkouts`.
+   - Toàn bộ giao tiếp đồng bộ sử dụng chuẩn **RESTful Web API** (JSON qua HTTP/1.1 hoặc HTTP/2) với quy chuẩn 100% số nhiều cho collections: `/api/v1/carts`, `/api/v1/orders`, `/api/v1/sub-orders`, `/api/v1/checkouts`, `/api/v1/auction-orders`.
    - Tuyệt đối cấm gRPC, Saga state machine, RabbitMQ và MassTransit.
 4. **FEATURE CO-LOCATION & 1-TO-1 CONTROLLER PAIRING**:
-   - Tầng Application: Toàn bộ use cases đặt tại `Commerce.Application/Services/{Feature}/` gồm `I{Feature}Service.cs`, `{Feature}Service.cs`, `{Feature}Requests.cs`, `{Feature}Responses.cs`, `{Feature}Dtos.cs`.
-   - Tầng Api: Ghép cặp 1-to-1 với `CartsController.cs` và `OrdersController.cs`, chỉ inject duy nhất feature service tương ứng.
+   - Tầng Application: Toàn bộ use cases đặt tại `Commerce.Application/Services/{Feature}/` gồm `Cart`, `Order`, `AuctionOrder`.
+   - Tầng Api: Ghép cặp 1-to-1 với `CartsController.cs`, `OrdersController.cs`, `AuctionOrdersController.cs`, chỉ inject duy nhất feature service tương ứng.
 5. **GIAO TIẾP LIÊN DỊCH VỤ QUA TYPED REST CLIENT**:
-   - Định nghĩa interface `IWalletClient`, `ICatalogClient` trong `Commerce.Application/Interfaces/`.
-   - Triển khai `HttpClient` trong `Commerce.Infrastructure/Services/`.
+   - Định nghĩa interface `IWalletClient`, `ICatalogClient`, `IFulfillmentClient`, `IUserClient`, `IAuctionClient` trong `Commerce.Application/Interfaces/`.
+   - Triển khai `HttpClientFactory` kèm Polly resilience trong `Commerce.Infrastructure/Services/`.
 6. **QUY CHUẨN PHÂN TRANG (PAGINATION GOVERNANCE)**:
    - Toàn bộ thao tác phân trang đơn hàng, lịch sử giỏ hàng bắt buộc thực hiện trực tiếp tại Database qua `.Skip((page - 1) * pageSize).Take(pageSize)` và `.CountAsync()`.
    - Đóng gói dữ liệu trả về theo cấu trúc phân trang chuẩn `PagedData<T>` (`items` và metadata `pagination: { pageIndex, pageSize, totalCount, totalPages, hasPreviousPage, hasNextPage }`).
    - TUYỆT ĐỐI CẤM trả về danh sách thô lớn không giới hạn để Gateway tự phân trang.
-7. **INTERNAL API ĐANG TẠM KHÓA (2026-10-31)**:
-   - Route liên service dùng đường dẫn công khai, không còn `/api/v1/internal`.
-   - `InternalServiceAuthMiddleware` và `InternalServiceAuthHandler` đã comment đăng ký; không yêu cầu `X-Internal-Service-Key`.
+7. **CƠ CHẾ BẢO MẬT GIAO TIẾP NỘI BỘ**:
+   - Route liên service dùng đường dẫn công khai; `InternalServiceAuthMiddleware` đã tạm tắt ở pipeline chung.
+   - Các Webhook nhạy cảm (`POST /api/v1/sub-orders/{id}/delivery-status`, `POST /api/v1/auction-orders/settlement`) kiểm tra `X-Internal-Service-Key` trực tiếp tại controller để bảo vệ an toàn dữ liệu.
 8. **QUY CHUẨN BẢO VỆ QUYỀN SỞ HỮU TÀI NGUYÊN (RESOURCE OWNERSHIP GOVERNANCE)**:
    - Controller bắt buộc lấy `currentUserId` từ `HttpContext.GetUserId()` và kiểm tra quyền sở hữu trước khi trả về dữ liệu đơn hàng hoặc giỏ hàng.
    - Cấm tin tưởng tham số `buyerId` từ query string hoặc route; nếu `currentUserId != buyerId` và không phải `admin`/`staff`, trả về HTTP 403 `FORBIDDEN`.

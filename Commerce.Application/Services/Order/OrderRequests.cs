@@ -48,4 +48,8 @@ public sealed record SubOrderRefundRequest(
 
 public sealed record UpdateDeliveryStatusRequest(
     string Status,
-    DateTimeOffset? DeliveredAt = null);
+    DateTimeOffset? DeliveredAt = null,
+    string? CarrierCode = null,
+    string? TrackingCode = null,
+    string? Note = null,
+    string? Location = null);

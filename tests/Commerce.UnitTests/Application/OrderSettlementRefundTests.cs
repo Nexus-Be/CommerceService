@@ -171,4 +171,103 @@ public class OrderSettlementRefundTests : IDisposable
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // =========================================================================
+    // US4: DELIVERY EXCEPTION & AUTOMATED RETURN/REFUND TESTS (T023)
+    // =========================================================================
+
+    [Fact]
+    public async Task DeliveryAttemptFailed_ShouldRetainShippedStatus_AndNotCancelOrder()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Shipped, 150000m, 135000m);
+
+        var service = CreateOrderService();
+
+        // Act
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrder.Id, new UpdateDeliveryStatusRequest(
+            Status: "DeliveryAttemptFailed",
+            DeliveredAt: DateTimeOffset.UtcNow,
+            Note: "Customer phone unreachable, rescheduling tomorrow"
+        ), CancellationToken.None);
+
+        // Assert
+        var updatedSubOrder = await _dbContext.SubOrders.Include(s => s.StatusHistories).FirstAsync(s => s.Id == subOrder.Id);
+        updatedSubOrder.Status.Should().Be(SubOrderStatus.Shipped);
+        updatedSubOrder.StatusHistories.Should().Contain(h => h.Reason != null && h.Reason.Contains("DeliveryAttemptFailed"));
+
+        var cancellations = await _dbContext.OrderCancellations.Where(c => c.SubOrderId == subOrder.Id).ToListAsync();
+        cancellations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Returned_WhenPaid_ShouldCancelOrder_IssueWalletRefund_AndReleaseStock()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Shipped, 150000m, 135000m);
+
+        var skuId = Guid.NewGuid();
+        subOrder.Items.Add(new SubOrderItem
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            ProductId = Guid.NewGuid(),
+            SkuId = skuId,
+            SellerId = sellerId,
+            ProductNameSnapshot = "Returned Product",
+            Quantity = 2,
+            UnitPrice = 60000m,
+            UnitPriceAfterDiscount = 60000m,
+            LineTotal = 120000m
+        });
+        subOrder.PaidAt = DateTimeOffset.UtcNow;
+        await _dbContext.SaveChangesAsync();
+
+        _mockFulfillmentClient
+            .Setup(f => f.ReleaseSubOrderStockAsync(order.Id, It.IsAny<List<StockReservationItem>>(), "PackageReturned", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var service = CreateOrderService();
+
+        // Act
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrder.Id, new UpdateDeliveryStatusRequest(
+            Status: "Returned",
+            DeliveredAt: DateTimeOffset.UtcNow,
+            Note: "Package returned to sender warehouse"
+        ), CancellationToken.None);
+
+        // Assert 1: Status Cancelled
+        var updatedSubOrder = await _dbContext.SubOrders.FindAsync(subOrder.Id);
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Cancelled);
+
+        // Assert 2: OrderCancellation recorded with PackageReturned
+        var cancellation = await _dbContext.OrderCancellations.FirstOrDefaultAsync(c => c.SubOrderId == subOrder.Id);
+        cancellation.Should().NotBeNull();
+        cancellation!.ReasonCode.Should().Be(CancellationReasonCode.PackageReturned);
+
+        // Assert 3: OrderRefund recorded and wallet client invoked
+        var refund = await _dbContext.OrderRefunds.FirstOrDefaultAsync(r => r.SubOrderId == subOrder.Id);
+        refund.Should().NotBeNull();
+        refund!.Status.Should().Be(RefundStatus.Completed);
+        refund.Amount.Should().Be(150000m);
+
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
+            subOrder.Id,
+            buyerId.ToString(),
+            150000m,
+            It.IsAny<string>(),
+            $"refund-delivery-returned-{subOrder.Id}",
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Assert 4: Warehouse stock release with PackageReturned reason
+        _mockFulfillmentClient.Verify(f => f.ReleaseSubOrderStockAsync(
+            order.Id,
+            It.Is<List<StockReservationItem>>(items => items.Count == 1 && items[0].SkuId == skuId && items[0].Quantity == 2),
+            "PackageReturned",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

@@ -16,6 +16,9 @@ public class AuctionOrder : BaseEntity<Guid>
     public string? ImageUrlSnapshot { get; set; }
     public string SkuAttributesSnapshot { get; set; } = "{}";
     public required decimal WinningAmount { get; set; }
+    public decimal DepositAmount { get; set; } = 0m;
+    public decimal RemainingAmount { get; set; }
+    public AuctionOrderSource OrderSource { get; set; } = AuctionOrderSource.Winner;
     public string? ShippingAddress { get; set; }
     public string? ContactPhone { get; set; }
     public decimal? ShippingFeeAmount { get; set; }
@@ -33,6 +36,10 @@ public class AuctionOrder : BaseEntity<Guid>
     public DateTimeOffset? DeliveredAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }
+    public string? CarrierCode { get; set; }
+    public string? TrackingCode { get; set; }
+    public string? LabelPrintUrl { get; set; }
+    public DateTimeOffset? EstimatedDeliveryAt { get; set; }
     public long RowVersion { get; set; }
 
     // Navigation

@@ -309,7 +309,12 @@ public sealed class FulfillmentClient : IFulfillmentClient
         }
     }
 
-    public async Task<bool> ReleaseSubOrderStockAsync(Guid orderId, List<StockReservationItem> items, CancellationToken ct = default)
+    public Task<bool> ReleaseSubOrderStockAsync(Guid orderId, List<StockReservationItem> items, CancellationToken ct = default)
+    {
+        return ReleaseSubOrderStockAsync(orderId, items, "SubOrderRejected", ct);
+    }
+
+    public async Task<bool> ReleaseSubOrderStockAsync(Guid orderId, List<StockReservationItem> items, string reason, CancellationToken ct = default)
     {
         try
         {
@@ -320,12 +325,12 @@ public sealed class FulfillmentClient : IFulfillmentClient
                     skuId = x.SkuId,
                     quantity = x.Quantity
                 }).ToList(),
-                reason = "SubOrderRejected"
+                reason = string.IsNullOrWhiteSpace(reason) ? "SubOrderRejected" : reason
             };
             var response = await _httpClient.PostAsJsonAsync($"api/v1/internal/inventories/reservations/{orderId}/release-items", payload, JsonOptions, ct);
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogInformation("[REST Fulfillment Client] SubOrder stock released for Master Order '{OrderId}'.", orderId);
+                _logger.LogInformation("[REST Fulfillment Client] SubOrder stock released with reason '{Reason}' for Master Order '{OrderId}'.", reason, orderId);
                 return true;
             }
 

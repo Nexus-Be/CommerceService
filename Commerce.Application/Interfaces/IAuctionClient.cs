@@ -10,7 +10,9 @@ public sealed record AuctionPaymentStatusCallbackRequest(
     string Status,
     decimal? Amount = null,
     DateTimeOffset? PaidAt = null,
-    Guid? EventId = null
+    Guid? EventId = null,
+    string? OrderSource = null,
+    DateTimeOffset? OccurredAt = null
 );
 
 public interface IAuctionClient

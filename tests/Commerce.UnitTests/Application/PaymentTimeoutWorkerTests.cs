@@ -24,6 +24,7 @@ public class PaymentTimeoutWorkerTests : IDisposable
     private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
     private readonly Mock<IAuctionClient> _mockAuctionClient = new();
     private readonly Mock<IWalletClient> _mockWalletClient = new();
+    private readonly Mock<IUserClient> _mockUserClient = new();
     private readonly Mock<IServiceProvider> _mockServiceProvider = new();
     private readonly Mock<IServiceScope> _mockServiceScope = new();
     private readonly Mock<IServiceScopeFactory> _mockScopeFactory = new();
@@ -41,6 +42,7 @@ public class PaymentTimeoutWorkerTests : IDisposable
         scopedServices.Setup(s => s.GetService(typeof(IFulfillmentClient))).Returns(_mockFulfillmentClient.Object);
         scopedServices.Setup(s => s.GetService(typeof(IAuctionClient))).Returns(_mockAuctionClient.Object);
         scopedServices.Setup(s => s.GetService(typeof(IWalletClient))).Returns(_mockWalletClient.Object);
+        scopedServices.Setup(s => s.GetService(typeof(IUserClient))).Returns(_mockUserClient.Object);
 
         _mockServiceScope.Setup(s => s.ServiceProvider).Returns(scopedServices.Object);
 
@@ -274,6 +276,7 @@ public class PaymentTimeoutWorkerTests : IDisposable
                 r.OrderId == orderId &&
                 r.WinnerId == buyerId &&
                 r.Status == "PaymentTimedOut" &&
+                r.OrderSource == "WINNER" &&
                 r.EventId.HasValue), default))
             .ReturnsAsync(true);
 
@@ -295,6 +298,8 @@ public class PaymentTimeoutWorkerTests : IDisposable
         cancellations[0].ReasonCode.Should().Be(CancellationReasonCode.PaymentTimeout);
 
         _mockAuctionClient.Verify(a => a.NotifyPaymentStatusAsync(auctionId, It.IsAny<AuctionPaymentStatusCallbackRequest>(), default), Times.Once);
+        // Verify: Commerce KHÔNG tự gọi UserService trừ điểm Buyer để tránh trừ trùng lặp (Auction Service gọi API 20 xử lý việc này)
+        _mockUserClient.Verify(u => u.CreatePenaltyAsync(It.IsAny<UserPenaltyRequest>(), default), Times.Never);
     }
 
     [Fact]
@@ -305,6 +310,7 @@ public class PaymentTimeoutWorkerTests : IDisposable
         var orderId = Guid.NewGuid();
         var auctionId = Guid.NewGuid();
         var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
 
         var expiredPaidOrder = new AuctionOrder
         {
@@ -312,7 +318,7 @@ public class PaymentTimeoutWorkerTests : IDisposable
             OrderNo = "AO-20261111-00002",
             AuctionId = auctionId,
             BuyerId = buyerId,
-            SellerId = Guid.NewGuid(),
+            SellerId = sellerId,
             WinningBidId = Guid.NewGuid(),
             ProductId = Guid.NewGuid(),
             ProductNameSnapshot = "Rare Antique",
@@ -339,6 +345,7 @@ public class PaymentTimeoutWorkerTests : IDisposable
                 r.OrderId == orderId &&
                 r.WinnerId == buyerId &&
                 r.Status == "SellerExpired" &&
+                r.OrderSource == "WINNER" &&
                 r.EventId.HasValue), default))
             .ReturnsAsync(true);
 
@@ -367,5 +374,13 @@ public class PaymentTimeoutWorkerTests : IDisposable
 
         _mockWalletClient.Verify(w => w.RefundOrderPaymentAsync(orderId, buyerId.ToString(), 1050000m, It.IsAny<string>(), null, default), Times.Once);
         _mockAuctionClient.Verify(a => a.NotifyPaymentStatusAsync(auctionId, It.IsAny<AuctionPaymentStatusCallbackRequest>(), default), Times.Once);
+        _mockUserClient.Verify(u => u.CreatePenaltyAsync(It.Is<UserPenaltyRequest>(p =>
+            p.UserId == sellerId &&
+            p.TargetRole == "Seller" &&
+            p.ViolationType == "SellerResponseTimeout" &&
+            p.ReferenceType == "AuctionOrder" &&
+            p.ReferenceId == "AO-20261111-00002" &&
+            p.CustomScoreDeduction == 5 &&
+            p.PolicyClauseCode == "POLICY-AUC-SELLER-TIMEOUT"), default), Times.Once);
     }
 }

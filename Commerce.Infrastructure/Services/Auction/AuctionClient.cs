@@ -42,6 +42,7 @@ public sealed class AuctionClient : IAuctionClient
         CancellationToken cancellationToken = default)
     {
         var effectiveEventId = request.EventId ?? Guid.NewGuid();
+        var effectiveOccurredAt = request.OccurredAt ?? DateTimeOffset.UtcNow;
         var uri = $"api/v1/auctions/{auctionId}/settlement/payment-status";
 
         var payload = new
@@ -51,7 +52,9 @@ public sealed class AuctionClient : IAuctionClient
             status = request.Status,
             amount = request.Amount,
             paidAt = request.PaidAt,
-            eventId = effectiveEventId
+            occurredAt = effectiveOccurredAt,
+            eventId = effectiveEventId,
+            orderSource = request.OrderSource
         };
 
         try

@@ -36,6 +36,11 @@ public class SubOrder : BaseEntity<Guid>
     public DateTimeOffset? DeliveredAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }
+    public string? CarrierCode { get; set; }
+    public string? TrackingCode { get; set; }
+    public string? LabelPrintUrl { get; set; }
+    public DateTimeOffset? EstimatedDeliveryAt { get; set; }
+    public bool ShipmentPendingCreation { get; set; } = false;
     public long RowVersion { get; set; }
 
     // Navigation

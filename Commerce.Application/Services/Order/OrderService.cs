@@ -73,6 +73,13 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("VAL_INVALID_INPUT", "Shipping address fields cannot be empty.");
         }
 
+        if (!request.ShippingAddress.GhnDistrictId.HasValue ||
+            request.ShippingAddress.GhnDistrictId.Value <= 0 ||
+            string.IsNullOrWhiteSpace(request.ShippingAddress.GhnWardCode))
+        {
+            throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
+        }
+
         var cart = await _dbContext.Carts
             .Include(c => c.Items)
             .FirstOrDefaultAsync(c => c.BuyerId == buyerId && !c.IsDeleted, ct)
@@ -109,22 +116,29 @@ public sealed class OrderService : IOrderService
             decimal systemDiscount = 0m;
             decimal discountAmount = productDiscount + shopDiscount + systemDiscount;
 
-            // Tính cước GHN động theo từng Shop qua Fulfillment Service (CHK-01)
+            // Tính cước GHN động theo từng Shop qua Fulfillment Service (CHK-01 / T027)
             decimal shippingFeeAmount = 30000m;
+            var quoteItems = shopItems.Select(i => new ShippingQuoteItem(
+                i.SkuId,
+                i.Quantity,
+                Math.Max(100, i.Quantity * 200)
+            )).ToList();
+
+            var ghnDistrictId = request.ShippingAddress.GhnDistrictId.Value;
+            var ghnWardCode = request.ShippingAddress.GhnWardCode;
+
             try
             {
-                var quoteItems = shopItems.Select(i => new ShippingQuoteItem(i.SkuId, i.Quantity, 200)).ToList();
-                var ghnDistrictId = request.ShippingAddress.GhnDistrictId ?? 0;
-                var ghnWardCode = request.ShippingAddress.GhnWardCode ?? "";
-                if (ghnDistrictId > 0 && !string.IsNullOrEmpty(ghnWardCode))
-                {
-                    var shippingQuoteRequest = new ShopShippingQuoteRequest(sellerId, ghnDistrictId, ghnWardCode, quoteItems);
-                    shippingFeeAmount = await _fulfillmentClient.CalculateShopShippingFeeAsync(shippingQuoteRequest, ct);
-                }
+                var shippingQuoteRequest = new ShopShippingQuoteRequest(sellerId, ghnDistrictId, ghnWardCode, quoteItems);
+                shippingFeeAmount = await _fulfillmentClient.CalculateShopShippingFeeAsync(shippingQuoteRequest, ct);
             }
-            catch
+            catch (CommerceDomainException ex) when (ex.StatusCode == 400)
             {
-                // Fallback to default shipping fee 30,000 VND
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to calculate dynamic carrier shipping fee for Shop '{SellerId}'. Falling back to default rate.", sellerId);
                 shippingFeeAmount = 30000m;
             }
 
@@ -964,19 +978,101 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("INVALID_STATUS", "Sub-order cannot be accepted in its current status.");
         }
 
+        var previousStatus = so.Status;
         so.Status = SubOrderStatus.Confirmed;
         so.SellerAcceptedAt = DateTimeOffset.UtcNow;
+        so.UpdatedAt = DateTimeOffset.UtcNow;
 
-        await _dbContext.SaveChangesAsync(ct);
+        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = so.Id,
+            FromStatus = previousStatus,
+            ToStatus = SubOrderStatus.Confirmed,
+            ActorRole = OrderActorRole.Seller,
+            Reason = !string.IsNullOrWhiteSpace(request.Note) ? request.Note : "Seller accepted sub-order for fulfillment."
+        });
 
-        // Tạo vận đơn GHN tự động qua Fulfillment Service (ORD-04)
+        // Tạo vận đơn GHN tự động qua Fulfillment Service (ORD-04 / T009)
         try
         {
-            await _fulfillmentClient.CreateShipmentAsync(so.Id, ct);
+            var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(so.Id, ct);
+            if (shipmentResult != null && !string.IsNullOrWhiteSpace(shipmentResult.TrackingCode))
+            {
+                so.TrackingCode = shipmentResult.TrackingCode;
+                so.CarrierCode = !string.IsNullOrWhiteSpace(shipmentResult.CarrierCode) ? shipmentResult.CarrierCode : "GHN";
+                so.LabelPrintUrl = shipmentResult.LabelPrintUrl;
+                so.ShipmentPendingCreation = false;
+            }
+            else
+            {
+                so.ShipmentPendingCreation = true;
+            }
         }
-        catch
+        catch (Exception ex)
         {
             // Tránh ngắt quãng luồng xác nhận nếu service giao vận tạm bận
+            _logger.LogWarning(ex, "Transient error creating carrier shipment for SubOrder '{SubOrderId}'. Flagging for retry.", so.Id);
+            so.ShipmentPendingCreation = true;
+        }
+
+        await _dbContext.SaveChangesAsync(ct);
+    }
+
+    public async Task<RetryShipmentResponse> RetryCreateShipmentAsync(Guid sellerId, Guid subOrderId, CancellationToken ct = default)
+    {
+        var so = await _dbContext.SubOrders
+            .FirstOrDefaultAsync(s => s.Id == subOrderId, ct)
+            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
+
+        if (so.SellerId != sellerId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to retry shipment creation for this sub-order.", 403);
+        }
+
+        if (so.Status != SubOrderStatus.Confirmed)
+        {
+            throw new CommerceDomainException("INVALID_STATUS", "Only confirmed sub-orders can have carrier shipments created.", 400);
+        }
+
+        if (!string.IsNullOrWhiteSpace(so.TrackingCode))
+        {
+            throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this sub-order.", 400);
+        }
+
+        try
+        {
+            var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(so.Id, ct);
+            if (shipmentResult == null || string.IsNullOrWhiteSpace(shipmentResult.TrackingCode))
+            {
+                throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Carrier logistics service returned an empty shipment response.", 503);
+            }
+
+            so.TrackingCode = shipmentResult.TrackingCode;
+            so.CarrierCode = !string.IsNullOrWhiteSpace(shipmentResult.CarrierCode) ? shipmentResult.CarrierCode : "GHN";
+            so.LabelPrintUrl = shipmentResult.LabelPrintUrl;
+            so.ShipmentPendingCreation = false;
+            so.UpdatedAt = DateTimeOffset.UtcNow;
+
+            await _dbContext.SaveChangesAsync(ct);
+
+            return new RetryShipmentResponse(
+                so.Id,
+                so.SubOrderNo,
+                so.TrackingCode,
+                so.CarrierCode,
+                so.LabelPrintUrl ?? "",
+                DateTimeOffset.UtcNow
+            );
+        }
+        catch (CommerceDomainException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to retry carrier shipment creation for SubOrder '{SubOrderId}'.", subOrderId);
+            throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Carrier logistics service temporarily unreachable.", 503);
         }
     }
 
@@ -1369,10 +1465,11 @@ public sealed class OrderService : IOrderService
             so.SellerId,
             $"Shop {so.SellerId.ToString()[..8]}",
             so.Status.ToString(),
-            "GHN",
-            so.Status >= SubOrderStatus.Shipping ? $"GHN-{so.SubOrderNo}" : null,
+            so.CarrierCode ?? "GHN",
+            so.TrackingCode,
             so.ShippedAt,
-            so.DeliveredAt
+            so.DeliveredAt,
+            so.LabelPrintUrl
         )).ToList();
 
         return new ShipmentTrackingResponse(
@@ -1380,6 +1477,107 @@ public sealed class OrderService : IOrderService
             $"ORD-{order.Id.ToString()[..8].ToUpperInvariant()}",
             shipments
         );
+    }
+
+    public async Task<ShipmentTimelineResponse> GetShipmentTimelineAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default)
+    {
+        var so = await _dbContext.SubOrders
+            .AsNoTracking()
+            .Include(s => s.StatusHistories)
+            .FirstOrDefaultAsync(s => s.Id == subOrderId, ct);
+
+        if (so != null)
+        {
+            if (so.BuyerId != currentUserId && so.SellerId != currentUserId)
+            {
+                throw new CommerceDomainException("FORBIDDEN", "You do not have permission to view this shipment timeline.", 403);
+            }
+
+            var timelineEvents = MapHistoriesToTimeline(so.StatusHistories, so.Status, so.CreatedAt);
+
+            return new ShipmentTimelineResponse(
+                so.Id,
+                so.SubOrderNo,
+                so.OrderId,
+                so.CarrierCode ?? "GHN",
+                FormatCarrierName(so.CarrierCode),
+                so.TrackingCode,
+                so.LabelPrintUrl,
+                so.Status.ToString(),
+                so.EstimatedDeliveryAt,
+                so.ShippingAddress,
+                timelineEvents
+            );
+        }
+
+        var ao = await _dbContext.AuctionOrders
+            .AsNoTracking()
+            .Include(a => a.StatusHistories)
+            .FirstOrDefaultAsync(a => a.Id == subOrderId, ct);
+
+        if (ao != null)
+        {
+            if (ao.BuyerId != currentUserId && ao.SellerId != currentUserId)
+            {
+                throw new CommerceDomainException("FORBIDDEN", "You do not have permission to view this shipment timeline.", 403);
+            }
+
+            var timelineEvents = MapHistoriesToTimeline(ao.StatusHistories, ao.Status, ao.CreatedAt);
+            ShippingAddressSnapshot addressSnapshot;
+            if (!string.IsNullOrWhiteSpace(ao.ShippingAddress))
+            {
+                try
+                {
+                    addressSnapshot = JsonSerializer.Deserialize<ShippingAddressSnapshot>(ao.ShippingAddress, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                        ?? new ShippingAddressSnapshot(
+                            receiverName: "Auction Winner",
+                            contactPhone: ao.ContactPhone ?? "",
+                            street: "",
+                            ward: "",
+                            district: "",
+                            province: ""
+                        );
+                }
+                catch
+                {
+                    addressSnapshot = new ShippingAddressSnapshot(
+                        receiverName: "Auction Winner",
+                        contactPhone: ao.ContactPhone ?? "",
+                        street: ao.ShippingAddress,
+                        ward: "",
+                        district: "",
+                        province: ""
+                    );
+                }
+            }
+            else
+            {
+                addressSnapshot = new ShippingAddressSnapshot(
+                    receiverName: "Auction Winner",
+                    contactPhone: ao.ContactPhone ?? "",
+                    street: "",
+                    ward: "",
+                    district: "",
+                    province: ""
+                );
+            }
+
+            return new ShipmentTimelineResponse(
+                ao.Id,
+                ao.OrderNo,
+                ao.Id,
+                ao.CarrierCode ?? "GHN",
+                FormatCarrierName(ao.CarrierCode),
+                ao.TrackingCode,
+                ao.LabelPrintUrl,
+                ao.Status.ToString(),
+                ao.EstimatedDeliveryAt,
+                addressSnapshot,
+                timelineEvents
+            );
+        }
+
+        throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
     }
 
     public async Task RefundSubOrderAsync(Guid currentUserId, Guid subOrderId, SubOrderRefundRequest request, CancellationToken ct = default)
@@ -1412,61 +1610,159 @@ public sealed class OrderService : IOrderService
         await _dbContext.SaveChangesAsync(ct);
     }
 
-    public async Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, string status, DateTimeOffset? deliveredAt, CancellationToken ct = default)
+    public Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, string status, DateTimeOffset? deliveredAt, CancellationToken ct = default)
+    {
+        return UpdateSubOrderDeliveryStatusAsync(subOrderId, new UpdateDeliveryStatusRequest(status, deliveredAt), ct);
+    }
+
+    public async Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, UpdateDeliveryStatusRequest request, CancellationToken ct = default)
     {
         var so = await _dbContext.SubOrders
+            .Include(s => s.Items)
+            .Include(s => s.StatusHistories)
             .FirstOrDefaultAsync(s => s.Id == subOrderId, ct);
 
         if (so == null)
         {
             var auctionOrder = await _dbContext.AuctionOrders
+                .Include(a => a.StatusHistories)
                 .FirstOrDefaultAsync(a => a.Id == subOrderId, ct);
 
             if (auctionOrder != null)
             {
-                await UpdateAuctionOrderDeliveryStatusAsync(auctionOrder, status, deliveredAt, ct);
+                await UpdateAuctionOrderDeliveryStatusAsync(auctionOrder, request, ct);
                 return;
             }
 
             throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
         }
 
-        var timestamp = deliveredAt ?? DateTimeOffset.UtcNow;
+        var status = request.Status?.Trim() ?? "";
+        var timestamp = request.DeliveredAt ?? DateTimeOffset.UtcNow;
+        var previousStatus = so.Status;
+
+        if (!string.IsNullOrWhiteSpace(request.CarrierCode)) so.CarrierCode = request.CarrierCode;
+        if (!string.IsNullOrWhiteSpace(request.TrackingCode)) so.TrackingCode = request.TrackingCode;
+
+        // Idempotency check: duplicate event within 2 seconds
+        var isDuplicate = so.StatusHistories.Any(h =>
+            h.Reason != null && h.Reason.StartsWith($"[{status}]") &&
+            Math.Abs((h.CreatedAt - timestamp).TotalSeconds) < 2);
+
+        if (isDuplicate)
+        {
+            _logger.LogInformation("[OrderService] Ignoring duplicate delivery status '{Status}' for SubOrder '{SubOrderId}'.", status, subOrderId);
+            return;
+        }
+
+        string formattedReason = FormatHistoryReason(status, request.Note, request.Location);
 
         if (string.Equals(status, "ReadyToPick", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(status, "Picking", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(status, "Packed", StringComparison.OrdinalIgnoreCase))
         {
-            // Preparation phases: Idempotent 200 OK without altering confirmed status
+            // Preparation phases: Idempotent without altering confirmed status
             so.UpdatedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = previousStatus,
+                ToStatus = previousStatus,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
         }
         else if (string.Equals(status, "HandedOver", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(status, "InTransit", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "OutForDelivery", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(status, "Shipped", StringComparison.OrdinalIgnoreCase))
         {
             so.Status = SubOrderStatus.Shipped;
-            so.ShippedAt = timestamp;
+            so.ShippedAt ??= timestamp;
             so.UpdatedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Shipped,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
         }
         else if (string.Equals(status, "Delivered", StringComparison.OrdinalIgnoreCase))
         {
             so.Status = SubOrderStatus.Delivered;
             so.DeliveredAt = timestamp;
             so.UpdatedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Delivered,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
+
+            // Master Order synchronization (T022 [US3])
+            var parentOrder = await _dbContext.Orders
+                .Include(o => o.SubOrders)
+                .FirstOrDefaultAsync(o => o.Id == so.OrderId, ct);
+
+            if (parentOrder != null)
+            {
+                bool allDeliveredOrCompleted = parentOrder.SubOrders.All(s =>
+                    (s.Id == so.Id ? SubOrderStatus.Delivered : s.Status) == SubOrderStatus.Delivered ||
+                    (s.Id == so.Id ? SubOrderStatus.Delivered : s.Status) == SubOrderStatus.Completed);
+
+                if (allDeliveredOrCompleted && parentOrder.Status != OrderStatus.Completed)
+                {
+                    parentOrder.Status = OrderStatus.Delivered;
+                    parentOrder.UpdatedAt = timestamp;
+                }
+            }
         }
-        else if (string.Equals(status, "Cancelled", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(status, "DeliveryAttemptFailed", StringComparison.OrdinalIgnoreCase))
         {
+            // T024 [US4]: Retain Shipped status, log history with reason/location
+            so.UpdatedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Shipped,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
+        }
+        else if (string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase))
+        {
+            // T025 [US4]: Transition to Cancelled, refund wallet if paid, release stock with reason "PackageReturned"
             so.Status = SubOrderStatus.Cancelled;
             so.CancelledAt = timestamp;
             so.UpdatedAt = timestamp;
-        }
-        else if (string.Equals(status, "DeliveryFailed", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase))
-        {
-            var isReturned = string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase);
-            so.Status = SubOrderStatus.Cancelled;
-            so.CancelledAt = timestamp;
-            so.UpdatedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Cancelled,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
 
             var cancellationId = Guid.NewGuid();
             var cancellation = new OrderCancellation
@@ -1475,7 +1771,115 @@ public sealed class OrderService : IOrderService
                 SubOrderId = so.Id,
                 CancelledBy = null,
                 ActorRole = OrderActorRole.System,
-                ReasonCode = isReturned ? CancellationReasonCode.PackageReturned : CancellationReasonCode.DeliveryFailed,
+                ReasonCode = CancellationReasonCode.PackageReturned,
+                ReasonNote = request.Note ?? "Package returned to sender warehouse by logistics carrier.",
+                WasPaid = so.PaidAt.HasValue,
+                InventoryReleased = true
+            };
+            _dbContext.OrderCancellations.Add(cancellation);
+
+            if (so.PaidAt.HasValue)
+            {
+                var refund = new OrderRefund
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = so.Id,
+                    OrderId = so.OrderId,
+                    CancellationId = cancellationId,
+                    RefundType = RefundType.Full,
+                    Amount = so.TotalAmount,
+                    Status = RefundStatus.Requested,
+                    ReasonCode = "PACKAGE_RETURNED",
+                    ReasonNote = request.Note ?? "Automated refund created due to package returned to sender.",
+                    ActorRole = OrderActorRole.System,
+                    RequestedBy = null,
+                    RequestedAt = timestamp
+                };
+
+                try
+                {
+                    var refundSucceeded = await _walletClient.RefundSubOrderPaymentAsync(
+                        so.Id,
+                        so.BuyerId.ToString(),
+                        so.TotalAmount,
+                        request.Note ?? "Refund for returned package.",
+                        idempotencyKey: $"refund-delivery-returned-{so.Id}",
+                        cancellationToken: ct);
+
+                    if (refundSucceeded)
+                    {
+                        refund.Status = RefundStatus.Completed;
+                        refund.CompletedAt = DateTimeOffset.UtcNow;
+                        _logger.LogInformation("SubOrder '{SubOrderId}' refund on return succeeded via WalletClient. Amount: {Amount}", so.Id, so.TotalAmount);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("SubOrder '{SubOrderId}' refund on return returned false via WalletClient.", so.Id);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to automatically refund wallet balance for returned SubOrder '{SubOrderId}'.", so.Id);
+                }
+
+                _dbContext.OrderRefunds.Add(refund);
+            }
+
+            try
+            {
+                var itemsToRelease = so.Items
+                    .Select(i => new StockReservationItem(i.SkuId, i.Quantity, so.SellerId))
+                    .ToList();
+                await _fulfillmentClient.ReleaseSubOrderStockAsync(so.OrderId, itemsToRelease, "PackageReturned", ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to release warehouse stock for returned SubOrder '{SubOrderId}'.", so.Id);
+            }
+
+            // Sync master order if all siblings cancelled
+            var parentOrder = await _dbContext.Orders
+                .Include(o => o.SubOrders)
+                .FirstOrDefaultAsync(o => o.Id == so.OrderId, ct);
+
+            if (parentOrder != null)
+            {
+                bool allCancelled = parentOrder.SubOrders.All(s =>
+                    (s.Id == so.Id ? SubOrderStatus.Cancelled : s.Status) == SubOrderStatus.Cancelled);
+
+                if (allCancelled)
+                {
+                    parentOrder.Status = OrderStatus.Cancelled;
+                    parentOrder.UpdatedAt = timestamp;
+                }
+            }
+        }
+        else if (string.Equals(status, "DeliveryFailed", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "Cancelled", StringComparison.OrdinalIgnoreCase))
+        {
+            so.Status = SubOrderStatus.Cancelled;
+            so.CancelledAt = timestamp;
+            so.UpdatedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Cancelled,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
+
+            var cancellationId = Guid.NewGuid();
+            var cancellation = new OrderCancellation
+            {
+                Id = cancellationId,
+                SubOrderId = so.Id,
+                CancelledBy = null,
+                ActorRole = OrderActorRole.System,
+                ReasonCode = CancellationReasonCode.DeliveryFailed,
                 ReasonNote = $"Shipment delivery carrier status: {status}.",
                 WasPaid = so.PaidAt.HasValue,
                 InventoryReleased = false
@@ -1493,7 +1897,7 @@ public sealed class OrderService : IOrderService
                     RefundType = RefundType.Full,
                     Amount = so.TotalAmount,
                     Status = RefundStatus.Requested,
-                    ReasonCode = isReturned ? "PACKAGE_RETURNED" : "DELIVERY_FAILED",
+                    ReasonCode = "DELIVERY_FAILED",
                     ReasonNote = $"Automated refund request created due to delivery carrier status: {status}.",
                     ActorRole = OrderActorRole.System,
                     RequestedBy = null,
@@ -1511,23 +1915,39 @@ public sealed class OrderService : IOrderService
         _logger.LogInformation("[OrderService] SubOrder '{SubOrderId}' delivery status updated to '{Status}'.", subOrderId, so.Status);
     }
 
-    private async Task UpdateAuctionOrderDeliveryStatusAsync(AuctionOrder auctionOrder, string status, DateTimeOffset? deliveredAt, CancellationToken ct)
+    private async Task UpdateAuctionOrderDeliveryStatusAsync(AuctionOrder auctionOrder, UpdateDeliveryStatusRequest request, CancellationToken ct)
     {
-        var timestamp = deliveredAt ?? DateTimeOffset.UtcNow;
+        var status = request.Status?.Trim() ?? "";
+        var timestamp = request.DeliveredAt ?? DateTimeOffset.UtcNow;
         var previousStatus = auctionOrder.Status;
+
+        if (!string.IsNullOrWhiteSpace(request.CarrierCode)) auctionOrder.CarrierCode = request.CarrierCode;
+        if (!string.IsNullOrWhiteSpace(request.TrackingCode)) auctionOrder.TrackingCode = request.TrackingCode;
+
+        string formattedReason = FormatHistoryReason(status, request.Note, request.Location);
 
         if (string.Equals(status, "ReadyToPick", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(status, "Picking", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(status, "Packed", StringComparison.OrdinalIgnoreCase))
         {
-            // Preparation phases: Idempotent without altering status
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                AuctionOrderId = auctionOrder.Id,
+                FromStatus = previousStatus,
+                ToStatus = previousStatus,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
         }
         else if (string.Equals(status, "HandedOver", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(status, "InTransit", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "OutForDelivery", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(status, "Shipped", StringComparison.OrdinalIgnoreCase))
         {
             auctionOrder.Status = SubOrderStatus.Shipped;
-            auctionOrder.ShippedAt = timestamp;
+            auctionOrder.ShippedAt ??= timestamp;
 
             _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
             {
@@ -1536,7 +1956,8 @@ public sealed class OrderService : IOrderService
                 FromStatus = previousStatus,
                 ToStatus = SubOrderStatus.Shipped,
                 ActorRole = OrderActorRole.System,
-                Reason = $"Carrier delivery status update: {status}."
+                Reason = formattedReason,
+                CreatedAt = timestamp
             });
         }
         else if (string.Equals(status, "Delivered", StringComparison.OrdinalIgnoreCase))
@@ -1551,7 +1972,21 @@ public sealed class OrderService : IOrderService
                 FromStatus = previousStatus,
                 ToStatus = SubOrderStatus.Delivered,
                 ActorRole = OrderActorRole.System,
-                Reason = $"Carrier delivery status update: {status}."
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
+        }
+        else if (string.Equals(status, "DeliveryAttemptFailed", StringComparison.OrdinalIgnoreCase))
+        {
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                AuctionOrderId = auctionOrder.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Shipped,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
             });
         }
         else if (string.Equals(status, "Cancelled", StringComparison.OrdinalIgnoreCase) ||
@@ -1604,7 +2039,8 @@ public sealed class OrderService : IOrderService
                 FromStatus = previousStatus,
                 ToStatus = SubOrderStatus.Cancelled,
                 ActorRole = OrderActorRole.System,
-                Reason = $"Carrier delivery status update: {status}."
+                Reason = formattedReason,
+                CreatedAt = timestamp
             });
         }
         else
@@ -1614,6 +2050,130 @@ public sealed class OrderService : IOrderService
 
         await _dbContext.SaveChangesAsync(ct);
         _logger.LogInformation("[OrderService] AuctionOrder '{AuctionOrderId}' delivery status updated to '{Status}'.", auctionOrder.Id, auctionOrder.Status);
+    }
+
+    private static List<TimelineEventDto> MapHistoriesToTimeline(IEnumerable<OrderStatusHistory> histories, SubOrderStatus currentStatus, DateTimeOffset fallbackCreatedAt)
+    {
+        var sorted = histories.OrderBy(h => h.CreatedAt).ToList();
+        var result = new List<TimelineEventDto>();
+
+        foreach (var h in sorted)
+        {
+            string statusStr;
+            string description;
+            string? location = null;
+
+            if (!string.IsNullOrWhiteSpace(h.Reason) && h.Reason.StartsWith("[") && h.Reason.Contains("]"))
+            {
+                var closeIndex = h.Reason.IndexOf(']');
+                statusStr = h.Reason.Substring(1, closeIndex - 1).Trim();
+                var remainder = h.Reason.Substring(closeIndex + 1).Trim();
+
+                var locIndex = remainder.IndexOf(" | Location: ", StringComparison.OrdinalIgnoreCase);
+                if (locIndex >= 0)
+                {
+                    description = remainder.Substring(0, locIndex).Trim();
+                    location = remainder.Substring(locIndex + 13).Trim();
+                }
+                else
+                {
+                    description = remainder;
+                }
+            }
+            else
+            {
+                statusStr = h.ToStatus.ToString();
+                description = h.Reason ?? GetDefaultDescription(statusStr);
+            }
+
+            if (string.IsNullOrWhiteSpace(description))
+            {
+                description = GetDefaultDescription(statusStr);
+            }
+
+            result.Add(new TimelineEventDto(
+                statusStr,
+                GetEventTitle(statusStr),
+                description,
+                h.CreatedAt,
+                location
+            ));
+        }
+
+        if (result.Count == 0)
+        {
+            var statusName = currentStatus.ToString();
+            result.Add(new TimelineEventDto(
+                statusName,
+                GetEventTitle(statusName),
+                GetDefaultDescription(statusName),
+                fallbackCreatedAt,
+                null
+            ));
+        }
+
+        return result;
+    }
+
+    private static string GetEventTitle(string status) => status switch
+    {
+        "PendingPayment" => "Order Placed",
+        "Paid" => "Payment Received",
+        "Confirmed" => "Order Confirmed",
+        "ReadyToPick" => "Ready for Pickup",
+        "Picking" => "Goods Being Picked",
+        "Packed" => "Package Packed",
+        "HandedOver" => "Handed Over to Carrier",
+        "Shipped" => "Dispatched",
+        "InTransit" => "In Transit",
+        "OutForDelivery" => "Out for Delivery",
+        "DeliveryAttemptFailed" => "Delivery Attempt Failed",
+        "Delivered" => "Delivered Successfully",
+        "Returned" => "Package Returned to Sender",
+        "DeliveryFailed" => "Delivery Failed",
+        "Cancelled" => "Order Cancelled",
+        "Completed" => "Order Completed",
+        _ => status
+    };
+
+    private static string GetDefaultDescription(string status) => status switch
+    {
+        "PendingPayment" => "Awaiting payment confirmation",
+        "Paid" => "Payment successfully verified",
+        "Confirmed" => "Seller confirmed and is preparing order",
+        "ReadyToPick" => "Order is packed and ready for carrier pickup",
+        "Picking" => "Warehouse staff is picking products",
+        "Packed" => "Order has been packaged and ready for handover",
+        "HandedOver" => "Package handed over to logistics carrier",
+        "Shipped" => "Package is in transit with carrier",
+        "InTransit" => "Package in transit to delivery station",
+        "OutForDelivery" => "Package is out for delivery with courier",
+        "Delivered" => "Package successfully delivered to recipient",
+        "DeliveryAttemptFailed" => "Delivery attempt failed. Courier will reschedule",
+        "Returned" => "Package returned to seller warehouse",
+        "DeliveryFailed" => "Delivery failed by logistics carrier",
+        "Cancelled" => "Order was cancelled",
+        "Completed" => "Order completed and escrow settled",
+        _ => $"Order status updated to {status}"
+    };
+
+    private static string FormatCarrierName(string? carrierCode) => carrierCode?.ToUpperInvariant() switch
+    {
+        "GHN" => "Giao Hang Nhanh",
+        "GHTK" => "Giao Hang Tiet Kiem",
+        "VIETTEL" or "VTPOST" => "Viettel Post",
+        "VNPOST" => "VNPost",
+        _ => carrierCode ?? "Standard Delivery"
+    };
+
+    private static string FormatHistoryReason(string status, string? note, string? location)
+    {
+        var desc = !string.IsNullOrWhiteSpace(note) ? note : GetDefaultDescription(status);
+        if (!string.IsNullOrWhiteSpace(location))
+        {
+            return $"[{status}] {desc} | Location: {location}";
+        }
+        return $"[{status}] {desc}";
     }
 
     public async Task<OrderDto> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)

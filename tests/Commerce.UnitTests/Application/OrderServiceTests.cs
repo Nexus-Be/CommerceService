@@ -14,6 +14,7 @@ using Commerce.Application.Services.Order;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
 using Commerce.Domain.Exceptions;
+using Commerce.Domain.ValueObjects;
 using Commerce.UnitTests.Common;
 using FluentAssertions;
 using Moq;
@@ -772,7 +773,7 @@ public class OrderServiceTests
         cancellation.Should().NotBeNull();
         cancellation!.ReasonCode.Should().Be(expectedReasonCode);
         cancellation.WasPaid.Should().BeTrue();
-        cancellation.InventoryReleased.Should().BeFalse();
+        cancellation.InventoryReleased.Should().Be(webhookStatus == "Returned");
 
         // Assert: OrderRefund record
         var refund = await dbContext.OrderRefunds.FirstOrDefaultAsync(r => r.SubOrderId == subOrderId);
@@ -958,5 +959,204 @@ public class OrderServiceTests
         var updated = await dbContext.AuctionOrders.FirstAsync(a => a.Id == auctionOrderId);
         updated.Status.Should().Be(SubOrderStatus.Delivered);
         updated.DeliveredAt.Should().BeCloseTo(deliveryTime, TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task SellerAcceptSubOrderAsync_ShouldPersistTrackingCodeCarrierCodeAndLabelPrintUrl()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+
+        var order = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 250000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+
+        var subOrder = new SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-20261112-0001",
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            Status = SubOrderStatus.Paid,
+            PaymentMethod = PaymentMethod.Wallet,
+            ShippingAddress = new ShippingAddressSnapshot("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 220000m,
+            ShippingFeeAmount = 30000m,
+            TotalAmount = 250000m,
+            SellerReceiveAmount = 220000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            PaidAt = DateTimeOffset.UtcNow
+        };
+
+        dbContext.Orders.Add(order);
+        dbContext.SubOrders.Add(subOrder);
+        await dbContext.SaveChangesAsync();
+
+        _mockFulfillmentClient
+            .Setup(f => f.CreateShipmentAsync(subOrderId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ShipmentCreationResult("GHN-SGN-1029384", "GHN", "https://api.ghn.vn/print/label-1029384.pdf"));
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var request = new SellerAcceptOrderRequest(subOrderId, "Ready for dispatch");
+
+        // Act
+        await service.SellerAcceptSubOrderAsync(sellerId, orderId, request, CancellationToken.None);
+
+        // Assert
+        var updated = await dbContext.SubOrders.Include(s => s.StatusHistories).FirstAsync(s => s.Id == subOrderId);
+        updated.Status.Should().Be(SubOrderStatus.Confirmed);
+        updated.CarrierCode.Should().Be("GHN");
+        updated.TrackingCode.Should().Be("GHN-SGN-1029384");
+        updated.LabelPrintUrl.Should().Be("https://api.ghn.vn/print/label-1029384.pdf");
+        updated.ShipmentPendingCreation.Should().BeFalse();
+        updated.SellerAcceptedAt.Should().NotBeNull();
+
+        var history = updated.StatusHistories.FirstOrDefault(h => h.ToStatus == SubOrderStatus.Confirmed);
+        history.Should().NotBeNull();
+        history!.FromStatus.Should().Be(SubOrderStatus.Paid);
+        history.ActorRole.Should().Be(OrderActorRole.Seller);
+    }
+
+    [Fact]
+    public async Task GetShipmentTrackingAsync_ShouldReturnRealTrackingCode_WithoutSyntheticFormatting()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+
+        var order = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 250000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+
+        var subOrder = new SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-20261112-9999",
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            Status = SubOrderStatus.Shipping,
+            PaymentMethod = PaymentMethod.Wallet,
+            ShippingAddress = new ShippingAddressSnapshot("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 220000m,
+            ShippingFeeAmount = 30000m,
+            TotalAmount = 250000m,
+            SellerReceiveAmount = 220000m,
+            CarrierCode = "GHN",
+            TrackingCode = "GHN-REAL-778899",
+            LabelPrintUrl = "https://label.com/778899",
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            PaidAt = DateTimeOffset.UtcNow,
+            ShippedAt = DateTimeOffset.UtcNow
+        };
+
+        dbContext.Orders.Add(order);
+        dbContext.SubOrders.Add(subOrder);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        // Act
+        var result = await service.GetShipmentTrackingAsync(buyerId, orderId, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Shipments.Should().HaveCount(1);
+        var shipment = result.Shipments.First();
+        shipment.TrackingCode.Should().Be("GHN-REAL-778899");
+        shipment.TrackingCode.Should().NotBe($"GHN-{subOrder.SubOrderNo}");
+        shipment.CarrierCode.Should().Be("GHN");
+        shipment.LabelPrintUrl.Should().Be("https://label.com/778899");
+    }
+
+    [Fact]
+    public async Task RetryCreateShipmentAsync_WhenPendingCreation_ShouldPersistRealShipment()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+
+        var subOrder = new SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-20261112-RETRY",
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            Status = SubOrderStatus.Confirmed,
+            PaymentMethod = PaymentMethod.Wallet,
+            ShippingAddress = new ShippingAddressSnapshot("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 220000m,
+            ShippingFeeAmount = 30000m,
+            TotalAmount = 250000m,
+            SellerReceiveAmount = 220000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            ShipmentPendingCreation = true,
+            TrackingCode = null
+        };
+
+        dbContext.SubOrders.Add(subOrder);
+        await dbContext.SaveChangesAsync();
+
+        _mockFulfillmentClient
+            .Setup(f => f.CreateShipmentAsync(subOrderId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ShipmentCreationResult("GHN-RETRY-SUCCESS-1", "GHN", "https://label.pdf/retry"));
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        // Act
+        var response = await service.RetryCreateShipmentAsync(sellerId, subOrderId, CancellationToken.None);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.TrackingCode.Should().Be("GHN-RETRY-SUCCESS-1");
+        response.CarrierCode.Should().Be("GHN");
+
+        var updated = await dbContext.SubOrders.FirstAsync(s => s.Id == subOrderId);
+        updated.TrackingCode.Should().Be("GHN-RETRY-SUCCESS-1");
+        updated.ShipmentPendingCreation.Should().BeFalse();
     }
 }

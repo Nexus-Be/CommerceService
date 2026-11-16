@@ -96,7 +96,7 @@ public class OrdersControllerDeliveryCallbackTests
         var request = new UpdateDeliveryStatusRequest("Delivered", deliveryTime);
 
         _mockOrderService
-            .Setup(s => s.UpdateSubOrderDeliveryStatusAsync(subOrderId, "Delivered", deliveryTime, It.IsAny<CancellationToken>()))
+            .Setup(s => s.UpdateSubOrderDeliveryStatusAsync(subOrderId, request, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Act
@@ -107,7 +107,7 @@ public class OrdersControllerDeliveryCallbackTests
         okResult.StatusCode.Should().Be(StatusCodes.Status200OK);
 
         _mockOrderService.Verify(
-            s => s.UpdateSubOrderDeliveryStatusAsync(subOrderId, "Delivered", deliveryTime, It.IsAny<CancellationToken>()),
+            s => s.UpdateSubOrderDeliveryStatusAsync(subOrderId, request, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 }

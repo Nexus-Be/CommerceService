@@ -1,0 +1,338 @@
+openapi: 3.0.3
+info:
+  title: Commerce Service - Auction Deposit Ingestion & Runner-Up Settlement Contracts
+  version: 1.2.0
+  description: Upgraded REST contracts incorporating deposit deduction, runner-up second chance, and orderSource callbacks.
+paths:
+  /api/v1/auction-orders/settlement:
+    post:
+      summary: Ingest auction settlement from Auction Service (Winner or Runner-Up)
+      operationId: IngestAuctionSettlement
+      parameters:
+        - in: header
+          name: X-Internal-Service-Key
+          schema:
+            type: string
+          required: false
+        - in: header
+          name: X-Caller-Service
+          schema:
+            type: string
+            example: auction-service
+          required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuctionSettlementRequest'
+      responses:
+        '201':
+          description: Auction order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionSettlementResponse'
+        '200':
+          description: Idempotent duplicate settlement request returned existing order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionSettlementResponse'
+        '400':
+          description: Bad request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Settlement conflict (e.g., active order exists for auction)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Monetary or business boundary violation (e.g. deposit exceeds winning amount)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auction-orders/{auctionOrderId}:
+    get:
+      summary: Get full auction order details with deposit and remaining breakdown
+      operationId: GetAuctionOrderDetail
+      parameters:
+        - in: path
+          name: auctionOrderId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Auction order details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionOrderDetailResponse'
+        '403':
+          description: Forbidden - caller is neither buyer nor seller
+        '404':
+          description: Auction order not found
+
+  /api/v1/auctions/{auctionId}/settlement/payment-status:
+    post:
+      summary: Outbound callback from Commerce to Auction Service reporting order status
+      operationId: OutboundAuctionPaymentStatusCallback
+      parameters:
+        - in: path
+          name: auctionId
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: X-Internal-Service-Key
+          schema:
+            type: string
+          required: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuctionPaymentStatusCallbackRequest'
+      responses:
+        '200':
+          description: Callback processed by Auction Service
+
+components:
+  schemas:
+    AuctionSettlementRequest:
+      type: object
+      required:
+        - auctionId
+        - winnerId
+        - sellerId
+        - winningBidId
+        - productId
+        - productName
+        - winningAmount
+        - paymentDeadlineAt
+      properties:
+        auctionId:
+          type: string
+          format: uuid
+        winnerId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        winningBidId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        skuId:
+          type: string
+          format: uuid
+          nullable: true
+        productName:
+          type: string
+        productImageUrl:
+          type: string
+          nullable: true
+        skuAttributes:
+          type: string
+          nullable: true
+        winningAmount:
+          type: number
+          format: decimal
+          minimum: 0.01
+        depositAmount:
+          type: number
+          format: decimal
+          default: 0
+          minimum: 0
+          description: Held deposit amount to deduct from winning price
+        source:
+          type: string
+          enum: [WINNER, SECOND_CHANCE]
+          default: WINNER
+          description: Settlement origin
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+        shippingAddress:
+          $ref: '#/components/schemas/ShippingAddressDto'
+          nullable: true
+        contactPhone:
+          type: string
+          nullable: true
+
+    AuctionSettlementResponse:
+      type: object
+      required:
+        - orderId
+        - orderNo
+        - auctionId
+        - winnerId
+        - status
+        - paymentDeadlineAt
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        orderNo:
+          type: string
+        auctionId:
+          type: string
+          format: uuid
+        winnerId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+
+    AuctionOrderDetailResponse:
+      type: object
+      required:
+        - id
+        - orderNo
+        - auctionId
+        - buyerId
+        - sellerId
+        - winningAmount
+        - depositAmount
+        - remainingAmount
+        - orderSource
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderNo:
+          type: string
+        auctionId:
+          type: string
+          format: uuid
+        buyerId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        winningAmount:
+          type: number
+          format: decimal
+        depositAmount:
+          type: number
+          format: decimal
+        remainingAmount:
+          type: number
+          format: decimal
+        orderSource:
+          type: string
+          enum: [Winner, SecondChance]
+        shippingFeeAmount:
+          type: number
+          format: decimal
+          nullable: true
+        totalAmount:
+          type: number
+          format: decimal
+          nullable: true
+        sellerReceiveAmount:
+          type: number
+          format: decimal
+        platformFeeAmount:
+          type: number
+          format: decimal
+        status:
+          type: string
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+
+    AuctionPaymentStatusCallbackRequest:
+      type: object
+      required:
+        - orderId
+        - winnerId
+        - status
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        winnerId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [Paid, Failed, Expired, Cancelled, SellerAccepted, SellerRejected, SellerExpired, PaymentTimedOut]
+        amount:
+          type: number
+          format: decimal
+          nullable: true
+        paidAt:
+          type: string
+          format: date-time
+          nullable: true
+        eventId:
+          type: string
+          format: uuid
+        orderSource:
+          type: string
+          enum: [WINNER, SECOND_CHANCE]
+          description: Origin of the order
+
+    ShippingAddressDto:
+      type: object
+      required:
+        - fullName
+        - phoneNumber
+        - addressLine
+        - provinceName
+        - districtName
+        - wardName
+        - ghnDistrictId
+        - ghnWardCode
+      properties:
+        fullName:
+          type: string
+        phoneNumber:
+          type: string
+        addressLine:
+          type: string
+        provinceName:
+          type: string
+        districtName:
+          type: string
+        wardName:
+          type: string
+        ghnDistrictId:
+          type: integer
+        ghnWardCode:
+          type: string
+
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+        detail:
+          type: string
+        traceId:
+          type: string
