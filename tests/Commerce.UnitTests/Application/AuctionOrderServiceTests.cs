@@ -437,6 +437,8 @@ public class AuctionOrderServiceTests
         var buyerId = Guid.NewGuid();
         var sellerId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
 
         var auctionOrder = new AuctionOrder
         {
@@ -446,7 +448,8 @@ public class AuctionOrderServiceTests
             BuyerId = buyerId,
             SellerId = sellerId,
             WinningBidId = Guid.NewGuid(),
-            ProductId = Guid.NewGuid(),
+            ProductId = productId,
+            SkuId = skuId,
             ProductNameSnapshot = "Rare Painting",
             WinningAmount = 5000000m,
             DepositAmount = 0m,
@@ -459,6 +462,19 @@ public class AuctionOrderServiceTests
         };
         _dbContext.AuctionOrders.Add(auctionOrder);
         await _dbContext.SaveChangesAsync();
+
+        _catalogClientMock
+            .Setup(c => c.GetSkuDetailsAsync(skuId, default))
+            .ReturnsAsync(new CatalogProductCheckResult(
+                skuId,
+                productId,
+                sellerId,
+                "Rare Painting",
+                5000000m,
+                true,
+                StockQuantity: 1,
+                ErrorReason: null,
+                WeightGrams: 750));
 
         _fulfillmentClientMock
             .Setup(f => f.CalculateShopShippingFeeAsync(It.IsAny<ShopShippingQuoteRequest>(), default))
@@ -499,6 +515,8 @@ public class AuctionOrderServiceTests
         var buyerId = Guid.NewGuid();
         var sellerId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
 
         var auctionOrder = new AuctionOrder
         {
@@ -508,7 +526,8 @@ public class AuctionOrderServiceTests
             BuyerId = buyerId,
             SellerId = sellerId,
             WinningBidId = Guid.NewGuid(),
-            ProductId = Guid.NewGuid(),
+            ProductId = productId,
+            SkuId = skuId,
             ProductNameSnapshot = "Rare Sculpture",
             WinningAmount = 10000000m,
             DepositAmount = 2000000m,
@@ -521,6 +540,13 @@ public class AuctionOrderServiceTests
         };
         _dbContext.AuctionOrders.Add(auctionOrder);
         await _dbContext.SaveChangesAsync();
+
+        // Shipping is quoted for the real SKU weight, so the SKU must be known.
+        _catalogClientMock
+            .Setup(c => c.GetSkuDetailsAsync(skuId, default))
+            .ReturnsAsync(new CatalogProductCheckResult(
+                skuId, productId, sellerId, "Rare Sculpture", 10000000m, true,
+                StockQuantity: 1, ErrorReason: null, WeightGrams: 750));
 
         _fulfillmentClientMock
             .Setup(f => f.CalculateShopShippingFeeAsync(It.IsAny<ShopShippingQuoteRequest>(), default))
@@ -821,7 +847,7 @@ public class AuctionOrderServiceTests
         await _dbContext.SaveChangesAsync();
 
         _fulfillmentClientMock
-            .Setup(f => f.CreateShipmentAsync(orderId, default))
+            .Setup(f => f.CreateShipmentAsync(It.Is<ShipmentCreationRequest>(r => r.SubOrderId == orderId), default))
             .ReturnsAsync(new ShipmentCreationResult("GHN-TRACK-001", "GHN", "https://print.ghn.vn/label"));
 
         _auctionClientMock
@@ -845,6 +871,10 @@ public class AuctionOrderServiceTests
         var updatedOrder = await _dbContext.AuctionOrders.FindAsync(orderId);
         updatedOrder!.Status.Should().Be(SubOrderStatus.Confirmed);
         updatedOrder.SellerAcceptedAt.Should().NotBeNull();
+        // The tracking details must stay on the order, or the buyer and seller can never see the shipment.
+        updatedOrder.TrackingCode.Should().Be("GHN-TRACK-001");
+        updatedOrder.CarrierCode.Should().Be("GHN");
+        updatedOrder.LabelPrintUrl.Should().Be("https://print.ghn.vn/label");
 
         _auctionClientMock.Verify(a => a.NotifyPaymentStatusAsync(auctionId, It.IsAny<AuctionPaymentStatusCallbackRequest>(), default), Times.Once);
     }
@@ -987,7 +1017,7 @@ public class AuctionOrderServiceTests
         _userClientMock.Verify(u => u.CreatePenaltyAsync(It.Is<UserPenaltyRequest>(p =>
             p.UserId == sellerId &&
             p.TargetRole == "Seller" &&
-            p.ViolationType == "SellerRejected" &&
+            p.ViolationType == UserPenaltyViolationTypes.SellerRejectedPaidOrder &&
             p.ReferenceType == "AuctionOrder" &&
             p.ReferenceId == "AO-20261111-00001" &&
             p.CustomScoreDeduction == 5 &&
@@ -1377,6 +1407,29 @@ public class AuctionOrderServiceTests
         var act = async () => await _service.ConfirmReceiptAsync(orderId, strangerId);
         await act.Should().ThrowAsync<CommerceDomainException>()
             .Where(e => e.ErrorCode == "FORBIDDEN" && e.StatusCode == 403);
+    }
+
+    [Fact]
+    public async Task GetOrderDetailAsync_ForAnotherUser_IsForbidden_ButAdminOrStaffMayRead()
+    {
+        var orderId = Guid.NewGuid();
+        _dbContext.AuctionOrders.Add(new AuctionOrder
+        {
+            Id = orderId, OrderNo = "AO-20261111-00099", AuctionId = Guid.NewGuid(), BuyerId = Guid.NewGuid(), SellerId = Guid.NewGuid(),
+            WinningBidId = Guid.NewGuid(), ProductId = Guid.NewGuid(), ProductNameSnapshot = "Rare Painting",
+            WinningAmount = 1000000m, SellerReceiveAmount = 950000m, PlatformFeeAmount = 50000m,
+            Status = SubOrderStatus.PendingPayment, PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddHours(10)
+        });
+        await _dbContext.SaveChangesAsync();
+        var stranger = Guid.NewGuid();
+
+        var denied = await Assert.ThrowsAsync<CommerceDomainException>(() => _service.GetOrderDetailAsync(orderId, stranger));
+        denied.ErrorCode.Should().Be("FORBIDDEN");
+
+        // The controller lets admin and staff in, so the service must too.
+        var response = await _service.GetOrderDetailAsync(orderId, stranger, isAdminOrStaff: true);
+        response.Id.Should().Be(orderId);
     }
 
     [Fact]

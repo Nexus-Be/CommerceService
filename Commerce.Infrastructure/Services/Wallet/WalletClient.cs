@@ -33,6 +33,16 @@ public sealed class WalletClient : IWalletClient
         _httpContextAccessor = httpContextAccessor;
     }
 
+    public async Task<WalletAuctionHoldStatus?> GetAuctionDepositHoldAsync(Guid depositId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.GetAsync(
+            $"api/v1/wallets/holds/by-reference/AUCTION_DEPOSIT/{depositId}", cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<WalletAuctionHoldStatus>(JsonOptions, cancellationToken);
+    }
+
     /// <summary>
     /// Hợp đồng chuẩn bàn giao từ WalletService (2026-11-10):
     /// POST /api/v1/wallets/orders/{orderId}/payment

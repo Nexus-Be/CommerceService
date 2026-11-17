@@ -12,6 +12,8 @@ public class OrderStatusHistory : BaseEntity<Guid>
     public Guid? ChangedBy { get; set; }
     public required OrderActorRole ActorRole { get; set; } = OrderActorRole.System;
     public string? Reason { get; set; }
+    public string? AuctionCallbackStatus { get; set; }
+    public DateTimeOffset? AuctionCallbackSentAt { get; set; }
 
     // Navigation
     public SubOrder? SubOrder { get; set; }

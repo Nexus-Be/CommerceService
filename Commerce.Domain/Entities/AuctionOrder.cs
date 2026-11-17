@@ -19,6 +19,8 @@ public class AuctionOrder : BaseEntity<Guid>
     public decimal DepositAmount { get; set; } = 0m;
     public decimal RemainingAmount { get; set; }
     public AuctionOrderSource OrderSource { get; set; } = AuctionOrderSource.Winner;
+    public Guid? DepositId { get; set; }
+    public int WeightGramsSnapshot { get; set; }
     public string? ShippingAddress { get; set; }
     public string? ContactPhone { get; set; }
     public decimal? ShippingFeeAmount { get; set; }
@@ -35,6 +37,7 @@ public class AuctionOrder : BaseEntity<Guid>
     public DateTimeOffset? ShippedAt { get; set; }
     public DateTimeOffset? DeliveredAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+    public DateTimeOffset? PayoutCompletedAt { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }
     public string? CarrierCode { get; set; }
     public string? TrackingCode { get; set; }

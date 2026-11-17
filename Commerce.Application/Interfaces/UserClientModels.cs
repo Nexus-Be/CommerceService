@@ -46,3 +46,16 @@ public sealed record UserPenaltyResponse(
     int NewScore,
     int AppliedDelta,
     string NewTrustLevel);
+
+/// <summary>
+/// ViolationType values UserService accepts for a penalty (its PenaltyViolationType enum). Anything else is rejected with 400,
+/// so the penalty is silently lost. The specific cause (seller rejected, seller did not answer) goes in Reason and PolicyClauseCode.
+/// </summary>
+public static class UserPenaltyViolationTypes
+{
+    public const string SellerRejectedPaidOrder = "CancellationWithoutReason";
+    public const string SellerResponseTimeout = "Other";
+}
+
+/// <summary>Answer of the shop lookup.</summary>
+public sealed record SellerShopResult(bool Found, Guid? ShopId);

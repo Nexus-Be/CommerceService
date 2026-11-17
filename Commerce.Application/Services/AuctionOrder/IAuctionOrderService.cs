@@ -44,9 +44,17 @@ public interface IAuctionOrderService
         Guid currentUserId,
         CancellationToken cancellationToken = default);
 
+    /// <param name="isAdminOrStaff">An admin or a staff member may read any order; anyone else only their own as buyer or seller.</param>
+    /// <summary>
+    /// What the notification of a paid auction order needs. Null when the order does not exist or was never paid.
+    /// For the internal service call from Auction only: it carries no per-user authorization.
+    /// </summary>
+    Task<AuctionOrderNotificationSnapshot?> GetNotificationSnapshotAsync(Guid auctionOrderId, CancellationToken ct = default);
+
     Task<AuctionOrderDetailResponse> GetOrderDetailAsync(
         Guid auctionOrderId,
         Guid currentUserId,
+        bool isAdminOrStaff = false,
         CancellationToken cancellationToken = default);
 
     Task<PagedAuctionOrderSummary> ListSellerOrdersAsync(

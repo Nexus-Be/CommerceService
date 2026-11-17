@@ -31,6 +31,26 @@ public sealed record ShopShippingQuoteRequest(
     List<ShippingQuoteItem> Items
 );
 
+/// <summary>One parcel line sent to Fulfillment when a shipment is created. Weight is unknown for some orders, in which case Fulfillment applies its default.</summary>
+public sealed record ShipmentCreationItem(Guid SkuId, int Quantity, string? Name, decimal Price, int? WeightInGrams);
+
+/// <summary>
+/// Everything Fulfillment needs to register a carrier shipment (it rejects a request without the order, seller and recipient).
+/// For an auction order OrderId and SubOrderId are both the auction order ID, because it has no parent order.
+/// </summary>
+public sealed record ShipmentCreationRequest(
+    Guid OrderId,
+    Guid SubOrderId,
+    Guid SellerId,
+    string RecipientName,
+    string RecipientPhone,
+    string ShippingAddress,
+    string? ToProvinceName,
+    int? ToDistrictId,
+    string? ToWardCode,
+    int WeightInGrams,
+    IReadOnlyList<ShipmentCreationItem> Items);
+
 public sealed record ShipmentCreationResult(
     string TrackingCode,
     string CarrierCode,
@@ -73,7 +93,7 @@ public interface IFulfillmentClient
     Task<decimal> CalculateShopShippingFeeAsync(ShopShippingQuoteRequest request, CancellationToken ct = default);
 
     /// <summary>Tạo vận đơn GHN khi Shop tiếp nhận đơn hàng con (ORD-04).</summary>
-    Task<ShipmentCreationResult> CreateShipmentAsync(Guid subOrderId, CancellationToken ct = default);
+    Task<ShipmentCreationResult> CreateShipmentAsync(ShipmentCreationRequest request, CancellationToken ct = default);
 
     /// <summary>Hủy vận đơn đã tạo bên bưu cục GHN khi đơn con bị hủy trước khi lấy hàng.</summary>
     Task<bool> CancelShipmentAsync(Guid subOrderId, string reason = "SubOrderCancelled", CancellationToken ct = default);

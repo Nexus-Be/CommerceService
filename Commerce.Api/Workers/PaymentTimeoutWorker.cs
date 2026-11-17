@@ -155,6 +155,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
         {
             try
             {
+                var callbacks = new System.Collections.Generic.Dictionary<Guid, OrderStatusHistory>();
                 foreach (var auctionOrder in expiredAuctionOrders)
                 {
                     auctionOrder.Status = SubOrderStatus.Cancelled;
@@ -173,15 +174,18 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                         InventoryReleased = true
                     });
 
-                    dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+                    var history = new OrderStatusHistory
                     {
                         Id = Guid.NewGuid(),
                         AuctionOrderId = auctionOrder.Id,
                         FromStatus = SubOrderStatus.PendingPayment,
                         ToStatus = SubOrderStatus.Cancelled,
                         ActorRole = OrderActorRole.System,
-                        Reason = "Auction payment deadline expired after 24 hours."
-                    });
+                        Reason = "Auction payment deadline expired after 24 hours.",
+                        AuctionCallbackStatus = "PaymentTimedOut"
+                    };
+                    dbContext.OrderStatusHistories.Add(history);
+                    callbacks[auctionOrder.Id] = history;
                 }
 
                 await dbContext.SaveChangesAsync(ct);
@@ -193,23 +197,27 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                     {
                         try
                         {
-                            await auctionClient.NotifyPaymentStatusAsync(
+                            if (await auctionClient.NotifyPaymentStatusAsync(
                                 auctionOrder.AuctionId,
                                 new AuctionPaymentStatusCallbackRequest(
                                     OrderId: auctionOrder.Id,
                                     WinnerId: auctionOrder.BuyerId,
                                     Status: "PaymentTimedOut",
-                                    EventId: Guid.NewGuid(),
-                                    OrderSource: auctionOrder.OrderSource.ToString().ToUpperInvariant(),
+                                    EventId: callbacks[auctionOrder.Id].Id,
+                                    OrderSource: auctionOrder.OrderSource.ToWireValue(),
                                     OccurredAt: now
                                 ),
-                                ct);
+                                ct))
+                            {
+                                callbacks[auctionOrder.Id].AuctionCallbackSentAt = DateTimeOffset.UtcNow;
+                            }
                         }
                         catch (Exception ex)
                         {
                             _logger.LogWarning(ex, "[PaymentTimeoutWorker] Failed to dispatch PaymentTimedOut callback for AuctionOrder '{OrderId}'.", auctionOrder.Id);
                         }
                     }
+                    await dbContext.SaveChangesAsync(ct);
                 }
 
                 // Lưu ý: Không tự gọi UserService trừ điểm uy tín Buyer tại đây.

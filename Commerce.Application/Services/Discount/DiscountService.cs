@@ -537,7 +537,7 @@ public sealed class DiscountService : IDiscountService
 
         if (cartItems.Count == 0)
         {
-            return new RecommendVouchersResponse(Array.Empty<string>(), new TierSavingsDto(0m, 0m, 0m));
+            return new RecommendVouchersResponse(Array.Empty<string>(), new TierSavingsDto(0m, 0m, 0m, 0m));
         }
 
         var calcItems = cartItems.Select(ci => new CalculationItemInput(
@@ -614,7 +614,7 @@ public sealed class DiscountService : IDiscountService
             }
         }
 
-        // System voucher: Best Platform-wide voucher evaluated against remaining base
+        // 3. Best System voucher
         var systemCandidates = candidateVouchers
             .Where(v => v.ScopeType == DiscountScopeType.System)
             .ToList();
@@ -633,10 +633,9 @@ public sealed class DiscountService : IDiscountService
                     .Where(s => s.ScopeRefType == DiscountScopeRefType.Sku && s.ScopeRefId.HasValue)
                     .Select(s => s.ScopeRefId!.Value)
                     .ToHashSet();
-                var elig = targetSkuIds.Count > 0 ? sItems.Where(i => targetSkuIds.Contains(i.SkuId)) : sItems;
-                return _calculationEngine.CalculateRawDiscount(elig.Sum(i => i.Quantity * i.UnitPriceSnapshot), v);
+                return sItems.Where(i => targetSkuIds.Contains(i.SkuId)).Sum(i => i.Quantity * i.UnitPriceSnapshot);
             }
-            return _calculationEngine.CalculateRawDiscount(sItems.Sum(i => i.Quantity * i.UnitPriceSnapshot), v);
+            return sItems.Sum(i => i.Quantity * i.UnitPriceSnapshot);
         }));
 
         foreach (var sysV in systemCandidates)
@@ -662,22 +661,18 @@ public sealed class DiscountService : IDiscountService
             AvailableVouchers: optimalCandidates
         ));
 
+        decimal prodDisc = 0m;
         decimal shopDisc = 0m;
         decimal sysDisc = 0m;
 
         foreach (var usage in evalResult.AllAllocatedUsages)
         {
-            if (usage.ScopeType == DiscountScopeType.Product || usage.ScopeType == DiscountScopeType.Shop)
-            {
-                shopDisc += usage.DiscountAmount;
-            }
-            else if (usage.ScopeType == DiscountScopeType.System)
-            {
-                sysDisc += usage.DiscountAmount;
-            }
+            if (usage.ScopeType == DiscountScopeType.Product) prodDisc += usage.DiscountAmount;
+            else if (usage.ScopeType == DiscountScopeType.Shop) shopDisc += usage.DiscountAmount;
+            else if (usage.ScopeType == DiscountScopeType.System) sysDisc += usage.DiscountAmount;
         }
 
-        var savings = new TierSavingsDto(shopDisc, sysDisc, shopDisc + sysDisc);
+        var savings = new TierSavingsDto(prodDisc, shopDisc, sysDisc, prodDisc + shopDisc + sysDisc);
 
         return new RecommendVouchersResponse(
             RecommendedVoucherCodes: evalResult.AppliedVoucherCodes,

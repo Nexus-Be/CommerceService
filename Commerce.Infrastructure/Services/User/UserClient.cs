@@ -26,6 +26,24 @@ public sealed class UserClient : IUserClient
         _logger = logger;
     }
 
+    public async Task<SellerShopResult> GetSellerShopAsync(Guid sellerUserId, CancellationToken ct = default)
+    {
+        using var response = await _httpClient.GetAsync($"api/v1/internal/users/{sellerUserId}/shop", ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return new SellerShopResult(false, null);
+        response.EnsureSuccessStatusCode();   // anything else is a temporary failure: the caller retries
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        var root = document.RootElement;
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+            root = data;
+
+        return root.ValueKind == JsonValueKind.Object && root.TryGetProperty("shopId", out var shopId)
+            && shopId.ValueKind == JsonValueKind.String && Guid.TryParse(shopId.GetString(), out var parsed) && parsed != Guid.Empty
+                ? new SellerShopResult(true, parsed)
+                : new SellerShopResult(false, null);
+    }
+
     public async Task<UserPermissionCheckResult> CheckBuyerPermissionAsync(
         Guid buyerId,
         string action = "buy",

@@ -69,7 +69,7 @@ public sealed record PayAuctionOrderResponse(
     string Status,
     DateTimeOffset PaidAt,
     DateTimeOffset SellerRespondDeadlineAt,
-    Guid WalletTransactionId
+    Guid? WalletTransactionId
 );
 
 public sealed record SellerRespondResponse(
@@ -98,3 +98,14 @@ public sealed record PagedAuctionOrderSummary(
     bool HasPreviousPage,
     bool HasNextPage
 );
+
+/// <summary>The order data the "order paid" notification needs. Total includes shipping; it is not the winning amount.</summary>
+public sealed record AuctionOrderNotificationSnapshot(
+    Guid OrderId,
+    string OrderNo,
+    decimal TotalAmount,
+    DateTimeOffset PaidAt,
+    DateTimeOffset SellerRespondDeadlineAt,
+    Guid BuyerId,
+    Guid SellerId,
+    string Status);

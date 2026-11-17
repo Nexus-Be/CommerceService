@@ -348,13 +348,26 @@ public sealed class FulfillmentClient : IFulfillmentClient
     {
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("api/v1/internal/shipping/quote", request, ct);
+            // Fulfillment's contract names the fields differently from Commerce's own request (ToDistrictId, ToWardCode, WeightInGrams),
+            // and picks the origin district from the seller's warehouse when FromDistrictId is 0.
+            var items = request.Items ?? new List<ShippingQuoteItem>();
+            var payload = new
+            {
+                sellerId = request.SellerId,
+                fromDistrictId = 0,
+                toDistrictId = request.GhnDistrictId,
+                toWardCode = request.GhnWardCode,
+                weightInGrams = Math.Max(1, items.Sum(i => Math.Max(1, i.WeightGrams) * Math.Max(1, i.Quantity))),
+                items = items.Select(i => new { skuId = i.SkuId, quantity = Math.Max(1, i.Quantity), weightInGrams = Math.Max(1, i.WeightGrams) }).ToList()
+            };
+            var response = await _httpClient.PostAsJsonAsync("api/v1/internal/shipping/quote", payload, ct);
             if (response.IsSuccessStatusCode)
             {
                 var feeResult = await response.Content.ReadFromJsonAsync<ShippingFeeResult>(cancellationToken: ct);
                 if (feeResult != null)
                 {
-                    return feeResult.FeeAmount;
+                    // Fulfillment answers { fee, ... }; older builds answered { feeAmount }.
+                    return feeResult.Fee > 0 ? feeResult.Fee : feeResult.FeeAmount;
                 }
                 throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Fulfillment service returned an empty shipping quote response.", 503);
             }
@@ -380,17 +393,58 @@ public sealed class FulfillmentClient : IFulfillmentClient
         }
     }
 
-    public async Task<ShipmentCreationResult> CreateShipmentAsync(Guid subOrderId, CancellationToken ct = default)
+    public async Task<ShipmentCreationResult> CreateShipmentAsync(ShipmentCreationRequest request, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        var subOrderId = request.SubOrderId;
+
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("api/v1/internal/shipments", new { subOrderId }, ct);
+            // Fulfillment's contract: it needs the order, the seller and the recipient, and answers { shipmentId, trackingNumber, labelUrl, status }.
+            var payload = new
+            {
+                orderId = request.OrderId,
+                subOrderId = request.SubOrderId,
+                sellerId = request.SellerId,
+                recipientName = request.RecipientName,
+                recipientPhone = request.RecipientPhone,
+                shippingAddress = request.ShippingAddress,
+                toProvinceName = request.ToProvinceName,
+                toDistrictId = request.ToDistrictId,
+                toWardCode = request.ToWardCode,
+                weightInGrams = request.WeightInGrams,
+                items = request.Items.Select(i => new
+                {
+                    skuId = i.SkuId,
+                    quantity = i.Quantity,
+                    name = i.Name,
+                    price = i.Price,
+                    weightInGrams = i.WeightInGrams
+                }).ToList()
+            };
+
+            var response = await _httpClient.PostAsJsonAsync("api/v1/internal/shipments", payload, ct);
             if (response.IsSuccessStatusCode)
             {
-                var result = await response.Content.ReadFromJsonAsync<ShipmentCreationResult>(cancellationToken: ct);
-                if (result != null) return result;
+                var body = await response.Content.ReadFromJsonAsync<CreateShipmentApiResponse>(cancellationToken: ct);
+                var tracking = body?.TrackingNumber ?? body?.TrackingCode;
+                if (body is null || string.IsNullOrWhiteSpace(tracking))
+                    throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Fulfillment service returned an empty shipment response.", 503);
 
-                throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Fulfillment service returned an empty shipment response.", 503);
+                return new ShipmentCreationResult(
+                    TrackingCode: tracking,
+                    CarrierCode: string.IsNullOrWhiteSpace(body.CarrierCode) ? "GHN" : body.CarrierCode,
+                    LabelPrintUrl: body.LabelUrl ?? body.LabelPrintUrl ?? string.Empty);
+            }
+
+            // A refusal (4xx) means this request is wrong and retrying will not help; only 5xx and timeouts are "unavailable".
+            if ((int)response.StatusCode is >= 400 and < 500)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                _logger.LogWarning(
+                    "[REST Fulfillment Client] Create shipment rejected with {StatusCode} for SubOrder '{SubOrderId}': {Error}",
+                    (int)response.StatusCode, subOrderId, errorBody);
+                throw new CommerceDomainException("SHIPMENT_CREATION_REJECTED", "The carrier shipment request was rejected by the fulfillment service.", 422);
             }
 
             _logger.LogWarning("[REST Fulfillment Client] Create shipment returned status {StatusCode} for SubOrder '{SubOrderId}'.", response.StatusCode, subOrderId);
@@ -436,7 +490,11 @@ public sealed class FulfillmentClient : IFulfillmentClient
     }
 
     private sealed record StockCheckApiResponse(bool IsAvailable, int AvailableStock);
-    private sealed record ShippingFeeResult(decimal FeeAmount);
+    private sealed record ShippingFeeResult(decimal Fee = 0m, decimal FeeAmount = 0m);
+
+    /// <summary>Fulfillment answers TrackingNumber/LabelUrl; the older names are still read so either build works.</summary>
+    private sealed record CreateShipmentApiResponse(
+        string? TrackingNumber = null, string? TrackingCode = null, string? CarrierCode = null, string? LabelUrl = null, string? LabelPrintUrl = null);
 
     private sealed class BatchReleaseApiResponse
     {

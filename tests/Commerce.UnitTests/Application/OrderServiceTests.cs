@@ -1008,7 +1008,7 @@ public class OrderServiceTests
         await dbContext.SaveChangesAsync();
 
         _mockFulfillmentClient
-            .Setup(f => f.CreateShipmentAsync(subOrderId, It.IsAny<CancellationToken>()))
+            .Setup(f => f.CreateShipmentAsync(It.IsAny<ShipmentCreationRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ShipmentCreationResult("GHN-SGN-1029384", "GHN", "https://api.ghn.vn/print/label-1029384.pdf"));
 
         var service = new OrderService(
@@ -1140,7 +1140,7 @@ public class OrderServiceTests
         await dbContext.SaveChangesAsync();
 
         _mockFulfillmentClient
-            .Setup(f => f.CreateShipmentAsync(subOrderId, It.IsAny<CancellationToken>()))
+            .Setup(f => f.CreateShipmentAsync(It.IsAny<ShipmentCreationRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ShipmentCreationResult("GHN-RETRY-SUCCESS-1", "GHN", "https://label.pdf/retry"));
 
         var service = new OrderService(

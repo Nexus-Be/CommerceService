@@ -1,5 +1,6 @@
 namespace Commerce.Application.Services.Order;
 
+using Commerce.Application.Services.Shipment;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -29,6 +30,7 @@ public sealed class OrderService : IOrderService
     private readonly ILogger<OrderService> _logger;
     private readonly IVoucherDiscountCalculator? _voucherCalculator;
     private readonly IVoucherLifecycleService? _voucherLifecycleService;
+    private readonly INotificationSettings? _notificationSettings;
 
     public OrderService(
         ICommerceDbContext dbContext,
@@ -37,7 +39,7 @@ public sealed class OrderService : IOrderService
         ICatalogClient catalogClient,
         IDistributedCache cache,
         ILogger<OrderService> logger)
-        : this(dbContext, walletClient, fulfillmentClient, catalogClient, null!, cache, logger, null, null)
+        : this(dbContext, walletClient, fulfillmentClient, catalogClient, null!, cache, logger, null, null, null)
     {
     }
 
@@ -50,8 +52,10 @@ public sealed class OrderService : IOrderService
         IDistributedCache cache,
         ILogger<OrderService> logger,
         IVoucherDiscountCalculator? voucherCalculator = null,
-        IVoucherLifecycleService? voucherLifecycleService = null)
+        IVoucherLifecycleService? voucherLifecycleService = null,
+        INotificationSettings? notificationSettings = null)
     {
+        _notificationSettings = notificationSettings;
         _dbContext = dbContext;
         _walletClient = walletClient;
         _fulfillmentClient = fulfillmentClient;
@@ -626,10 +630,15 @@ public sealed class OrderService : IOrderService
                 {
                     so.Status = SubOrderStatus.Paid;
                     so.PaidAt = DateTimeOffset.UtcNow;
+                    // A reminder for the seller, not a rule: no worker acts on this deadline for regular orders.
+                    so.SellerRespondDeadlineAt = so.PaidAt.Value.Add(OrderPaidNotices.SellerAnswerWindow);
                     if (order.WalletTransactionId.HasValue)
                     {
                         so.WalletTransactionId = order.WalletTransactionId;
                     }
+
+                    // Queued in this unit of work: saved together with the payment, never lost to a crash between the save and a later call.
+                    OrderPaidNotices.Enqueue(_dbContext, _notificationSettings, so);
                 }
 
                 // Thanh toán thành công -> trừ kho vĩnh viễn (CHK-02, ISSUE-04)
@@ -1450,6 +1459,7 @@ public sealed class OrderService : IOrderService
     public async Task SellerAcceptSubOrderAsync(Guid sellerId, Guid orderId, SellerAcceptOrderRequest request, CancellationToken ct = default)
     {
         var so = await _dbContext.SubOrders
+            .Include(s => s.Items)
             .FirstOrDefaultAsync(s => s.Id == request.SubOrderId && s.OrderId == orderId, ct)
             ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", request.SubOrderId);
 
@@ -1481,7 +1491,8 @@ public sealed class OrderService : IOrderService
         // Tạo vận đơn GHN tự động qua Fulfillment Service (ORD-04 / T009)
         try
         {
-            var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(so.Id, ct);
+            var shipmentRequest = ShipmentRequestFactory.ForSubOrder(so);
+            var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(shipmentRequest, ct);
             if (shipmentResult != null && !string.IsNullOrWhiteSpace(shipmentResult.TrackingCode))
             {
                 so.TrackingCode = shipmentResult.TrackingCode;
@@ -1507,6 +1518,7 @@ public sealed class OrderService : IOrderService
     public async Task<RetryShipmentResponse> RetryCreateShipmentAsync(Guid sellerId, Guid subOrderId, CancellationToken ct = default)
     {
         var so = await _dbContext.SubOrders
+            .Include(s => s.Items)
             .FirstOrDefaultAsync(s => s.Id == subOrderId, ct)
             ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
 
@@ -1527,7 +1539,8 @@ public sealed class OrderService : IOrderService
 
         try
         {
-            var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(so.Id, ct);
+            var shipmentRequest = ShipmentRequestFactory.ForSubOrder(so);
+            var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(shipmentRequest, ct);
             if (shipmentResult == null || string.IsNullOrWhiteSpace(shipmentResult.TrackingCode))
             {
                 throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Carrier logistics service returned an empty shipment response.", 503);
@@ -2139,6 +2152,27 @@ public sealed class OrderService : IOrderService
         await _dbContext.SaveChangesAsync(ct);
     }
 
+    public async Task<ReviewEligibilityDto?> GetReviewEligibilityAsync(string referenceType, Guid referenceId, CancellationToken ct = default)
+    {
+        if (!ReviewReferenceTypes.TryNormalize(referenceType, out var type) || referenceId == Guid.Empty)
+            return null;
+
+        if (type == ReviewReferenceTypes.Auction)
+        {
+            return await _dbContext.AuctionOrders
+                .AsNoTracking()
+                .Where(o => o.Id == referenceId && !o.IsDeleted)
+                .Select(o => new ReviewEligibilityDto(type, o.Id, o.Status.ToString(), o.BuyerId, o.SellerId, o.CompletedAt))
+                .FirstOrDefaultAsync(ct);
+        }
+
+        return await _dbContext.SubOrders
+            .AsNoTracking()
+            .Where(s => s.Id == referenceId && !s.IsDeleted)
+            .Select(s => new ReviewEligibilityDto(type, s.Id, s.Status.ToString(), s.BuyerId, s.SellerId, s.CompletedAt))
+            .FirstOrDefaultAsync(ct);
+    }
+
     public Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, string status, DateTimeOffset? deliveredAt, CancellationToken ct = default)
     {
         return UpdateSubOrderDeliveryStatusAsync(subOrderId, new UpdateDeliveryStatusRequest(status, deliveredAt), ct);
@@ -2169,6 +2203,14 @@ public sealed class OrderService : IOrderService
         var status = request.Status?.Trim() ?? "";
         var timestamp = request.DeliveredAt ?? DateTimeOffset.UtcNow;
         var previousStatus = so.Status;
+
+        if (!DeliveryStatusTransitions.IsAllowed(so.Status, status))
+        {
+            _logger.LogInformation(
+                "[OrderService] Ignoring out-of-order carrier status '{CarrierStatus}' for SubOrder '{SubOrderId}' currently at '{CurrentStatus}'.",
+                status, subOrderId, so.Status);
+            return;
+        }
 
         if (!string.IsNullOrWhiteSpace(request.CarrierCode)) so.CarrierCode = request.CarrierCode;
         if (!string.IsNullOrWhiteSpace(request.TrackingCode)) so.TrackingCode = request.TrackingCode;
@@ -2457,6 +2499,14 @@ public sealed class OrderService : IOrderService
         var status = request.Status?.Trim() ?? "";
         var timestamp = request.DeliveredAt ?? DateTimeOffset.UtcNow;
         var previousStatus = auctionOrder.Status;
+
+        if (!DeliveryStatusTransitions.IsAllowed(auctionOrder.Status, status))
+        {
+            _logger.LogInformation(
+                "[OrderService] Ignoring out-of-order carrier status '{CarrierStatus}' for AuctionOrder '{OrderId}' currently at '{CurrentStatus}'.",
+                status, auctionOrder.Id, auctionOrder.Status);
+            return;
+        }
 
         if (!string.IsNullOrWhiteSpace(request.CarrierCode)) auctionOrder.CarrierCode = request.CarrierCode;
         if (!string.IsNullOrWhiteSpace(request.TrackingCode)) auctionOrder.TrackingCode = request.TrackingCode;
@@ -2831,11 +2881,14 @@ public sealed class OrderService : IOrderService
             var prevStatus = so.Status;
             so.Status = SubOrderStatus.Paid;
             so.PaidAt = now;
+            so.SellerRespondDeadlineAt = so.PaidAt.Value.Add(OrderPaidNotices.SellerAnswerWindow);
             so.UpdatedAt = now;
             if (order.WalletTransactionId.HasValue)
             {
                 so.WalletTransactionId = order.WalletTransactionId;
             }
+
+            OrderPaidNotices.Enqueue(_dbContext, _notificationSettings, so);
 
             _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
             {

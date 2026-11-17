@@ -47,7 +47,7 @@ public class OrdersControllerDeliveryCallbackTests
     }
 
     [Fact]
-    public async Task UpdateDeliveryStatus_ShouldReturn403Forbidden_WhenHeaderIsMissing()
+    public async Task UpdateDeliveryStatus_ShouldReturn401Unauthorized_WhenHeaderIsMissing()
     {
         // Arrange
         var controller = CreateController(headerKey: null);
@@ -59,7 +59,7 @@ public class OrdersControllerDeliveryCallbackTests
 
         // Assert
         var objectResult = result.Should().BeOfType<ObjectResult>().Subject;
-        objectResult.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        objectResult.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
 
         _mockOrderService.Verify(
             s => s.UpdateSubOrderDeliveryStatusAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()),
@@ -67,7 +67,7 @@ public class OrdersControllerDeliveryCallbackTests
     }
 
     [Fact]
-    public async Task UpdateDeliveryStatus_ShouldReturn403Forbidden_WhenHeaderIsInvalid()
+    public async Task UpdateDeliveryStatus_ShouldReturn401Unauthorized_WhenHeaderIsInvalid()
     {
         // Arrange
         var controller = CreateController(headerKey: "wrong-secret-key");
@@ -79,7 +79,7 @@ public class OrdersControllerDeliveryCallbackTests
 
         // Assert
         var objectResult = result.Should().BeOfType<ObjectResult>().Subject;
-        objectResult.StatusCode.Should().Be(StatusCodes.Status403Forbidden);
+        objectResult.StatusCode.Should().Be(StatusCodes.Status401Unauthorized);
 
         _mockOrderService.Verify(
             s => s.UpdateSubOrderDeliveryStatusAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()),

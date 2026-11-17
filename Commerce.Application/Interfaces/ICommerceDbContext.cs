@@ -24,6 +24,7 @@ public interface ICommerceDbContext
     DbSet<SystemSetting> SystemSettings { get; }
     DbSet<DailyOrderSequence> DailyOrderSequences { get; }
     DbSet<AuditLog> AuditLogs { get; }
+    DbSet<NotificationOutboxItem> NotificationOutbox { get; }
 
     DatabaseFacade Database { get; }
 

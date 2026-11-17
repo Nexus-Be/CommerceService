@@ -83,6 +83,7 @@ public sealed class CatalogClient : ICatalogClient
                                 UnitPrice: unitPrice,
                                 IsPurchasable: isPurchasable,
                                 StockQuantity: 100,
+                                WeightGrams: item.WeightGrams ?? 0,
                                 SaleType: item.SaleType ?? "Regular");
                         }
                     }
@@ -278,6 +279,7 @@ public sealed class CatalogClient : ICatalogClient
         public string? SaleType { get; set; }
         public string? PrimaryImageUrl { get; set; }
         public bool IsPurchasable { get; set; }
+        public int? WeightGrams { get; set; }
     }
 
     private sealed class CatalogSwitchRawResponse

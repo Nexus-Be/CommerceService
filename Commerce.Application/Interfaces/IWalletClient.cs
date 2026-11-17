@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 
 public interface IWalletClient
 {
+    Task<WalletAuctionHoldStatus?> GetAuctionDepositHoldAsync(Guid depositId, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Thanh toán đơn hàng qua endpoint chuẩn của WalletService:
     /// POST /api/v1/wallets/orders/{orderId}/payment
@@ -71,3 +73,5 @@ public interface IWalletClient
         string? idempotencyKey = null,
         CancellationToken cancellationToken = default);
 }
+
+public sealed record WalletAuctionHoldStatus(string Status, string? CapturePurpose, Guid? OrderId);

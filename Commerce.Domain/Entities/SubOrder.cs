@@ -17,6 +17,10 @@ public class SubOrder : BaseEntity<Guid>
     public required SubOrderStatus Status { get; set; } = SubOrderStatus.PendingPayment;
     public required PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Wallet;
     public Guid? WalletTransactionId { get; set; }
+
+    /// <summary>The seller profile id of the shop (not the seller's user id), saved when it is first looked up for a notification.</summary>
+    public Guid? ShopId { get; set; }
+
     public ShippingAddressSnapshot ShippingAddress { get; set; } = new();
     public required string ContactPhone { get; set; }
     public decimal ItemsAmount { get; set; }

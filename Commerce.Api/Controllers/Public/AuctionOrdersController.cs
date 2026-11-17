@@ -28,21 +28,10 @@ public class AuctionOrdersController : ControllerBase
         [FromServices] IConfiguration configuration,
         CancellationToken ct)
     {
-        var expectedKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
-            ?? configuration["INTERNAL_SERVICE_SECRET"]
-            ?? configuration["InternalSecurity:ServiceKey"]
-            ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
-
-        if (Request.Headers.TryGetValue("X-Internal-Service-Key", out var providedKey))
+        var denied = Commerce.Api.Security.InternalServiceKeyGuard.Check(Request, configuration);
+        if (denied is not null)
         {
-            if (!string.Equals(providedKey.ToString(), expectedKey, StringComparison.Ordinal))
-            {
-                return StatusCode(StatusCodes.Status403Forbidden, new
-                {
-                    errorCode = "FORBIDDEN",
-                    message = "Access denied: Invalid X-Internal-Service-Key header."
-                });
-            }
+            return denied;
         }
 
         var result = await _auctionOrderService.ReceiveSettlementAsync(request, ct);
@@ -150,8 +139,33 @@ public class AuctionOrdersController : ControllerBase
             return authError;
         }
 
-        var response = await _auctionOrderService.GetOrderDetailAsync(auctionOrderId, currentUserId, ct);
+        var roles = HttpContext.GetUserRoles();
+        var isAdminOrStaff = roles.Any(r => r is "admin" or "staff");
+        var response = await _auctionOrderService.GetOrderDetailAsync(auctionOrderId, currentUserId, isAdminOrStaff, ct);
         return Ok(response);
+    }
+
+    /// <summary>
+    /// Called by AuctionService (internal service key, no user) to complete the notification of a paid order: order number, total with shipping,
+    /// seller deadline, buyer and seller. 404 when the order does not exist or was never paid.
+    /// </summary>
+    [HttpGet("/api/v1/internal/auction-orders/{orderId:guid}/notification-snapshot")]
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+    public async Task<IActionResult> GetNotificationSnapshot(
+        [FromRoute] Guid orderId,
+        [FromServices] Microsoft.Extensions.Configuration.IConfiguration configuration,
+        CancellationToken ct)
+    {
+        var denied = Commerce.Api.Security.InternalServiceKeyGuard.Check(Request, configuration);
+        if (denied is not null)
+        {
+            return denied;
+        }
+
+        var snapshot = await _auctionOrderService.GetNotificationSnapshotAsync(orderId, ct);
+        return snapshot is null
+            ? NotFound(new { errorCode = "AUCTION_ORDER_NOT_FOUND", message = "The auction order was not found or has not been paid." })
+            : Ok(snapshot);
     }
 
     /// <summary>US9: Tra cứu danh sách đơn hàng đấu giá của Seller (có phân trang).</summary>

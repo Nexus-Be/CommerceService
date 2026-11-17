@@ -62,6 +62,12 @@ public interface IOrderService
     /// <summary>Cập nhật trạng thái giao hàng của SubOrder từ Webhook/Fulfillment Service với đầy đủ chi tiết sự kiện.</summary>
     Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, UpdateDeliveryStatusRequest request, CancellationToken ct = default);
 
+    /// <summary>
+    /// For UserService: the buyer, seller, status and completion time of a sub-order (ReferenceType Order) or an auction order
+    /// (ReferenceType Auction). Returns null when no such order exists.
+    /// </summary>
+    Task<ReviewEligibilityDto?> GetReviewEligibilityAsync(string referenceType, Guid referenceId, CancellationToken ct = default);
+
     /// <summary>Passive Guard: Kiểm tra và hủy đơn hàng nếu đã quá hạn thanh toán.</summary>
     Task<bool> ExpireOrderIfOverdueAsync(Guid orderId, CancellationToken ct = default);
 

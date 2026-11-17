@@ -1,5 +1,6 @@
 namespace Commerce.Application.Services.AuctionOrder;
 
+using Commerce.Application.Services.Shipment;
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
@@ -51,7 +52,10 @@ public class AuctionOrderService : IAuctionOrderService
         CancellationToken cancellationToken = default)
     {
         var depositAmount = request.DepositAmount ?? 0m;
-        var source = string.Equals(request.Source, "SECOND_CHANCE", StringComparison.OrdinalIgnoreCase)
+        var sourceText = request.Source?.Trim().ToUpperInvariant() ?? "WINNER";
+        if (sourceText is not ("WINNER" or "SECOND_CHANCE"))
+            throw new CommerceDomainException("VAL_INVALID_SETTLEMENT", "Auction settlement source must be WINNER or SECOND_CHANCE.", 400);
+        var source = sourceText == "SECOND_CHANCE"
             ? AuctionOrderSource.SecondChance
             : AuctionOrderSource.Winner;
 
@@ -65,6 +69,10 @@ public class AuctionOrderService : IAuctionOrderService
             throw new CommerceDomainException("DEPOSIT_EXCEEDS_WINNING_AMOUNT", "Deposit amount cannot exceed winning amount.", 422);
         }
 
+        // Amounts are whole VND. The deposit reference (DepositId) is checked when the seller accepts, where the hold is verified.
+        if (depositAmount != decimal.Truncate(depositAmount))
+            throw new CommerceDomainException("VAL_INVALID_SETTLEMENT", "Deposit amount must be a whole number.", 400);
+
         var existingOrders = await _dbContext.AuctionOrders
             .Where(a => a.AuctionId == request.AuctionId)
             .ToListAsync(cancellationToken);
@@ -73,6 +81,13 @@ public class AuctionOrderService : IAuctionOrderService
         var identicalOrder = existingOrders.FirstOrDefault(a => a.BuyerId == request.WinnerId && a.OrderSource == source);
         if (identicalOrder != null)
         {
+            if (identicalOrder.WinningBidId != request.WinningBidId ||
+                identicalOrder.WinningAmount != request.WinningAmount ||
+                identicalOrder.DepositAmount != depositAmount ||
+                identicalOrder.DepositId != request.DepositId)
+                throw new CommerceDomainException("SETTLEMENT_CONFLICT", "The auction order already has different settlement terms.", 409);
+            _logger.LogInformation("[AuctionOrder] Idempotent duplicate settlement for Auction '{AuctionId}', Source '{Source}', Winner '{WinnerId}'. Returning Order '{OrderId}'.",
+                request.AuctionId, source, request.WinnerId, identicalOrder.Id);
             _logger.LogInformation("[AuctionOrder] Idempotent duplicate settlement for Auction '{AuctionId}', Source '{Source}', Winner '{WinnerId}'. Returning Order '{OrderId}'.",
                 request.AuctionId, source, request.WinnerId, identicalOrder.Id);
 
@@ -130,6 +145,7 @@ public class AuctionOrderService : IAuctionOrderService
             SkuAttributesSnapshot = request.SkuAttributes ?? "{}",
             WinningAmount = request.WinningAmount,
             DepositAmount = depositAmount,
+            DepositId = request.DepositId,
             RemainingAmount = remainingAmount,
             OrderSource = source,
             ShippingAddress = shippingAddressJson,
@@ -200,6 +216,14 @@ public class AuctionOrderService : IAuctionOrderService
             throw new CommerceDomainException("PAYMENT_DEADLINE_EXPIRED", "Auction payment deadline has expired.", 400);
         }
 
+        if (auctionOrder.SkuId is not Guid skuId || skuId == Guid.Empty)
+            throw new CommerceDomainException("SKU_WEIGHT_UNAVAILABLE", "Auction SKU is required to calculate shipping.", 422);
+        var sku = await _catalogClient.GetSkuDetailsAsync(skuId, cancellationToken);
+        if (sku is null || sku.WeightGrams <= 0 || sku.ProductId != auctionOrder.ProductId)
+            throw new CommerceDomainException("SKU_WEIGHT_UNAVAILABLE", "Auction SKU weight is required to calculate shipping.", 422);
+
+        auctionOrder.WeightGramsSnapshot = sku.WeightGrams;
+
         var quoteRequest = new ShopShippingQuoteRequest(
             SellerId: auctionOrder.SellerId,
             GhnDistrictId: request.ShippingAddress.GhnDistrictId,
@@ -207,9 +231,9 @@ public class AuctionOrderService : IAuctionOrderService
             Items: new List<ShippingQuoteItem>
             {
                 new(
-                    SkuId: auctionOrder.SkuId ?? Guid.Empty,
+                    SkuId: skuId,
                     Quantity: 1,
-                    WeightGrams: 500
+                    WeightGrams: sku.WeightGrams
                 )
             }
         );
@@ -329,15 +353,17 @@ public class AuctionOrderService : IAuctionOrderService
         auctionOrder.SellerRespondDeadlineAt = sellerRespondDeadline;
         auctionOrder.WalletTransactionId = parsedTxId;
 
-        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        var history = new OrderStatusHistory
         {
             Id = Guid.NewGuid(),
             AuctionOrderId = auctionOrder.Id,
             FromStatus = SubOrderStatus.PendingPayment,
             ToStatus = SubOrderStatus.Paid,
             ActorRole = OrderActorRole.Buyer,
-            Reason = "Buyer paid auction order via Nexus Wallet."
-        });
+            Reason = "Buyer paid auction order via Nexus Wallet.",
+            AuctionCallbackStatus = "Paid"
+        };
+        _dbContext.OrderStatusHistories.Add(history);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -345,18 +371,19 @@ public class AuctionOrderService : IAuctionOrderService
             auctionOrder.Id, auctionOrder.AuctionId);
 
         // Immediate callback to Auction Service
-        var callbackReq = new AuctionPaymentStatusCallbackRequest(
-            OrderId: auctionOrder.Id,
-            WinnerId: auctionOrder.BuyerId,
-            Status: "Paid",
-            Amount: auctionOrder.WinningAmount,
-            PaidAt: now,
-            EventId: Guid.NewGuid(),
-            OrderSource: auctionOrder.OrderSource.ToString().ToUpperInvariant(),
-            OccurredAt: now
-        );
-
-        await _auctionClient.NotifyPaymentStatusAsync(auctionOrder.AuctionId, callbackReq, cancellationToken);
+        try
+        {
+            var callbackReq = AuctionPaymentCallbackFactory.Build(auctionOrder, history);
+            if (await _auctionClient.NotifyPaymentStatusAsync(auctionOrder.AuctionId, callbackReq, cancellationToken))
+            {
+                history.AuctionCallbackSentAt = DateTimeOffset.UtcNow;
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[AuctionOrder] Immediate callback to AuctionService failed for order '{OrderId}'. Worker will retry.", auctionOrder.Id);
+        }
 
         return new PayAuctionOrderResponse(
             OrderId: auctionOrder.Id,
@@ -395,11 +422,18 @@ public class AuctionOrderService : IAuctionOrderService
             throw new CommerceDomainException("SELLER_RESPOND_TIMEOUT", "Seller response deadline has expired. Order is awaiting cancellation.", 400);
         }
 
-        var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(auctionOrder.Id, cancellationToken);
+        var shipmentRequest = ShipmentRequestFactory.ForAuctionOrder(auctionOrder);
+        var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(shipmentRequest, cancellationToken);
 
         var now = DateTimeOffset.UtcNow;
         auctionOrder.Status = SubOrderStatus.Confirmed;
         auctionOrder.SellerAcceptedAt = now;
+        if (shipmentResult != null)
+        {
+            auctionOrder.TrackingCode = shipmentResult.TrackingCode;
+            auctionOrder.CarrierCode = shipmentResult.CarrierCode;
+            auctionOrder.LabelPrintUrl = shipmentResult.LabelPrintUrl;
+        }
 
         _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
         {
@@ -534,7 +568,7 @@ public class AuctionOrderService : IAuctionOrderService
                 await _userClient.CreatePenaltyAsync(new UserPenaltyRequest(
                     UserId: auctionOrder.SellerId,
                     TargetRole: "Seller",
-                    ViolationType: "SellerRejected",
+                    ViolationType: UserPenaltyViolationTypes.SellerRejectedPaidOrder,
                     ReferenceType: "AuctionOrder",
                     ReferenceId: auctionOrder.OrderNo,
                     Reason: request.ReasonNote ?? "Seller rejected the auction order after payment.",
@@ -660,9 +694,30 @@ public class AuctionOrderService : IAuctionOrderService
         );
     }
 
+    public async Task<AuctionOrderNotificationSnapshot?> GetNotificationSnapshotAsync(Guid auctionOrderId, CancellationToken ct = default)
+    {
+        var order = await _dbContext.AuctionOrders.AsNoTracking()
+            .FirstOrDefaultAsync(o => o.Id == auctionOrderId && !o.IsDeleted, ct);
+
+        // An order that was never paid has nothing to announce.
+        if (order is null || order.PaidAt is null || order.TotalAmount is null || order.SellerRespondDeadlineAt is null)
+            return null;
+
+        return new AuctionOrderNotificationSnapshot(
+            order.Id,
+            order.OrderNo,
+            order.TotalAmount.Value,
+            order.PaidAt.Value,
+            order.SellerRespondDeadlineAt.Value,
+            order.BuyerId,
+            order.SellerId,
+            order.Status.ToString());
+    }
+
     public async Task<AuctionOrderDetailResponse> GetOrderDetailAsync(
         Guid auctionOrderId,
         Guid currentUserId,
+        bool isAdminOrStaff = false,
         CancellationToken cancellationToken = default)
     {
         var auctionOrder = await _dbContext.AuctionOrders.FirstOrDefaultAsync(a => a.Id == auctionOrderId, cancellationToken);
@@ -671,7 +726,7 @@ public class AuctionOrderService : IAuctionOrderService
             throw new CommerceDomainException("AUCTION_ORDER_NOT_FOUND", "Auction order not found.", 404);
         }
 
-        if (auctionOrder.BuyerId != currentUserId && auctionOrder.SellerId != currentUserId)
+        if (!isAdminOrStaff && auctionOrder.BuyerId != currentUserId && auctionOrder.SellerId != currentUserId)
         {
             throw new CommerceDomainException("FORBIDDEN", "You do not have permission to access this auction order.", 403);
         }

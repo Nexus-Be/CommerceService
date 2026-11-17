@@ -279,7 +279,7 @@ public class ExternalClientFaultTests : IDisposable
 
         // Fulfillment bi timeout khi tao van don GHN
         _mockFulfillmentClient
-            .Setup(f => f.CreateShipmentAsync(subOrderId, It.IsAny<CancellationToken>()))
+            .Setup(f => f.CreateShipmentAsync(It.IsAny<ShipmentCreationRequest>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new TimeoutException("GHN create shipment gateway timed out"));
 
         var orderService = new OrderService(

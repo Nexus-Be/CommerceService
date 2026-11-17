@@ -60,7 +60,7 @@ public class OrderLifecycleTests : IDisposable
             .ReturnsAsync(true);
 
         _mockFulfillmentClient
-            .Setup(f => f.CreateShipmentAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .Setup(f => f.CreateShipmentAsync(It.IsAny<ShipmentCreationRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ShipmentCreationResult("GHN-TRACK-001", "GHN", "https://label.pdf"));
 
         _mockWalletClient
@@ -518,7 +518,7 @@ public class OrderLifecycleTests : IDisposable
         updatedSubOrder.SellerAcceptedAt.Should().NotBeNull();
 
         // Verify GHN shipment created
-        _mockFulfillmentClient.Verify(f => f.CreateShipmentAsync(subOrder.Id, It.IsAny<CancellationToken>()), Times.Once);
+        _mockFulfillmentClient.Verify(f => f.CreateShipmentAsync(It.Is<ShipmentCreationRequest>(r => r.SubOrderId == subOrder.Id), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -539,7 +539,7 @@ public class OrderLifecycleTests : IDisposable
         await act.Should().ThrowAsync<CommerceDomainException>()
             .Where(e => e.ErrorCode == "INVALID_STATUS");
 
-        _mockFulfillmentClient.Verify(f => f.CreateShipmentAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockFulfillmentClient.Verify(f => f.CreateShipmentAsync(It.IsAny<ShipmentCreationRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // =========================================================================

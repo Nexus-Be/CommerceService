@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Commerce.Api.Common;
 using Commerce.Api.Extensions;
 using Commerce.Api.Workers;
@@ -24,6 +25,21 @@ builder.WebHost.ConfigureKestrel(options =>
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
 builder.Services.AddHostedService<PaymentTimeoutWorker>();
+builder.Services.AddHostedService<AuctionCallbackRetryWorker>();
+builder.Services.AddHostedService<AuctionFinancialRetryWorker>();
+
+// Notifications of paid regular orders: written to the notification outbox in the same SaveChanges as the payment, sent afterwards by this worker.
+// Off by default (Notification:Enabled). The Notification service is called directly with this service's identity headers.
+var notificationOptions = CommerceNotificationOptions.FromConfiguration(builder.Configuration);
+builder.Services.AddSingleton(notificationOptions);
+builder.Services.AddSingleton<Commerce.Application.Interfaces.INotificationSettings>(notificationOptions);
+builder.Services.TryAddSingleton(TimeProvider.System);
+builder.Services.AddHttpClient(NotificationOutboxWorker.HttpClientName, client =>
+{
+    client.BaseAddress = new Uri(notificationOptions.BaseUrl);
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+builder.Services.AddHostedService<NotificationOutboxWorker>();
 
 // 3. REST Services
 builder.Services.AddControllers()

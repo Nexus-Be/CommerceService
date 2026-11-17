@@ -111,7 +111,7 @@ public class EndToEndFlowTests : IDisposable
             .ReturnsAsync(true);
 
         _mockFulfillmentClient
-            .Setup(f => f.CreateShipmentAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .Setup(f => f.CreateShipmentAsync(It.IsAny<ShipmentCreationRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ShipmentCreationResult("GHN-E2E-999", "GHN", "https://shipping.nexus.internal/print/999"));
 
         // Wallet setup
@@ -491,7 +491,7 @@ public class EndToEndFlowTests : IDisposable
         updatedSubOrder.SellerAcceptedAt.Should().NotBeNull();
 
         // Verify: Vận đơn GHN được tạo tự động
-        _mockFulfillmentClient.Verify(f => f.CreateShipmentAsync(subOrderId, It.IsAny<CancellationToken>()), Times.Once);
+        _mockFulfillmentClient.Verify(f => f.CreateShipmentAsync(It.Is<ShipmentCreationRequest>(r => r.SubOrderId == subOrderId), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

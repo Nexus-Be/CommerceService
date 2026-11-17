@@ -240,27 +240,50 @@ public class OrdersController : ControllerBase
         return Ok(new { subOrderId, status = "RefundRequested", requestedAt = DateTimeOffset.UtcNow });
     }
 
+    /// <summary>
+    /// Called by UserService before it accepts a review: who bought, who sold, and whether and when the order finished.
+    /// ReferenceType Order is a sub-order ID (not the parent order); Auction is an auction order ID. 404 when there is no such order.
+    /// </summary>
+    [HttpGet("/api/v1/internal/review-eligibility")]
+    // Service-to-service: no user, so the role check is skipped and the internal service key decides.
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+    public async Task<IActionResult> GetReviewEligibility(
+        [FromQuery] string referenceType,
+        [FromQuery] Guid referenceId,
+        [FromServices] Microsoft.Extensions.Configuration.IConfiguration configuration,
+        CancellationToken ct)
+    {
+        var denied = Commerce.Api.Security.InternalServiceKeyGuard.Check(Request, configuration);
+        if (denied is not null)
+        {
+            return denied;
+        }
+
+        if (!ReviewReferenceTypes.TryNormalize(referenceType, out _) || referenceId == Guid.Empty)
+        {
+            return BadRequest(new { errorCode = "VAL_INVALID_INPUT", message = "Reference type must be Order or Auction and the reference ID must be a valid UUID." });
+        }
+
+        var result = await _orderService.GetReviewEligibilityAsync(referenceType, referenceId, ct);
+        return result is null
+            ? NotFound(new { errorCode = "REVIEW_ORDER_NOT_FOUND", message = "The order was not found." })
+            : Ok(result);
+    }
+
     /// <summary>Webhook callback từ Fulfillment Service cập nhật trạng thái giao hàng của đơn hàng con.</summary>
     [HttpPost("/api/v1/sub-orders/{subOrderId:guid}/delivery-status")]
+    // Called by Fulfillment, which has no user: the class-level role check is skipped and the internal service key is checked below.
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public async Task<IActionResult> UpdateDeliveryStatus(
         [FromRoute] Guid subOrderId,
         [FromBody] UpdateDeliveryStatusRequest request,
         [FromServices] Microsoft.Extensions.Configuration.IConfiguration configuration,
         CancellationToken ct)
     {
-        var expectedKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
-            ?? configuration["INTERNAL_SERVICE_SECRET"]
-            ?? configuration["InternalSecurity:ServiceKey"]
-            ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
-
-        if (!Request.Headers.TryGetValue("X-Internal-Service-Key", out var providedKey) ||
-            !string.Equals(providedKey.ToString(), expectedKey, StringComparison.Ordinal))
+        var denied = Commerce.Api.Security.InternalServiceKeyGuard.Check(Request, configuration);
+        if (denied is not null)
         {
-            return StatusCode(StatusCodes.Status403Forbidden, new
-            {
-                errorCode = "FORBIDDEN",
-                message = "Access denied: Missing or invalid X-Internal-Service-Key header."
-            });
+            return denied;
         }
 
         await _orderService.UpdateSubOrderDeliveryStatusAsync(subOrderId, request, ct);

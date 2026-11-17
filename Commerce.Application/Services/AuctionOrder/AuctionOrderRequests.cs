@@ -30,7 +30,8 @@ public sealed record AuctionSettlementRequest(
     string? Source = "WINNER",
     ShippingAddressDto? ShippingAddress = null,
     string? ContactPhone = null,
-    string? ImageUrl = null
+    string? ImageUrl = null,
+    Guid? DepositId = null
 );
 
 public sealed record SubmitAuctionShippingRequest(

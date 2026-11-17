@@ -14,6 +14,7 @@ public sealed record CatalogProductCheckResult(
     bool IsPurchasable,
     int StockQuantity = 100,
     string? ErrorReason = null,
+    int WeightGrams = 0,
     string? SaleType = "Regular");
 
 public sealed record CatalogVariantSwitchResult(

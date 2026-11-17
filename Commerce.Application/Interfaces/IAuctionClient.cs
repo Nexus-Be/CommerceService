@@ -12,7 +12,11 @@ public sealed record AuctionPaymentStatusCallbackRequest(
     DateTimeOffset? PaidAt = null,
     Guid? EventId = null,
     string? OrderSource = null,
-    DateTimeOffset? OccurredAt = null
+    DateTimeOffset? OccurredAt = null,
+    // What the "order paid" notification needs. Sent with the Paid callback; the receiver treats them as optional.
+    string? OrderNo = null,
+    decimal? TotalAmount = null,
+    DateTimeOffset? SellerRespondDeadlineAt = null
 );
 
 public interface IAuctionClient

@@ -16,6 +16,7 @@ public class AuctionOrderConfiguration : IEntityTypeConfiguration<AuctionOrder>
         builder.Property(x => x.SkuAttributesSnapshot).HasColumnType("jsonb");
         builder.Property(x => x.WinningAmount).HasPrecision(18, 2);
         builder.Property(x => x.DepositAmount).HasPrecision(18, 2).HasDefaultValue(0m);
+        builder.Property(x => x.WeightGramsSnapshot).HasDefaultValue(0);
         builder.Property(x => x.RemainingAmount).HasPrecision(18, 2);
         builder.Property(x => x.OrderSource).HasConversion<string>().HasMaxLength(32).HasDefaultValue(Commerce.Domain.Enums.AuctionOrderSource.Winner);
         builder.Property(x => x.ShippingAddress).HasColumnType("jsonb");

@@ -385,6 +385,21 @@ public class FulfillmentClientTests
     {
         // Arrange
         var subOrderId = Guid.NewGuid();
+        var request = new ShipmentCreationRequest(
+            Guid.NewGuid(),
+            subOrderId,
+            Guid.NewGuid(),
+            "Nguyen Van A",
+            "0901234567",
+            "123 Le Loi, Q1, HCMC",
+            "Ho Chi Minh",
+            1442,
+            "20101",
+            500,
+            new List<ShipmentCreationItem>
+            {
+                new(Guid.NewGuid(), 1, "Item A", 100000m, 500)
+            });
         var responsePayload = new
         {
             trackingCode = "GHN-REAL-12345",
@@ -411,7 +426,7 @@ public class FulfillmentClientTests
         var client = new FulfillmentClient(httpClient, NullLogger<FulfillmentClient>.Instance);
 
         // Act
-        var result = await client.CreateShipmentAsync(subOrderId, CancellationToken.None);
+        var result = await client.CreateShipmentAsync(request, CancellationToken.None);
 
         // Assert
         result.Should().NotBeNull();
@@ -428,11 +443,23 @@ public class FulfillmentClientTests
     {
         // Arrange (Fail-Closed: No fake GHN tracking code fallback)
         var subOrderId = Guid.NewGuid();
+        var request = new ShipmentCreationRequest(
+            Guid.NewGuid(),
+            subOrderId,
+            Guid.NewGuid(),
+            "Nguyen Van A",
+            "0901234567",
+            "123 Le Loi, Q1, HCMC",
+            "Ho Chi Minh",
+            1442,
+            "20101",
+            500,
+            new List<ShipmentCreationItem>());
         var httpResponse = new HttpResponseMessage(HttpStatusCode.InternalServerError);
         var (client, _) = CreateClientWithMockHandler(httpResponse);
 
         // Act & Assert
-        var act = () => client.CreateShipmentAsync(subOrderId, CancellationToken.None);
+        var act = () => client.CreateShipmentAsync(request, CancellationToken.None);
         var ex = await act.Should().ThrowAsync<CommerceDomainException>();
         ex.Which.ErrorCode.Should().Be("FULFILLMENT_SERVICE_UNAVAILABLE");
         ex.Which.StatusCode.Should().Be(503);
