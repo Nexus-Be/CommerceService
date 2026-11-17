@@ -1,0 +1,290 @@
+openapi: 3.0.3
+info:
+  title: Commerce Service - Payment Retry & Financial Reconciliation API
+  description: API specifications for repaying pending orders, refund history tracking, and seller financial breakdowns.
+  version: 1.0.0
+paths:
+  /api/v1/orders/{orderId}/pay:
+    post:
+      summary: Repay an order in PendingPayment status
+      operationId: repayOrder
+      tags:
+        - Orders
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order successfully paid via wallet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepayOrderResponse'
+        '400':
+          description: Order cannot be paid (deadline expired, wrong payment method, or insufficient balance)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden - Current user does not own this order
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Order not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/orders/{orderId}/refunds:
+    get:
+      summary: Get refund transaction history for an order
+      operationId: getOrderRefunds
+      tags:
+        - Orders
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of refund records for the order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderRefundResponse'
+        '403':
+          description: Forbidden - Current user is not authorized to view refunds
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Order not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/sub-orders/{subOrderId}/financial-breakdown:
+    get:
+      summary: Get financial breakdown and payout details for a sub-order
+      operationId: getSubOrderFinancialBreakdown
+      tags:
+        - SubOrders
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: subOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Financial breakdown details for the shop sub-order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubOrderFinancialBreakdownResponse'
+        '403':
+          description: Forbidden - Current user is not the seller of this sub-order
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Sub-order not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    RepayOrderResponse:
+      type: object
+      required:
+        - orderId
+        - status
+        - totalAmount
+        - paidAt
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          example: Paid
+        totalAmount:
+          type: number
+          format: decimal
+          example: 250000.0
+        paidAt:
+          type: string
+          format: date-time
+        walletTransactionId:
+          type: string
+          format: uuid
+          nullable: true
+
+    OrderRefundResponse:
+      type: object
+      required:
+        - id
+        - orderId
+        - amount
+        - refundType
+        - status
+        - reasonCode
+        - requestedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        subOrderId:
+          type: string
+          format: uuid
+          nullable: true
+        amount:
+          type: number
+          format: decimal
+          example: 150000.0
+        refundType:
+          type: string
+          example: Full
+        status:
+          type: string
+          example: Completed
+        reasonCode:
+          type: string
+          example: BUYER_CANCELLED
+        reasonNote:
+          type: string
+          nullable: true
+        requestedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    SubOrderFinancialBreakdownResponse:
+      type: object
+      required:
+        - subOrderId
+        - subOrderNo
+        - sellerId
+        - buyerId
+        - totalAmount
+        - itemsAmount
+        - productDiscountAmount
+        - shopDiscountAmount
+        - systemDiscountAmount
+        - shippingFeeAmount
+        - platformFeeAmount
+        - sellerReceiveAmount
+        - isEscrowSettled
+        - status
+        - paymentMethod
+      properties:
+        subOrderId:
+          type: string
+          format: uuid
+        subOrderNo:
+          type: string
+          example: SUB-20261117-001
+        sellerId:
+          type: string
+          format: uuid
+        buyerId:
+          type: string
+          format: uuid
+        totalAmount:
+          type: number
+          format: decimal
+        itemsAmount:
+          type: number
+          format: decimal
+        productDiscountAmount:
+          type: number
+          format: decimal
+        shopDiscountAmount:
+          type: number
+          format: decimal
+        systemDiscountAmount:
+          type: number
+          format: decimal
+        shippingFeeAmount:
+          type: number
+          format: decimal
+        platformFeeAmount:
+          type: number
+          format: decimal
+        sellerReceiveAmount:
+          type: number
+          format: decimal
+        isEscrowSettled:
+          type: boolean
+          example: true
+        status:
+          type: string
+          example: Completed
+        paymentMethod:
+          type: string
+          example: Wallet
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ProblemDetails:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - errorCode
+        - detail
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+          example: INSUFFICIENT_WALLET_BALANCE
+        detail:
+          type: string
+          example: Your wallet balance is insufficient to pay for this order.
+        traceId:
+          type: string

@@ -802,6 +802,79 @@ Toàn bộ các yêu cầu từ Frontend (Web/Mobile) gửi qua API Gateway đư
   }
   ```
 
+#### `ORD-15`: Người Mua Thanh Toán Lại Đơn Hàng (Pending Order Repay)
+* **Endpoint:** `POST /api/v1/orders/{orderId}/pay`
+* **Quyền:** `buyer`
+* **Mô tả:** Cho phép người mua thử lại thanh toán qua Ví khi đơn đang ở trạng thái `PendingPayment` trong thời hạn 15 phút (khắc phục nghẽn mạng).
+* **Cơ chế kỹ thuật:**
+  - Kiểm tra quyền sở hữu (`order.BuyerId == currentUserId`).
+  - Kiểm tra trạng thái: Bắt buộc `order.Status == OrderStatus.PendingPayment`.
+  - Kiểm tra hạn thanh toán: Bắt buộc `order.PaymentDeadlineAt > DateTimeOffset.UtcNow`.
+  - Kiểm tra phương thức thanh toán: Bắt buộc `PaymentMethod == PaymentMethod.Wallet` (COD không thanh toán trực tuyến).
+  - Gọi `_walletClient.PayOrderAsync(order.Id, order.BuyerId, order.TotalAmount)`.
+  - Thành công: Chuyển `order.Status = Paid`, `so.Status = Paid`, ghi nhận `order.WalletTransactionId`, chốt tồn kho vĩnh viễn qua `_fulfillmentClient.CommitStockAsync(order.Id)`.
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "orderId": "6a1b2c3d-7777-4e8f-9a0b-1c2d3e4f5a07",
+    "status": "Paid",
+    "totalAmount": 280000.0,
+    "paidAt": "2026-11-17T14:35:00Z",
+    "walletTransactionId": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d"
+  }
+  ```
+
+#### `ORD-16`: Tra Cứu Lịch Sử Hoàn Tiền Chi Tiết Của Đơn Hàng
+* **Endpoint:** `GET /api/v1/orders/{orderId}/refunds`
+* **Quyền:** `buyer`
+* **Mô tả:** Người mua kiểm tra chi tiết các giao dịch hoàn tiền ví gắn với đơn hàng (hoàn tiền hủy đơn mẹ, hủy đơn con, hoặc hàng hoàn).
+* **Response (HTTP 200 OK):**
+  ```json
+  [
+    {
+      "id": "e1f2a3b4-5678-4c9d-0e1f-2a3b4c5d6e7f",
+      "orderId": "6a1b2c3d-7777-4e8f-9a0b-1c2d3e4f5a07",
+      "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
+      "amount": 120000.0,
+      "refundType": "Full",
+      "status": "Completed",
+      "reasonCode": "SELLER_REJECTED",
+      "reasonNote": "Shop cancelled out of stock item.",
+      "requestedAt": "2026-11-17T10:00:00Z",
+      "completedAt": "2026-11-17T10:00:02Z"
+    }
+  ]
+  ```
+
+#### `ORD-17`: Bảng Kê Phân Rã Tài Chính Cho Người Bán
+* **Endpoint:** `GET /api/v1/sub-orders/{subOrderId}/financial-breakdown`
+* **Quyền:** `seller`
+* **Mô tả:** Người bán kiểm tra bảng kê chi tiết doanh thu thực nhận, phí sàn, trợ giá voucher hệ thống và trạng thái giải ngân Escrow.
+* **Cơ chế kỹ thuật:**
+  - Kiểm tra quyền sở hữu (`so.SellerId == currentUserId` hoặc `so.BuyerId == currentUserId`).
+  - Đảm bảo đẳng thức kế toán: $\text{TotalAmount} = \text{SellerReceiveAmount} + (\text{PlatformFeeAmount} - \text{SystemDiscountAmount}) + \text{ShippingFeeAmount}$.
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
+    "subOrderNo": "SUB-20261117-001",
+    "sellerId": "shop1111-1111-1111-1111-000000000001",
+    "buyerId": "user2222-2222-2222-2222-000000000002",
+    "totalAmount": 280000.0,
+    "itemsAmount": 300000.0,
+    "productDiscountAmount": 20000.0,
+    "shopDiscountAmount": 10000.0,
+    "systemDiscountAmount": 15000.0,
+    "shippingFeeAmount": 25000.0,
+    "platformFeeAmount": 13500.0,
+    "sellerReceiveAmount": 256500.0,
+    "isEscrowSettled": true,
+    "status": "Completed",
+    "paymentMethod": "Wallet",
+    "completedAt": "2026-11-17T14:00:00Z"
+  }
+  ```
+
 #### `ORD-08 / R87`: Theo Dõi Vận Chuyển Đơn Hàng
 * **Endpoint:** `GET /api/v1/shipments/order/{orderId}`
 * **Quyền:** `buyer`, `seller`
@@ -1124,6 +1197,9 @@ Commerce Service giao tiếp với 3 dịch vụ vệ tinh qua các Typed HTTP C
 | **400** | `MAX_QUANTITY_EXCEEDED` | Mua vượt quá 99 chiếc/món | `"Quantity per item cannot exceed 99."` |
 | **400** | `MAX_ITEMS_REACHED` | Vượt quá 50 món khác nhau trong giỏ | `"Cart cannot contain more than 50 distinct items."` |
 | **400** | `INVALID_STATUS` | Chuyển trạng thái đơn không hợp lệ | `"Sub-order cannot be confirmed in its current status."` |
+| **400** | `ORDER_PAYMENT_DEADLINE_EXPIRED` | Hết hạn 15 phút thanh toán lại đơn hàng | `"Payment deadline for this order has expired."` |
+| **400** | `INVALID_PAYMENT_METHOD` | Đơn COD không thể thanh toán trực tuyến | `"COD orders cannot be paid online."` |
+| **400** | `INSUFFICIENT_WALLET_BALANCE` | Số dư ví không đủ thanh toán lại đơn | `"Your wallet balance is insufficient to pay for this order."` |
 | **400** | `ORDER_CANNOT_BE_CANCELLED` | Cố hủy đơn khi đã giao, đang giao hoặc hoàn tất | `"Order cannot be cancelled once shipped, delivered, or completed."` |
 | **400** | `SUB_ORDER_CANNOT_BE_CANCELLED` | Cố hủy đơn con khi đã xuất kho vận chuyển hoặc hoàn tất | `"Sub-order cannot be cancelled once shipped or completed."` |
 | **400** | `CATALOG_SKU_INACTIVE` | Sản phẩm đã ngừng bán trên sàn | `"Product is no longer available for purchase."` |

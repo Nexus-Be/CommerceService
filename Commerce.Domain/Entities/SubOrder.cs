@@ -41,6 +41,7 @@ public class SubOrder : BaseEntity<Guid>
     public string? LabelPrintUrl { get; set; }
     public DateTimeOffset? EstimatedDeliveryAt { get; set; }
     public bool ShipmentPendingCreation { get; set; } = false;
+    public bool IsEscrowSettled { get; set; } = false;
     public long RowVersion { get; set; }
 
     // Navigation

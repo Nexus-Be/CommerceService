@@ -302,6 +302,51 @@ public class OrdersController : ControllerBase
         return Ok(timeline);
     }
 
+    /// <summary>Thanh toán lại đơn hàng đang ở trạng thái PendingPayment trong thời hạn 15 phút.</summary>
+    [HttpPost("{orderId:guid}/pay")]
+    public async Task<IActionResult> RepayOrder(
+        [FromRoute] Guid orderId,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var currentUserId, out var authError))
+        {
+            return authError;
+        }
+
+        var response = await _orderService.RepayOrderAsync(currentUserId, orderId, ct);
+        return Ok(response);
+    }
+
+    /// <summary>Tra cứu lịch sử hoàn tiền chi tiết của đơn hàng.</summary>
+    [HttpGet("{orderId:guid}/refunds")]
+    public async Task<IActionResult> GetOrderRefunds(
+        [FromRoute] Guid orderId,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var currentUserId, out var authError))
+        {
+            return authError;
+        }
+
+        var response = await _orderService.GetOrderRefundsAsync(currentUserId, orderId, ct);
+        return Ok(response);
+    }
+
+    /// <summary>Tra cứu bảng kê phân rã tài chính, doanh thu thực nhận và phí sàn của đơn hàng con cho Seller.</summary>
+    [HttpGet("/api/v1/sub-orders/{subOrderId:guid}/financial-breakdown")]
+    public async Task<IActionResult> GetSubOrderFinancialBreakdown(
+        [FromRoute] Guid subOrderId,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var currentUserId, out var authError))
+        {
+            return authError;
+        }
+
+        var response = await _orderService.GetSubOrderFinancialBreakdownAsync(currentUserId, subOrderId, ct);
+        return Ok(response);
+    }
+
     /// <summary>Tương thích ngược: Tra cứu danh sách đơn của buyer.</summary>
     [HttpGet("buyer/{buyerId:guid}")]
     public async Task<IActionResult> ListByBuyer(

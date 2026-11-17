@@ -65,6 +65,15 @@ public interface IOrderService
     /// <summary>Passive Guard: Kiểm tra và hủy đơn hàng nếu đã quá hạn thanh toán.</summary>
     Task<bool> ExpireOrderIfOverdueAsync(Guid orderId, CancellationToken ct = default);
 
+    /// <summary>Thanh toán lại đơn hàng đang ở trạng thái PendingPayment trong thời hạn 15 phút.</summary>
+    Task<RepayOrderResponse> RepayOrderAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default);
+
+    /// <summary>Tra cứu lịch sử hoàn tiền chi tiết của đơn hàng.</summary>
+    Task<List<OrderRefundResponse>> GetOrderRefundsAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default);
+
+    /// <summary>Tra cứu bảng kê phân rã tài chính, doanh thu thực nhận và phí sàn của đơn hàng con cho Seller.</summary>
+    Task<SubOrderFinancialBreakdownResponse> GetSubOrderFinancialBreakdownAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default);
+
     /// <summary>Tương thích ngược: Tra cứu theo Id thô.</summary>
     Task<OrderDto> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
 

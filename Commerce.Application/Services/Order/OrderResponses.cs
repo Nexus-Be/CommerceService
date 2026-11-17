@@ -193,3 +193,43 @@ public sealed record CancelSubOrderResponse(
     bool InventoryReleased,
     bool CarrierShipmentCancelled
 );
+
+public sealed record RepayOrderResponse(
+    Guid OrderId,
+    string Status,
+    decimal TotalAmount,
+    DateTimeOffset PaidAt,
+    Guid? WalletTransactionId
+);
+
+public sealed record OrderRefundResponse(
+    Guid Id,
+    Guid? OrderId,
+    Guid? SubOrderId,
+    decimal Amount,
+    string RefundType,
+    string Status,
+    string ReasonCode,
+    string? ReasonNote,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset? CompletedAt
+);
+
+public sealed record SubOrderFinancialBreakdownResponse(
+    Guid SubOrderId,
+    string SubOrderNo,
+    Guid SellerId,
+    Guid BuyerId,
+    decimal TotalAmount,
+    decimal ItemsAmount,
+    decimal ProductDiscountAmount,
+    decimal ShopDiscountAmount,
+    decimal SystemDiscountAmount,
+    decimal ShippingFeeAmount,
+    decimal PlatformFeeAmount,
+    decimal SellerReceiveAmount,
+    bool IsEscrowSettled,
+    string Status,
+    string PaymentMethod,
+    DateTimeOffset? CompletedAt
+);

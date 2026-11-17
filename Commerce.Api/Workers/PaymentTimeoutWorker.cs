@@ -410,6 +410,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                     });
 
                     // Giải ngân Escrow sang ví người bán (bỏ qua nếu COD)
+                    bool autoSettled = so.PaymentMethod == PaymentMethod.Cod;
                     if (walletClient != null && so.PaymentMethod != PaymentMethod.Cod && so.SellerReceiveAmount > 0m)
                     {
                         try
@@ -423,6 +424,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
 
                             if (settled)
                             {
+                                autoSettled = true;
                                 _logger.LogInformation("[PaymentTimeoutWorker] Auto-completed SubOrder '{SubOrderId}' escrow settled successfully. Amount: {Amount}", so.Id, so.SellerReceiveAmount);
                             }
                             else
@@ -435,6 +437,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                             _logger.LogError(ex, "[PaymentTimeoutWorker] Failed to settle seller escrow for auto-completed SubOrder '{SubOrderId}'.", so.Id);
                         }
                     }
+                    so.IsEscrowSettled = autoSettled;
 
                     // Thưởng điểm uy tín Seller (+1)
                     if (userClient != null)
@@ -487,6 +490,165 @@ public sealed class PaymentTimeoutWorker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "[PaymentTimeoutWorker] Error during auto-completion sweep of delivered SubOrders.");
+        }
+
+        // 5. Quét bù đối soát hoàn tiền bị treo (Self-healing requested refunds)
+        await ReconcilePendingRefundsAsync(dbContext, walletClient, ct);
+
+        // 6. Quét bù đối soát giải ngân Escrow cho Shop (Self-healing unsettled seller escrow)
+        await ReconcileUnsettledEscrowsAsync(dbContext, walletClient, ct);
+    }
+
+    internal async Task ReconcilePendingRefundsAsync(
+        ICommerceDbContext dbContext,
+        IWalletClient? walletClient,
+        CancellationToken ct)
+    {
+        if (walletClient == null) return;
+
+        try
+        {
+            var pendingRefunds = await dbContext.OrderRefunds
+                .Where(r => r.Status == RefundStatus.Requested)
+                .OrderBy(r => r.RequestedAt)
+                .Take(50)
+                .ToListAsync(ct);
+
+            if (pendingRefunds.Count == 0) return;
+
+            _logger.LogInformation("[PaymentTimeoutWorker] Found {Count} pending requested refunds to reconcile.", pendingRefunds.Count);
+
+            int reconciledCount = 0;
+            var now = DateTimeOffset.UtcNow;
+
+            foreach (var refund in pendingRefunds)
+            {
+                try
+                {
+                    bool succeeded = false;
+
+                    if (refund.SubOrderId.HasValue)
+                    {
+                        var subOrder = await dbContext.SubOrders
+                            .AsNoTracking()
+                            .FirstOrDefaultAsync(s => s.Id == refund.SubOrderId.Value, ct);
+
+                        if (subOrder != null)
+                        {
+                            succeeded = await walletClient.RefundSubOrderPaymentAsync(
+                                subOrder.Id,
+                                subOrder.BuyerId.ToString(),
+                                refund.Amount,
+                                refund.ReasonNote ?? "Reconciliation refund retry",
+                                $"refund-retry-{refund.Id}",
+                                ct);
+                        }
+                    }
+                    else if (refund.OrderId.HasValue)
+                    {
+                        var order = await dbContext.Orders
+                            .AsNoTracking()
+                            .FirstOrDefaultAsync(o => o.Id == refund.OrderId.Value, ct);
+
+                        if (order != null)
+                        {
+                            succeeded = await walletClient.RefundOrderPaymentAsync(
+                                order.Id,
+                                order.BuyerId.ToString(),
+                                refund.Amount,
+                                refund.ReasonNote ?? "Reconciliation refund retry",
+                                $"refund-retry-{refund.Id}",
+                                ct);
+                        }
+                    }
+
+                    if (succeeded)
+                    {
+                        refund.Status = RefundStatus.Completed;
+                        refund.CompletedAt = now;
+                        reconciledCount++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[PaymentTimeoutWorker] Failed to reconcile refund '{RefundId}'. Will retry next cycle.", refund.Id);
+                }
+            }
+
+            if (reconciledCount > 0)
+            {
+                await dbContext.SaveChangesAsync(ct);
+                _logger.LogInformation("[PaymentTimeoutWorker] Successfully reconciled {Count}/{Total} pending refunds.", reconciledCount, pendingRefunds.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[PaymentTimeoutWorker] Error during pending refunds reconciliation sweep.");
+        }
+    }
+
+    internal async Task ReconcileUnsettledEscrowsAsync(
+        ICommerceDbContext dbContext,
+        IWalletClient? walletClient,
+        CancellationToken ct)
+    {
+        if (walletClient == null) return;
+
+        try
+        {
+            var unsettledSubOrders = await dbContext.SubOrders
+                .Where(s => s.Status == SubOrderStatus.Completed &&
+                            !s.IsEscrowSettled &&
+                            s.PaymentMethod == PaymentMethod.Wallet &&
+                            s.SellerReceiveAmount > 0m)
+                .OrderBy(s => s.CompletedAt)
+                .Take(50)
+                .ToListAsync(ct);
+
+            if (unsettledSubOrders.Count == 0) return;
+
+            _logger.LogInformation("[PaymentTimeoutWorker] Found {Count} completed sub-orders with unsettled escrow to reconcile.", unsettledSubOrders.Count);
+
+            int settledCount = 0;
+            var now = DateTimeOffset.UtcNow;
+
+            foreach (var so in unsettledSubOrders)
+            {
+                try
+                {
+                    var succeeded = await walletClient.SettleSellerSubOrderAsync(
+                        so.Id,
+                        so.SellerId,
+                        so.SellerReceiveAmount,
+                        idempotencyKey: $"settle-{so.Id}",
+                        cancellationToken: ct);
+
+                    if (succeeded)
+                    {
+                        so.IsEscrowSettled = true;
+                        so.UpdatedAt = now;
+                        settledCount++;
+                    }
+                    else
+                    {
+                        _logger.LogWarning("[PaymentTimeoutWorker] Settlement returned false for SubOrder '{SubOrderId}' during reconciliation.", so.Id);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[PaymentTimeoutWorker] Failed to settle escrow for SubOrder '{SubOrderId}' during reconciliation. Will retry next cycle.", so.Id);
+                }
+            }
+
+            if (settledCount > 0)
+            {
+                await dbContext.SaveChangesAsync(ct);
+                _logger.LogInformation("[PaymentTimeoutWorker] Successfully reconciled {Count}/{Total} unsettled escrows.", settledCount, unsettledSubOrders.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[PaymentTimeoutWorker] Error during unsettled escrow reconciliation sweep.");
         }
     }
 }

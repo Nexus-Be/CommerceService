@@ -1748,6 +1748,8 @@ public sealed class OrderService : IOrderService
             settled = true;
         }
 
+        so.IsEscrowSettled = settled;
+
         // TỰ ĐỘNG CỘNG ĐIỂM UY TÍN CHO SELLER (INT-07)
         if (_userClient != null)
         {
@@ -1844,15 +1846,17 @@ public sealed class OrderService : IOrderService
                 so.CompletedAt = completedAt;
                 so.UpdatedAt = completedAt;
 
+                bool subOrderSettled = false;
                 if (so.PaymentMethod == PaymentMethod.Cod)
                 {
                     _logger.LogInformation("COD SubOrder '{SubOrderId}' completed during master order complete. Courier reconciles physical cash directly. Skipping escrow disbursement.", so.Id);
+                    subOrderSettled = true;
                 }
                 else if (so.SellerReceiveAmount > 0m)
                 {
                     try
                     {
-                        await _walletClient.SettleSellerSubOrderAsync(
+                        subOrderSettled = await _walletClient.SettleSellerSubOrderAsync(
                             so.Id,
                             so.SellerId,
                             so.SellerReceiveAmount,
@@ -1867,7 +1871,10 @@ public sealed class OrderService : IOrderService
                 else
                 {
                     _logger.LogInformation("SubOrder '{SubOrderId}' has zero seller receive amount. Skipping escrow disbursement.", so.Id);
+                    subOrderSettled = true;
                 }
+
+                so.IsEscrowSettled = subOrderSettled;
             }
 
             completedSubOrderIds.Add(so.Id);
@@ -2765,5 +2772,159 @@ public sealed class OrderService : IOrderService
         return new PagedData<OrderDto>(
             orders,
             PaginationMetadata.Create(safePage, safePageSize, totalCount));
+    }
+
+    public async Task<RepayOrderResponse> RepayOrderAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default)
+    {
+        var order = await _dbContext.Orders
+            .Include(o => o.SubOrders)
+            .FirstOrDefaultAsync(o => o.Id == orderId, ct)
+            ?? throw new EntityNotFoundException("ORDER_NOT_FOUND", "Order", orderId);
+
+        if (order.BuyerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to pay for this order.", 403);
+        }
+
+        if (order.Status != OrderStatus.PendingPayment)
+        {
+            throw new CommerceDomainException("INVALID_STATUS", "Order is not in pending payment status.");
+        }
+
+        if (order.PaymentDeadlineAt <= DateTimeOffset.UtcNow)
+        {
+            throw new CommerceDomainException("ORDER_PAYMENT_DEADLINE_EXPIRED", "Payment deadline for this order has expired.");
+        }
+
+        var paymentMethod = order.SubOrders.FirstOrDefault()?.PaymentMethod ?? PaymentMethod.Wallet;
+        if (paymentMethod != PaymentMethod.Wallet)
+        {
+            throw new CommerceDomainException("INVALID_PAYMENT_METHOD", "COD orders cannot be paid online.");
+        }
+
+        var paymentResult = await _walletClient.PayOrderAsync(order.Id, order.BuyerId, order.TotalAmount, cancellationToken: ct);
+        if (paymentResult?.IsSuccess != true)
+        {
+            if (paymentResult?.ErrorCode == "INSUFFICIENT_WALLET_BALANCE" || paymentResult?.ErrorCode == "INSUFFICIENT_BALANCE")
+            {
+                throw new CommerceDomainException("INSUFFICIENT_WALLET_BALANCE", "Your wallet balance is insufficient to pay for this order.");
+            }
+
+            throw new CommerceDomainException(
+                paymentResult?.ErrorCode ?? "WALLET_PAYMENT_FAILED",
+                paymentResult?.ErrorMessage ?? "Payment via wallet service failed.");
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        order.Status = OrderStatus.Paid;
+        order.PaymentAttemptCount++;
+        order.UpdatedAt = now;
+
+        if (!string.IsNullOrWhiteSpace(paymentResult.TransactionId) &&
+            Guid.TryParse(paymentResult.TransactionId, out var parsedTxId))
+        {
+            order.WalletTransactionId = parsedTxId;
+        }
+
+        foreach (var so in order.SubOrders)
+        {
+            var prevStatus = so.Status;
+            so.Status = SubOrderStatus.Paid;
+            so.PaidAt = now;
+            so.UpdatedAt = now;
+            if (order.WalletTransactionId.HasValue)
+            {
+                so.WalletTransactionId = order.WalletTransactionId;
+            }
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = prevStatus,
+                ToStatus = SubOrderStatus.Paid,
+                ActorRole = OrderActorRole.Buyer,
+                Reason = "Order repayment succeeded via wallet.",
+                CreatedAt = now
+            });
+        }
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        bool stockCommitted = await _fulfillmentClient.CommitStockAsync(order.Id, ct);
+        if (!stockCommitted)
+        {
+            _logger.LogError("CRITICAL: Order '{OrderId}' was repaid via Wallet, but stock commit failed at Fulfillment Service. Flagged for reconciliation.", order.Id);
+        }
+
+        return new RepayOrderResponse(
+            order.Id,
+            order.Status.ToString(),
+            order.TotalAmount,
+            now,
+            order.WalletTransactionId);
+    }
+
+    public async Task<List<OrderRefundResponse>> GetOrderRefundsAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default)
+    {
+        var order = await _dbContext.Orders
+            .AsNoTracking()
+            .FirstOrDefaultAsync(o => o.Id == orderId, ct)
+            ?? throw new EntityNotFoundException("ORDER_NOT_FOUND", "Order", orderId);
+
+        if (order.BuyerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to view refunds for this order.", 403);
+        }
+
+        var refunds = await _dbContext.OrderRefunds
+            .AsNoTracking()
+            .Where(r => r.OrderId == orderId)
+            .OrderByDescending(r => r.RequestedAt)
+            .Select(r => new OrderRefundResponse(
+                r.Id,
+                r.OrderId,
+                r.SubOrderId,
+                r.Amount,
+                r.RefundType.ToString(),
+                r.Status.ToString(),
+                r.ReasonCode,
+                r.ReasonNote,
+                r.RequestedAt,
+                r.CompletedAt))
+            .ToListAsync(ct);
+
+        return refunds;
+    }
+
+    public async Task<SubOrderFinancialBreakdownResponse> GetSubOrderFinancialBreakdownAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default)
+    {
+        var so = await _dbContext.SubOrders
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == subOrderId, ct)
+            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
+
+        if (so.SellerId != currentUserId && so.BuyerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to view the financial breakdown of this sub-order.", 403);
+        }
+
+        return new SubOrderFinancialBreakdownResponse(
+            so.Id,
+            so.SubOrderNo,
+            so.SellerId,
+            so.BuyerId,
+            so.TotalAmount,
+            so.ItemsAmount,
+            so.ProductDiscountAmount,
+            so.ShopDiscountAmount,
+            so.SystemDiscountAmount,
+            so.ShippingFeeAmount,
+            so.PlatformFeeAmount,
+            so.SellerReceiveAmount,
+            so.IsEscrowSettled,
+            so.Status.ToString(),
+            so.PaymentMethod.ToString(),
+            so.CompletedAt);
     }
 }

@@ -31,6 +31,7 @@ public class SubOrderConfiguration : IEntityTypeConfiguration<SubOrder>
         builder.Property(x => x.LabelPrintUrl).HasMaxLength(500);
         builder.Property(x => x.EstimatedDeliveryAt);
         builder.Property(x => x.ShipmentPendingCreation).HasDefaultValue(false);
+        builder.Property(x => x.IsEscrowSettled).HasDefaultValue(false);
         builder.Property(x => x.RowVersion).IsConcurrencyToken();
 
         builder.HasOne(s => s.Order)
