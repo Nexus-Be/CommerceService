@@ -97,6 +97,42 @@ public class CatalogClientTests
     }
 
     [Fact]
+    public async Task GetSkuBatchDetailsAsync_ShouldParseSaleType_WhenProvided()
+    {
+        // Arrange
+        var sku1 = Guid.NewGuid();
+        var json = JsonSerializer.Serialize(new
+        {
+            items = new[]
+            {
+                new
+                {
+                    variantId = sku1,
+                    productId = Guid.NewGuid(),
+                    sellerId = Guid.NewGuid(),
+                    productName = "Auction Item",
+                    price = (decimal?)500000m,
+                    isPurchasable = true,
+                    saleType = "Auction"
+                }
+            },
+            notFoundIds = Array.Empty<Guid>()
+        });
+
+        var (client, _) = CreateClientWithMockHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        });
+
+        // Act
+        var result = await client.GetSkuBatchDetailsAsync(new[] { sku1 });
+
+        // Assert
+        result.Should().ContainKey(sku1);
+        result[sku1].SaleType.Should().Be("Auction");
+    }
+
+    [Fact]
     public async Task GetSkuBatchDetailsAsync_ShouldThrow503_WhenCatalogReturns500()
     {
         // Arrange

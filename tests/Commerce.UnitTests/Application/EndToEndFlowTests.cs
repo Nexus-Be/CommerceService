@@ -17,6 +17,7 @@ using Commerce.Application.Services.Order;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
 using Commerce.Domain.Exceptions;
+using Commerce.Application.Services.Discount;
 using Commerce.Domain.ValueObjects;
 using Commerce.UnitTests.Common;
 using FluentAssertions;
@@ -29,6 +30,7 @@ public class EndToEndFlowTests : IDisposable
     private readonly Mock<IWalletClient> _mockWalletClient = new();
     private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
+    private readonly Mock<IUserClient> _mockUserClient = new();
     private readonly Mock<ILogger<CartService>> _mockCartLogger = new();
     private readonly Mock<ILogger<OrderService>> _mockOrderLogger = new();
     private readonly IDistributedCache _cache;
@@ -126,10 +128,6 @@ public class EndToEndFlowTests : IDisposable
             .ReturnsAsync(new WalletPaymentResult(true, TransactionId: Guid.NewGuid().ToString(), BalanceAfter: 1500000m));
 
         _mockWalletClient
-            .Setup(w => w.CheckoutDirectPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-
-        _mockWalletClient
             .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
@@ -140,6 +138,11 @@ public class EndToEndFlowTests : IDisposable
         _mockWalletClient
             .Setup(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+
+        // User setup
+        _mockUserClient
+            .Setup(u => u.CheckBuyerPermissionAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UserPermissionCheckResult(true, null, null));
     }
 
     public void Dispose()
@@ -154,13 +157,21 @@ public class EndToEndFlowTests : IDisposable
 
     private OrderService CreateOrderService(ICommerceDbContext? customDb = null)
     {
+        var db = customDb ?? _dbContext;
+        var calcEngine = new VoucherCalculationEngine();
+        var lifecycleService = new VoucherLifecycleService(db);
+        var voucherCalculator = new VoucherDiscountCalculator(db, calcEngine);
+
         return new OrderService(
-            customDb ?? _dbContext,
+            db,
             _mockWalletClient.Object,
             _mockFulfillmentClient.Object,
             _mockCatalogClient.Object,
+            _mockUserClient.Object,
             _cache,
-            _mockOrderLogger.Object);
+            _mockOrderLogger.Object,
+            voucherCalculator,
+            lifecycleService);
     }
 
     [Fact]
@@ -657,6 +668,133 @@ public class EndToEndFlowTests : IDisposable
             237500m,
             $"settle-{subOrderId}",
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task E2E_Flow10_CheckoutQuoteWith3TierStackingAndOrderCreation_ShouldPass()
+    {
+        // Arrange
+        var cartService = CreateCartService();
+        var orderService = CreateOrderService();
+
+        // 1. Setup 3-tier vouchers in DB:
+        // Tier 1: Product voucher on _sku1 (10,000 VND off)
+        var prodVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "PROD10K",
+            Name = "Product 10K Off",
+            ScopeType = DiscountScopeType.Product,
+            OwnerSellerId = _sellerA,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 10000m,
+            MinOrderAmount = 50000m,
+            Status = DiscountStatus.Active,
+            Scopes = new List<DiscountCodeScope>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    DiscountCodeId = Guid.NewGuid(),
+                    ScopeRefType = DiscountScopeRefType.Sku,
+                    ScopeRefId = _sku1
+                }
+            }
+        };
+
+        // Tier 2: Shop voucher for _sellerA (20,000 VND off)
+        var shopVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "SHOP20K",
+            Name = "Shop A 20K Off",
+            ScopeType = DiscountScopeType.Shop,
+            OwnerSellerId = _sellerA,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 20000m,
+            MinOrderAmount = 100000m,
+            Status = DiscountStatus.Active
+        };
+
+        // Tier 3: System voucher (30,000 VND off)
+        var sysVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "SYS30K",
+            Name = "System 30K Off",
+            ScopeType = DiscountScopeType.System,
+            OwnerSellerId = null,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 30000m,
+            MinOrderAmount = 150000m,
+            Status = DiscountStatus.Active
+        };
+
+        _dbContext.DiscountCodes.AddRange(prodVoucher, shopVoucher, sysVoucher);
+        await _dbContext.SaveChangesAsync();
+
+        // 2. Add cart items: Shop A (_sku1 x 2 = 200k, _sku2 x 1 = 200k => Total Shop A = 400k)
+        var cart = await cartService.AddItemAsync(_buyerId, new AddCartItemRequest(_sku1, 2, _sellerA), CancellationToken.None);
+        cart = await cartService.AddItemAsync(_buyerId, new AddCartItemRequest(_sku2, 1, _sellerA), CancellationToken.None);
+        var cartItemIds = cart.Items.Select(i => i.Id).ToList();
+
+        // 3. Request Checkout Quote with all 3 vouchers
+        var quoteReq = new CheckoutQuoteRequest(
+            CartItemIds: cartItemIds,
+            ShippingAddress: new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+            ContactPhone: "0901234567",
+            PaymentMethod: PaymentMethod.Wallet,
+            VoucherCodes: new List<string> { "PROD10K", "SHOP20K", "SYS30K" }
+        );
+
+        var quote = await orderService.QuoteCheckoutAsync(_buyerId, quoteReq, CancellationToken.None);
+
+        // Assert Quote
+        quote.AppliedVouchers.Should().Contain(new[] { "PROD10K", "SHOP20K", "SYS30K" });
+        quote.Shops.Should().HaveCount(1);
+        var shopAQuote = quote.Shops[0];
+
+        // ItemsAmount = 400,000
+        // ProductDiscount = 10,000
+        // ShopDiscount = 20,000
+        // SystemDiscount = 30,000
+        // Total Discounts = 60,000
+        // NetSeller = 400k - 10k - 20k = 370k
+        // Commission 5% = 18,500
+        // SellerReceive = 370k - 18,500 = 351,500
+        // ShippingFee = 30,000
+        // TotalAmount (Buyer pays) = 370k - 30k + 30k = 370,000
+        shopAQuote.ItemsAmount.Should().Be(400000m);
+        shopAQuote.ProductDiscountAmount.Should().Be(10000m);
+        shopAQuote.ShopDiscountAmount.Should().Be(20000m);
+        shopAQuote.SystemDiscountAmount.Should().Be(30000m);
+        shopAQuote.DiscountAmount.Should().Be(60000m);
+        shopAQuote.TotalAmount.Should().Be(370000m);
+
+        // 4. Create Order from Quote
+        var createOrderReq = new CreateOrderRequest(
+            QuoteId: quote.QuoteId,
+            PaymentMethod: PaymentMethod.Wallet,
+            ShippingAddress: "Full Address",
+            ContactPhone: "0901234567"
+        );
+
+        var createOrderRes = await orderService.CreateOrderAsync(_buyerId, createOrderReq, CancellationToken.None);
+
+        // Assert Order Created
+        createOrderRes.OrderId.Should().NotBeEmpty();
+        createOrderRes.TotalAmount.Should().Be(370000m);
+        createOrderRes.Status.Should().Be("Paid");
+
+        // Verify Vouchers Committed in DB
+        var reloadedProd = await _dbContext.DiscountCodes.FindAsync(prodVoucher.Id);
+        reloadedProd!.UsedCount.Should().Be(1);
+
+        var usages = await _dbContext.DiscountCodeUsages
+            .Where(u => u.OrderId == createOrderRes.OrderId)
+            .ToListAsync();
+        usages.Should().NotBeEmpty();
+        usages.Should().OnlyContain(u => u.Status == DiscountUsageStatus.Used);
     }
 
     private class FailingDbCommerce : TestCommerceDbContext

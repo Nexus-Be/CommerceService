@@ -1,0 +1,685 @@
+openapi: 3.0.3
+info:
+  title: Discounts API (Nexus Commerce Service)
+  description: Public and Administrative REST API for Voucher & Promotion Management.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8003/api/v1
+    description: Local Docker / Test Server
+
+paths:
+  /discounts/available:
+    get:
+      summary: Get Available Vouchers for Buyer
+      operationId: getAvailableVouchers
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sellerId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: cartItemIds
+          in: query
+          required: false
+          schema:
+            type: string
+            example: "3fa85f64-5717-4562-b3fc-2c963f66afa6,4fa85f64-5717-4562-b3fc-2c963f66afa7"
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paged list of vouchers with eligibility details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedBuyerAvailableVoucher'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /discounts/validate:
+    post:
+      summary: Validate a Single Voucher Code
+      operationId: validateVoucher
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateVoucherRequest'
+      responses:
+        '200':
+          description: Validation result with estimated discount
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateVoucherResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetails'
+        '404':
+          $ref: '#/components/responses/ProblemDetails'
+
+  /discounts/recommend:
+    post:
+      summary: Recommend Optimal Voucher Combination
+      operationId: recommendVouchers
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecommendVouchersRequest'
+      responses:
+        '200':
+          description: Optimal voucher codes and savings breakdown
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendVouchersResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetails'
+
+  /discounts:
+    post:
+      summary: Create Voucher
+      operationId: createDiscount
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDiscountRequest'
+      responses:
+        '201':
+          description: Voucher created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscountDetailResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetails'
+        '403':
+          $ref: '#/components/responses/ProblemDetails'
+        '409':
+          $ref: '#/components/responses/ProblemDetails'
+        '503':
+          $ref: '#/components/responses/ProblemDetails'
+    get:
+      summary: List Vouchers for Management
+      operationId: listDiscounts
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: scopeType
+          in: query
+          schema:
+            $ref: '#/components/schemas/DiscountScopeType'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/DiscountStatus'
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paged list of voucher summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedDiscountSummary'
+
+  /discounts/{discountId}:
+    get:
+      summary: Get Voucher Details
+      operationId: getDiscountById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: discountId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Full voucher details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscountDetailResponse'
+        '404':
+          $ref: '#/components/responses/ProblemDetails'
+    put:
+      summary: Update Voucher
+      operationId: updateDiscount
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: discountId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDiscountRequest'
+      responses:
+        '200':
+          description: Updated voucher details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscountDetailResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetails'
+        '403':
+          $ref: '#/components/responses/ProblemDetails'
+        '404':
+          $ref: '#/components/responses/ProblemDetails'
+    delete:
+      summary: Soft Delete Voucher
+      operationId: deleteDiscount
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: discountId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Voucher deleted successfully
+        '400':
+          $ref: '#/components/responses/ProblemDetails'
+        '403':
+          $ref: '#/components/responses/ProblemDetails'
+        '404':
+          $ref: '#/components/responses/ProblemDetails'
+
+  /discounts/{discountId}/status:
+    patch:
+      summary: Toggle Voucher Status
+      operationId: updateDiscountStatus
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: discountId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDiscountStatusRequest'
+      responses:
+        '200':
+          description: Status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscountDetailResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetails'
+        '403':
+          $ref: '#/components/responses/ProblemDetails'
+        '404':
+          $ref: '#/components/responses/ProblemDetails'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    DiscountScopeType:
+      type: string
+      enum: [System, Shop, Product]
+
+    DiscountType:
+      type: string
+      enum: [Percentage, FixedAmount]
+
+    DiscountScopeRefType:
+      type: string
+      enum: [Shop, Product, Sku, Category, All]
+
+    DiscountStatus:
+      type: string
+      enum: [Draft, Active, Inactive, Expired]
+
+    ValidateVoucherRequest:
+      type: object
+      required: [code, cartItemIds]
+      properties:
+        code:
+          type: string
+          example: "SUMMER50"
+        cartItemIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    ValidateVoucherResponse:
+      type: object
+      properties:
+        isValid:
+          type: boolean
+        discountId:
+          type: string
+          format: uuid
+        code:
+          type: string
+        scopeType:
+          $ref: '#/components/schemas/DiscountScopeType'
+        estimatedDiscountAmount:
+          type: number
+          format: decimal
+
+    RecommendVouchersRequest:
+      type: object
+      required: [cartItemIds]
+      properties:
+        cartItemIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    TierSavingsDto:
+      type: object
+      properties:
+        productDiscount:
+          type: number
+          format: decimal
+        shopDiscount:
+          type: number
+          format: decimal
+        systemDiscount:
+          type: number
+          format: decimal
+        totalSavings:
+          type: number
+          format: decimal
+
+    RecommendVouchersResponse:
+      type: object
+      properties:
+        recommendedVoucherCodes:
+          type: array
+          items:
+            type: string
+        savingsBreakdown:
+          $ref: '#/components/schemas/TierSavingsDto'
+
+    CreateDiscountScopeInput:
+      type: object
+      required: [scopeRefType]
+      properties:
+        scopeRefType:
+          $ref: '#/components/schemas/DiscountScopeRefType'
+        scopeRefId:
+          type: string
+          format: uuid
+          nullable: true
+
+    CreateDiscountRequest:
+      type: object
+      required: [code, name, scopeType, discountType, discountValue]
+      properties:
+        code:
+          type: string
+          example: "SALE2026"
+        name:
+          type: string
+        scopeType:
+          $ref: '#/components/schemas/DiscountScopeType'
+        ownerSellerId:
+          type: string
+          format: uuid
+          nullable: true
+        discountType:
+          $ref: '#/components/schemas/DiscountType'
+        discountValue:
+          type: number
+          format: decimal
+        minOrderAmount:
+          type: number
+          format: decimal
+          default: 0
+        maxDiscountAmount:
+          type: number
+          format: decimal
+          nullable: true
+        maxUsesTotal:
+          type: integer
+          nullable: true
+        maxUsesPerUser:
+          type: integer
+          default: 1
+        isVisible:
+          type: boolean
+          default: true
+        startsAt:
+          type: string
+          format: date-time
+          nullable: true
+        endsAt:
+          type: string
+          format: date-time
+          nullable: true
+        scopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreateDiscountScopeInput'
+
+    UpdateDiscountRequest:
+      type: object
+      required: [name, isVisible, maxUsesPerUser]
+      properties:
+        name:
+          type: string
+        isVisible:
+          type: boolean
+        maxUsesPerUser:
+          type: integer
+        maxUsesTotal:
+          type: integer
+          nullable: true
+        endsAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    UpdateDiscountStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/DiscountStatus'
+
+    DiscountScopeDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        scopeRefType:
+          $ref: '#/components/schemas/DiscountScopeRefType'
+        scopeRefId:
+          type: string
+          format: uuid
+          nullable: true
+
+    DiscountDetailResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        scopeType:
+          $ref: '#/components/schemas/DiscountScopeType'
+        ownerSellerId:
+          type: string
+          format: uuid
+          nullable: true
+        discountType:
+          $ref: '#/components/schemas/DiscountType'
+        discountValue:
+          type: number
+          format: decimal
+        minOrderAmount:
+          type: number
+          format: decimal
+        maxDiscountAmount:
+          type: number
+          format: decimal
+          nullable: true
+        maxUsesTotal:
+          type: integer
+          nullable: true
+        maxUsesPerUser:
+          type: integer
+        usedCount:
+          type: integer
+        reservedCount:
+          type: integer
+        isVisible:
+          type: boolean
+        status:
+          $ref: '#/components/schemas/DiscountStatus'
+        startsAt:
+          type: string
+          format: date-time
+          nullable: true
+        endsAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        scopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscountScopeDto'
+
+    DiscountSummaryDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        scopeType:
+          $ref: '#/components/schemas/DiscountScopeType'
+        ownerSellerId:
+          type: string
+          format: uuid
+          nullable: true
+        discountType:
+          $ref: '#/components/schemas/DiscountType'
+        discountValue:
+          type: number
+          format: decimal
+        minOrderAmount:
+          type: number
+          format: decimal
+        maxDiscountAmount:
+          type: number
+          format: decimal
+          nullable: true
+        maxUsesTotal:
+          type: integer
+          nullable: true
+        usedCount:
+          type: integer
+        reservedCount:
+          type: integer
+        isVisible:
+          type: boolean
+        status:
+          $ref: '#/components/schemas/DiscountStatus'
+        startsAt:
+          type: string
+          format: date-time
+          nullable: true
+        endsAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    BuyerAvailableVoucherDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        scopeType:
+          $ref: '#/components/schemas/DiscountScopeType'
+        ownerSellerId:
+          type: string
+          format: uuid
+          nullable: true
+        discountType:
+          $ref: '#/components/schemas/DiscountType'
+        discountValue:
+          type: number
+          format: decimal
+        minOrderAmount:
+          type: number
+          format: decimal
+        maxDiscountAmount:
+          type: number
+          format: decimal
+          nullable: true
+        startsAt:
+          type: string
+          format: date-time
+          nullable: true
+        endsAt:
+          type: string
+          format: date-time
+          nullable: true
+        isEligible:
+          type: boolean
+        ineligibleReason:
+          type: string
+          nullable: true
+        estimatedDiscountAmount:
+          type: number
+          format: decimal
+
+    PagedBuyerAvailableVoucher:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BuyerAvailableVoucherDto'
+        pageIndex:
+          type: integer
+        pageSize:
+          type: integer
+        totalCount:
+          type: integer
+        totalPages:
+          type: integer
+        hasPreviousPage:
+          type: boolean
+        hasNextPage:
+          type: boolean
+
+    PagedDiscountSummary:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscountSummaryDto'
+        pageIndex:
+          type: integer
+        pageSize:
+          type: integer
+        totalCount:
+          type: integer
+        totalPages:
+          type: integer
+        hasPreviousPage:
+          type: boolean
+        hasNextPage:
+          type: boolean
+
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+          example: "VOUCHER_NOT_FOUND"
+        detail:
+          type: string
+          example: "Voucher code was not found."
+        traceId:
+          type: string
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid authentication token
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    Forbidden:
+      description: Access denied for current user role
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ProblemDetails:
+      description: RFC 9110 compliant domain error
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

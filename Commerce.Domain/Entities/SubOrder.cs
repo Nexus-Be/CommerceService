@@ -61,18 +61,28 @@ public class SubOrder : BaseEntity<Guid>
         ItemsAmount = Items.Sum(i => i.Quantity * i.UnitPrice);
         ProductDiscountAmount = Items.Sum(i => i.Quantity * (i.UnitPrice - i.UnitPriceAfterDiscount));
         ShopDiscountAmount = shopDiscount;
-
-        SellerReceiveAmount = ItemsAmount - ProductDiscountAmount - ShopDiscountAmount;
-        PlatformMarkupAmount = Math.Round(SellerReceiveAmount * (platformMarkupPercent / 100m), 2, MidpointRounding.AwayFromZero);
         SystemDiscountAmount = systemDiscount;
-        PlatformFeeAmount = PlatformMarkupAmount - SystemDiscountAmount;
 
+        // Shopee / TikTok Shop Model:
+        // NetSeller = ItemsAmount - ProductDiscount - ShopDiscount
+        var netSeller = Math.Max(0m, ItemsAmount - ProductDiscountAmount - ShopDiscountAmount);
+
+        // PlatformFee is deducted from Seller sales (5% platform commission)
+        PlatformFeeAmount = Math.Round(netSeller * (platformMarkupPercent / 100m), 0, MidpointRounding.AwayFromZero);
+        PlatformMarkupAmount = 0m;
+
+        // Seller payout after commission
+        SellerReceiveAmount = Math.Max(0m, netSeller - PlatformFeeAmount);
+
+        // Buyer pays catalog prices minus discounts + shipping (no extra buyer markup)
         ShippingFeeAmount = shippingFee;
-        TotalAmount = SellerReceiveAmount + PlatformFeeAmount + ShippingFeeAmount;
+        TotalAmount = Math.Max(0m, netSeller - SystemDiscountAmount) + ShippingFeeAmount;
 
-        if (TotalAmount != (SellerReceiveAmount + PlatformFeeAmount + ShippingFeeAmount))
+        // Accounting invariant check
+        var accountingSum = SellerReceiveAmount + (PlatformFeeAmount - SystemDiscountAmount) + ShippingFeeAmount;
+        if (TotalAmount != accountingSum)
         {
-            throw new DomainException("TotalAmount invariant violated: total must equal seller_receive + platform_fee + shipping_fee");
+            throw new DomainException($"TotalAmount invariant violated: total ({TotalAmount}) must equal seller_receive + (platform_fee - system_discount) + shipping_fee ({accountingSum})");
         }
     }
 }

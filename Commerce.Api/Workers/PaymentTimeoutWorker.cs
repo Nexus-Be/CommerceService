@@ -55,6 +55,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
         var auctionClient = scope.ServiceProvider.GetService<IAuctionClient>();
         var walletClient = scope.ServiceProvider.GetService<IWalletClient>();
         var userClient = scope.ServiceProvider.GetService<IUserClient>();
+        var voucherLifecycleService = scope.ServiceProvider.GetService<Commerce.Application.Services.Discount.IVoucherLifecycleService>();
 
         var now = DateTimeOffset.UtcNow;
 
@@ -349,6 +350,19 @@ public sealed class PaymentTimeoutWorker : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[PaymentTimeoutWorker] Failed to process seller-expired AuctionOrders batch.");
+            }
+        }
+
+        // 4. Quét và giải phóng các voucher reservations mồ côi quá hạn 16 phút
+        if (voucherLifecycleService != null)
+        {
+            try
+            {
+                await voucherLifecycleService.ReleaseExpiredReservationsAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[PaymentTimeoutWorker] Failed to sweep expired orphan voucher reservations.");
             }
         }
     }

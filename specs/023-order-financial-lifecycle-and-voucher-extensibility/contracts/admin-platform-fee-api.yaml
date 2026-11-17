@@ -1,0 +1,139 @@
+openapi: 3.0.3
+info:
+  title: Commerce Admin Platform Fee Management API
+  version: 1.0.0
+  description: Staff and Administrator endpoint to manage dynamic platform markup percentage.
+paths:
+  /api/v1/admin/platform-fee:
+    get:
+      summary: Get active platform fee percentage
+      description: Returns the currently active platform fee rate. Accessible only by staff and admin roles.
+      operationId: getPlatformFee
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Active platform fee details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformFeeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      summary: Update active platform fee percentage
+      description: Updates the platform markup rate used for subsequent order quotes. Restricted exclusively to staff and admin roles.
+      operationId: updatePlatformFee
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePlatformFeeRequest'
+      responses:
+        '200':
+          description: Platform fee updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformFeeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    PlatformFeeResponse:
+      type: object
+      required:
+        - defaultPercent
+        - updatedByRole
+        - updatedAt
+      properties:
+        defaultPercent:
+          type: number
+          format: decimal
+          example: 5.0
+          description: Current platform fee percentage.
+        updatedByRole:
+          type: string
+          example: staff
+          description: Role of the actor who last updated the fee rate.
+        updatedAt:
+          type: string
+          format: date-time
+          example: '2026-11-16T12:00:00Z'
+
+    UpdatePlatformFeeRequest:
+      type: object
+      required:
+        - defaultPercent
+      properties:
+        defaultPercent:
+          type: number
+          format: decimal
+          minimum: 0.0
+          maximum: 100.0
+          example: 5.0
+          description: New platform markup rate percentage between 0% and 100%.
+
+    ProblemDetails:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - errorCode
+        - detail
+      properties:
+        type:
+          type: string
+          example: https://tools.ietf.org/html/rfc9110#section-15.5.4
+        title:
+          type: string
+          example: Forbidden
+        status:
+          type: integer
+          example: 403
+        errorCode:
+          type: string
+          example: FORBIDDEN
+        detail:
+          type: string
+          example: Access denied: Only staff members can adjust platform fee rates.
+        traceId:
+          type: string
+          example: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    Forbidden:
+      description: Insufficient permissions (caller is not staff/admin)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

@@ -83,7 +83,7 @@ public class OrderCheckoutTests : IDisposable
         _dbContext.Dispose();
     }
 
-    private OrderService CreateOrderService()
+    private OrderService CreateOrderService(IVoucherDiscountCalculator? voucherCalculator = null)
     {
         return new OrderService(
             _dbContext,
@@ -92,7 +92,8 @@ public class OrderCheckoutTests : IDisposable
             _mockCatalogClient.Object,
             _mockUserClient.Object,
             _cache,
-            _mockLogger.Object);
+            _mockLogger.Object,
+            voucherCalculator);
     }
 
     private async Task<Cart> SeedCartWithItemAsync(Guid buyerId, Guid skuId, Guid sellerId, decimal price, int quantity)
@@ -440,7 +441,7 @@ public class OrderCheckoutTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateOrderAsync_ShouldRemainPendingPayment_WhenWalletHasInsufficientBalance()
+    public async Task CreateOrderAsync_ShouldFailClosedAndPreserveCart_WhenWalletHasInsufficientBalance()
     {
         // Arrange
         var buyerId = Guid.NewGuid();
@@ -461,17 +462,64 @@ public class OrderCheckoutTests : IDisposable
             .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new WalletPaymentResult(false, ErrorCode: "INSUFFICIENT_BALANCE", ErrorMessage: "Insufficient wallet balance"));
 
-        // Act
-        var orderResponse = await orderService.CreateOrderAsync(buyerId, new CreateOrderRequest(
+        // Act & Assert
+        var act = async () => await orderService.CreateOrderAsync(buyerId, new CreateOrderRequest(
             QuoteId: quoteResponse.QuoteId,
             PaymentMethod: PaymentMethod.Wallet,
             ShippingAddress: "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
-        // Assert
-        orderResponse.Status.Should().Be(OrderStatus.PendingPayment.ToString());
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "INSUFFICIENT_WALLET_BALANCE" && e.StatusCode == 400);
+
+        // Verify stock reservation was rolled back
+        _mockFulfillmentClient.Verify(f => f.ReleaseStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
         _mockFulfillmentClient.Verify(f => f.CommitStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // Verify Cart item was preserved (not removed)
+        var remainingCart = await _dbContext.Carts.Include(c => c.Items).FirstAsync(c => c.BuyerId == buyerId);
+        remainingCart.Items.Should().NotBeEmpty();
+
+        // Verify no order was saved to database
+        var ordersCount = await _dbContext.Orders.CountAsync();
+        ordersCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldThrowUnsupportedPaymentMethod_WhenVnPayIsRequested()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, skuId, Guid.NewGuid(), 100000m, 1);
+        var orderService = CreateOrderService();
+
+        var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
+            CartItemIds: new List<Guid> { cart.Items.First().Id },
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ContactPhone: "0901234567"
+        ), CancellationToken.None);
+
+#pragma warning disable CS0618 // Type or member is obsolete
+        var request = new CreateOrderRequest(
+            QuoteId: quoteResponse.QuoteId,
+            PaymentMethod: PaymentMethod.VnPay,
+            ShippingAddress: "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
+            ContactPhone: "0901234567"
+        );
+#pragma warning restore CS0618
+
+        // Act & Assert
+        var act = async () => await orderService.CreateOrderAsync(buyerId, request, CancellationToken.None);
+
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "UNSUPPORTED_PAYMENT_METHOD" &&
+                        e.StatusCode == 400 &&
+                        e.Message.Contains("VNPay payment method is no longer supported"));
+
+        _mockFulfillmentClient.Verify(f => f.ReserveStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockWalletClient.Verify(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -580,6 +628,58 @@ public class OrderCheckoutTests : IDisposable
                 r.GhnWardCode == "20101" &&
                 r.Items.Count == 1 &&
                 r.Items[0].WeightGrams == 600), // 3 * 200g
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task QuoteCheckoutAsync_ShouldInvokeVoucherCalculator_AndApplyDiscountsToShops()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, skuId, sellerId, 200000m, 1);
+
+        var mockVoucherCalculator = new Mock<IVoucherDiscountCalculator>();
+        mockVoucherCalculator
+            .Setup(v => v.CalculateDiscountsAsync(It.IsAny<VoucherCalculationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((VoucherCalculationRequest req, CancellationToken ct) =>
+            {
+                var dict = new Dictionary<Guid, ShopDiscountBreakdown>
+                {
+                    [sellerId] = new ShopDiscountBreakdown(ShopDiscountAmount: 30000m, SystemDiscountAmount: 10000m, ShippingDiscountAmount: 0m)
+                };
+                return new VoucherCalculationResult(dict, new List<string> { "SHOP30K", "SYS10K" }, new List<string>());
+            });
+
+        var service = CreateOrderService(mockVoucherCalculator.Object);
+
+        var request = new CheckoutQuoteRequest(
+            CartItemIds: new List<Guid> { cart.Items.First().Id },
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ContactPhone: "0901234567",
+            VoucherCodes: new List<string> { "SHOP30K", "SYS10K" }
+        );
+
+        // Act
+        var response = await service.QuoteCheckoutAsync(buyerId, request, CancellationToken.None);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.AppliedVouchers.Should().Contain("SHOP30K").And.Contain("SYS10K");
+        response.Shops.Should().HaveCount(1);
+        var shopQuote = response.Shops[0];
+        shopQuote.ShopDiscountAmount.Should().Be(30000m);
+        shopQuote.SystemDiscountAmount.Should().Be(10000m);
+        shopQuote.DiscountAmount.Should().Be(40000m);
+        // Items = 200,000, ShopDiscount = 30,000, SystemDiscount = 10,000, Ship = 30,000
+        // SellerReceive = 200,000 - 30,000 = 170,000
+        // Markup 0% -> PlatformFee = -10,000
+        // Total = 170,000 + (-10,000) + 30,000 = 190,000
+        shopQuote.TotalAmount.Should().Be(190000m);
+
+        mockVoucherCalculator.Verify(v => v.CalculateDiscountsAsync(
+            It.Is<VoucherCalculationRequest>(r => r.BuyerId == buyerId && r.VoucherCodes.Contains("SHOP30K")),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 }

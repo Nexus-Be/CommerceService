@@ -141,6 +141,59 @@ public class OrderSettlementRefundTests : IDisposable
     }
 
     [Fact]
+    public async Task BuyerConfirmSubOrderReceipt_ShouldSkipSettle_WhenSellerReceiveAmountIsZero()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (_, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Delivered, 30000m, 0m);
+
+        var service = CreateOrderService();
+
+        // Act
+        var response = await service.BuyerConfirmSubOrderReceiptAsync(buyerId, subOrder.Id, CancellationToken.None);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.Status.Should().Be("Completed");
+
+        var updatedSubOrder = await _dbContext.SubOrders.FindAsync(subOrder.Id);
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Completed);
+
+        _mockWalletClient.Verify(w => w.SettleSellerSubOrderAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<Guid>(),
+            It.IsAny<decimal>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task BuyerConfirmSubOrderReceipt_ShouldCompleteStatus_WhenSettlementReturnsFalseDueTo409Conflict()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (_, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Delivered, 150000m, 135000m);
+
+        _mockWalletClient
+            .Setup(w => w.SettleSellerSubOrderAsync(subOrder.Id, sellerId, 135000m, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var service = CreateOrderService();
+
+        // Act
+        var response = await service.BuyerConfirmSubOrderReceiptAsync(buyerId, subOrder.Id, CancellationToken.None);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.Status.Should().Be("Completed");
+
+        var updatedSubOrder = await _dbContext.SubOrders.FindAsync(subOrder.Id);
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Completed);
+    }
+
+    [Fact]
     public async Task SellerRejectSubOrder_ShouldTriggerRefundSubOrder_AndRecordCompletedRefund()
     {
         // Arrange
@@ -269,5 +322,127 @@ public class OrderSettlementRefundTests : IDisposable
             It.Is<List<StockReservationItem>>(items => items.Count == 1 && items[0].SkuId == skuId && items[0].Quantity == 2),
             "PackageReturned",
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelOrder_ShouldSkipWalletRefund_WhenPaymentMethodIsCod()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.PendingPayment, SubOrderStatus.PendingPayment, 150000m, 135000m);
+        subOrder.PaymentMethod = PaymentMethod.Cod;
+        await _dbContext.SaveChangesAsync();
+
+        var service = CreateOrderService();
+        var request = new CancelOrderRequest(CancellationReasonCode.BuyerChangedMind, "Changed mind");
+
+        // Act
+        await service.CancelOrderAsync(buyerId, order.Id, request, CancellationToken.None);
+
+        // Assert
+        var updatedSubOrder = await _dbContext.SubOrders.FindAsync(subOrder.Id);
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Cancelled);
+
+        // Verify NO wallet refund was called
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<decimal>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+
+        var refunds = await _dbContext.OrderRefunds.Where(r => r.SubOrderId == subOrder.Id).ToListAsync();
+        refunds.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SellerRejectSubOrder_ShouldSkipWalletRefund_WhenPaymentMethodIsCod()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.PendingPayment, SubOrderStatus.Confirmed, 150000m, 135000m);
+        subOrder.PaymentMethod = PaymentMethod.Cod;
+        await _dbContext.SaveChangesAsync();
+
+        var service = CreateOrderService();
+        var request = new SellerRejectOrderRequest(subOrder.Id, CancellationReasonCode.OutOfStock, "Out of stock");
+
+        // Act
+        await service.SellerRejectSubOrderAsync(sellerId, order.Id, request, CancellationToken.None);
+
+        // Assert
+        var updatedSubOrder = await _dbContext.SubOrders.FindAsync(subOrder.Id);
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Cancelled);
+
+        // Verify NO wallet refund was called
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<decimal>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+
+        var refunds = await _dbContext.OrderRefunds.Where(r => r.SubOrderId == subOrder.Id).ToListAsync();
+        refunds.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task CancelOrder_ShouldReleaseVouchersAndDecreasesReservedCount_WhenOrderCancelled()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Paid, 150000m, 135000m);
+        subOrder.PaymentMethod = PaymentMethod.Wallet;
+        subOrder.PaidAt = DateTimeOffset.UtcNow;
+
+        var discountCode = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "SAVE20K",
+            Name = "Save 20k",
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 20000m,
+            ScopeType = DiscountScopeType.System,
+            Status = DiscountStatus.Active,
+            ReservedCount = 1,
+            UsedCount = 0,
+            StartsAt = DateTimeOffset.UtcNow.AddDays(-1),
+            EndsAt = DateTimeOffset.UtcNow.AddDays(1)
+        };
+
+        var discountUsage = new DiscountCodeUsage
+        {
+            Id = Guid.NewGuid(),
+            DiscountCodeId = discountCode.Id,
+            UserId = buyerId,
+            OrderId = order.Id,
+            SubOrderId = subOrder.Id,
+            DiscountAmount = 20000m,
+            Status = DiscountUsageStatus.Reserved,
+            ReservedAt = DateTimeOffset.UtcNow
+        };
+
+        _dbContext.DiscountCodes.Add(discountCode);
+        _dbContext.DiscountCodeUsages.Add(discountUsage);
+        await _dbContext.SaveChangesAsync();
+
+        var service = CreateOrderService();
+        var request = new CancelOrderRequest(CancellationReasonCode.BuyerChangedMind, "Changed mind");
+
+        // Act
+        await service.CancelOrderAsync(buyerId, order.Id, request, CancellationToken.None);
+
+        // Assert
+        var updatedUsage = await _dbContext.DiscountCodeUsages.FindAsync(discountUsage.Id);
+        updatedUsage!.Status.Should().Be(DiscountUsageStatus.Released);
+        updatedUsage.ReleasedAt.Should().NotBeNull();
+
+        var updatedCode = await _dbContext.DiscountCodes.FindAsync(discountCode.Id);
+        updatedCode!.ReservedCount.Should().Be(0);
     }
 }

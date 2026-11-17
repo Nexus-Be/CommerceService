@@ -28,38 +28,6 @@ public interface IWalletClient
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Khởi tạo phiên thanh toán trực tiếp qua cổng VNPay:
-    /// POST /api/v1/wallets/checkout/direct
-    /// Header: x-user-id: <buyerId>
-    /// </summary>
-    Task<DirectCheckoutResult> InitiateDirectCheckoutAsync(
-        Guid orderId,
-        Guid buyerId,
-        decimal amount,
-        string? returnUrl = null,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Thăm dò trạng thái quyết toán thanh toán trực tiếp VNPay cho đơn hàng:
-    /// GET /api/v1/wallets/checkout/direct/{orderId}
-    /// Header: x-user-id: <buyerId>
-    /// </summary>
-    Task<DirectCheckoutStatusResult?> GetDirectCheckoutStatusAsync(
-        Guid orderId,
-        Guid buyerId,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Phương thức tương thích ngược.
-    /// </summary>
-    Task<bool> CheckoutDirectPaymentAsync(
-        Guid orderId,
-        string userId,
-        decimal amount,
-        string? idempotencyKey = null,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Tra cứu số dư ví của người dùng:
     /// GET /api/v1/wallets/me
     /// Header: x-user-id: <userId>

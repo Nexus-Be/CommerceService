@@ -35,6 +35,10 @@ public class OrderServiceTests
             .Setup(f => f.ReserveStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
+        _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletPaymentResult.Success("tx-price-drop-123"));
+
         _mockFulfillmentClient
             .Setup(f => f.CommitStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
@@ -195,6 +199,10 @@ public class OrderServiceTests
             .Setup(f => f.ReserveStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
+        _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletPaymentResult.Success("tx-price-drop-123"));
+
         _mockFulfillmentClient
             .Setup(f => f.CommitStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
@@ -210,10 +218,6 @@ public class OrderServiceTests
         _mockWalletClient
             .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), 100000m, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(WalletPaymentResult.Success("tx-success-123"));
-
-        _mockWalletClient
-            .Setup(w => w.CheckoutDirectPaymentAsync(It.IsAny<Guid>(), buyerId.ToString(), 100000m, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
 
         _mockWalletClient
             .Setup(w => w.RefundOrderPaymentAsync(It.IsAny<Guid>(), buyerId.ToString(), 100000m, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -318,8 +322,8 @@ public class OrderServiceTests
             .ReturnsAsync(true);
 
         _mockWalletClient
-            .Setup(w => w.CheckoutDirectPaymentAsync(It.IsAny<Guid>(), buyerId.ToString(), 80000m, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletPaymentResult.Success("tx-price-drop-123"));
 
         _mockFulfillmentClient
             .Setup(f => f.CommitStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))

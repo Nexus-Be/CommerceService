@@ -1,0 +1,304 @@
+openapi: 3.0.3
+info:
+  title: Commerce Order Financial & Payment Methods API
+  version: 1.0.0
+  description: Order creation and checkout quotation contracts enforcing strict financial invariants and decommissioned VNPay rejection.
+paths:
+  /api/v1/checkouts/quote:
+    post:
+      summary: Generate multi-vendor checkout quotation
+      description: Groups cart items by shop, calculates dynamic GHN shipping fees, incorporates staff-configured platform fees, and returns financial preview with 15-minute TTL.
+      operationId: quoteCheckout
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutQuoteRequest'
+      responses:
+        '200':
+          description: Checkout quotation response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutQuoteResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/orders:
+    post:
+      summary: Create order from active quotation
+      description: Atomically validates stock, processes payment (Wallet or COD), enforces financial invariants, and dispatches sub-orders. Strictly rejects PaymentMethod.VnPay.
+      operationId: createOrder
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order placed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateOrderResponse'
+        '400':
+          description: Validation error, insufficient wallet balance, or unsupported payment method
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Price drift detected or quote expired
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CheckoutQuoteRequest:
+      type: object
+      required:
+        - cartItemIds
+        - shippingAddress
+        - contactPhone
+        - paymentMethod
+      properties:
+        cartItemIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        shippingAddress:
+          $ref: '#/components/schemas/ShippingAddressInput'
+        contactPhone:
+          type: string
+          example: '0901234567'
+        paymentMethod:
+          type: string
+          enum: [Wallet, Cod]
+          example: Wallet
+        voucherCodes:
+          type: array
+          items:
+            type: string
+
+    ShippingAddressInput:
+      type: object
+      required:
+        - receiverName
+        - contactPhone
+        - street
+        - ward
+        - province
+        - ghnDistrictId
+        - ghnWardCode
+      properties:
+        receiverName:
+          type: string
+          example: Nguyen Van A
+        contactPhone:
+          type: string
+          example: '0901234567'
+        street:
+          type: string
+          example: 123 Le Loi
+        ward:
+          type: string
+          example: Ben Nghe
+        district:
+          type: string
+          example: Quan 1
+        province:
+          type: string
+          example: TP.HCM
+        ghnDistrictId:
+          type: integer
+          example: 1442
+        ghnWardCode:
+          type: string
+          example: '20101'
+
+    CheckoutQuoteResponse:
+      type: object
+      required:
+        - quoteId
+        - grandTotal
+        - walletBalance
+        - shops
+        - expiredAt
+      properties:
+        quoteId:
+          type: string
+          format: uuid
+        grandTotal:
+          type: number
+          format: decimal
+          example: 1007500.00
+        walletBalance:
+          type: number
+          format: decimal
+          example: 5000000.00
+        shops:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShopOrderQuote'
+        expiredAt:
+          type: string
+          format: date-time
+
+    ShopOrderQuote:
+      type: object
+      required:
+        - sellerId
+        - shopName
+        - items
+        - itemsAmount
+        - productDiscount
+        - shopDiscount
+        - systemDiscount
+        - discountAmount
+        - shippingFeeAmount
+        - totalAmount
+      properties:
+        sellerId:
+          type: string
+          format: uuid
+        shopName:
+          type: string
+          example: Shop Thời Trang Juno
+        itemsAmount:
+          type: number
+          format: decimal
+          example: 1000000.00
+        productDiscount:
+          type: number
+          format: decimal
+          example: 0.00
+        shopDiscount:
+          type: number
+          format: decimal
+          example: 50000.00
+        systemDiscount:
+          type: number
+          format: decimal
+          example: 20000.00
+        discountAmount:
+          type: number
+          format: decimal
+          example: 70000.00
+        shippingFeeAmount:
+          type: number
+          format: decimal
+          example: 30000.00
+        totalAmount:
+          type: number
+          format: decimal
+          example: 960000.00
+
+    CreateOrderRequest:
+      type: object
+      required:
+        - quoteId
+        - paymentMethod
+        - shippingAddress
+        - contactPhone
+      properties:
+        quoteId:
+          type: string
+          format: uuid
+        paymentMethod:
+          type: string
+          enum: [Wallet, Cod, VnPay]
+          description: Must be Wallet or Cod. Choosing VnPay returns HTTP 400 UNSUPPORTED_PAYMENT_METHOD.
+          example: Wallet
+        shippingAddress:
+          type: string
+          example: 123 Le Loi, Ben Nghe, Quan 1, TP.HCM
+        contactPhone:
+          type: string
+          example: '0901234567'
+
+    CreateOrderResponse:
+      type: object
+      required:
+        - orderId
+        - status
+        - totalAmount
+        - subOrderIds
+        - paymentDeadlineAt
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          example: Paid
+        totalAmount:
+          type: number
+          format: decimal
+          example: 1007500.00
+        subOrderIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+        paymentUrl:
+          type: string
+          nullable: true
+          example: null
+
+    ProblemDetails:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - errorCode
+        - detail
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+        detail:
+          type: string
+        traceId:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters or balance failure
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

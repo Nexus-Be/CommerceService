@@ -3,6 +3,7 @@ namespace Commerce.Application.Interfaces;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Commerce.Domain.Entities;
 
 public interface ICommerceDbContext
@@ -23,6 +24,8 @@ public interface ICommerceDbContext
     DbSet<SystemSetting> SystemSettings { get; }
     DbSet<DailyOrderSequence> DailyOrderSequences { get; }
     DbSet<AuditLog> AuditLogs { get; }
+
+    DatabaseFacade Database { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -109,119 +109,6 @@ public sealed class WalletClient : IWalletClient
     }
 
     /// <summary>
-    /// Khởi tạo phiên thanh toán trực tiếp qua cổng VNPay:
-    /// POST /api/v1/wallets/checkout/direct
-    /// Header: x-user-id: <buyer UUID>
-    /// Body: { "orderId": "<uuid>", "amount": <decimal>, "returnUrl": "..." }
-    /// </summary>
-    public async Task<DirectCheckoutResult> InitiateDirectCheckoutAsync(
-        Guid orderId,
-        Guid buyerId,
-        decimal amount,
-        string? returnUrl = null,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            var effectiveBuyerId = ResolveEffectiveUserId(buyerId);
-            using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/wallets/checkout/direct")
-            {
-                Content = JsonContent.Create(new
-                {
-                    orderId,
-                    amount,
-                    returnUrl
-                })
-            };
-
-            if (effectiveBuyerId != Guid.Empty)
-            {
-                request.Headers.TryAddWithoutValidation("x-user-id", effectiveBuyerId.ToString());
-            }
-
-            var response = await _httpClient.SendAsync(request, cancellationToken);
-            if (response.IsSuccessStatusCode)
-            {
-                var dto = await response.Content.ReadFromJsonAsync<DirectCheckoutResponseDto>(JsonOptions, cancellationToken);
-                _logger.LogInformation("[REST Wallet Client] Direct VNPay checkout created for Order '{OrderId}'. URL: '{Url}'.", orderId, dto?.PaymentUrl);
-                return DirectCheckoutResult.Success(dto?.PaymentUrl ?? string.Empty, dto?.TransactionId);
-            }
-
-            var statusCode = (int)response.StatusCode;
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogWarning("[REST Wallet Client] Direct checkout for Order '{OrderId}' failed with status {StatusCode}: {ErrorBody}", orderId, statusCode, errorBody);
-
-            var (errorCode, errorMessage) = ParseProblemDetails(errorBody, statusCode);
-            return DirectCheckoutResult.Failure(errorCode, errorMessage);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "[REST Wallet Client] Connection error during direct checkout for Order '{OrderId}'.", orderId);
-            return DirectCheckoutResult.Failure("CONNECTION_ERROR", ex.Message);
-        }
-    }
-
-    /// <summary>
-    /// Thăm dò trạng thái quyết toán thanh toán trực tiếp VNPay cho đơn hàng:
-    /// GET /api/v1/wallets/checkout/direct/{orderId}
-    /// Header: x-user-id: <buyer UUID>
-    /// </summary>
-    public async Task<DirectCheckoutStatusResult?> GetDirectCheckoutStatusAsync(
-        Guid orderId,
-        Guid buyerId,
-        CancellationToken cancellationToken = default)
-    {
-        try
-        {
-            var effectiveBuyerId = ResolveEffectiveUserId(buyerId);
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"api/v1/wallets/checkout/direct/{orderId}");
-
-            if (effectiveBuyerId != Guid.Empty)
-            {
-                request.Headers.TryAddWithoutValidation("x-user-id", effectiveBuyerId.ToString());
-            }
-
-            var response = await _httpClient.SendAsync(request, cancellationToken);
-            if (response.IsSuccessStatusCode)
-            {
-                var dto = await response.Content.ReadFromJsonAsync<DirectCheckoutStatusDto>(JsonOptions, cancellationToken);
-                if (dto != null)
-                {
-                    return new DirectCheckoutStatusResult(
-                        dto.OrderId,
-                        dto.TransactionId,
-                        dto.Status,
-                        dto.Amount,
-                        dto.PaidAt);
-                }
-            }
-
-            _logger.LogDebug("[REST Wallet Client] Direct checkout query for Order '{OrderId}' returned status {StatusCode}.", orderId, (int)response.StatusCode);
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[REST Wallet Client] Connection error polling direct checkout status for Order '{OrderId}'.", orderId);
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Phương thức tương thích ngược với luồng cũ, gọi PayOrderAsync.
-    /// </summary>
-    public async Task<bool> CheckoutDirectPaymentAsync(
-        Guid orderId,
-        string userId,
-        decimal amount,
-        string? idempotencyKey = null,
-        CancellationToken cancellationToken = default)
-    {
-        _ = Guid.TryParse(userId, out var parsedUserId);
-        var result = await PayOrderAsync(orderId, parsedUserId, amount, bearerToken: null, cancellationToken);
-        return result.IsSuccess;
-    }
-
-    /// <summary>
     /// Tra cứu số dư ví:
     /// GET /api/v1/wallets/me
     /// Header: x-user-id: <userId>
@@ -371,11 +258,11 @@ public sealed class WalletClient : IWalletClient
                 return true;
             }
 
-            // Nếu 409 SETTLEMENT_CONFLICT do replay lại cùng seller và amount, hợp đồng WalletService vẫn an toàn
             if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
             {
-                _logger.LogInformation("[REST Wallet Client] SubOrder '{SubOrderId}' settlement returned 409 Conflict. Treating idempotent resolution.", subOrderId);
-                return true;
+                var conflictBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogWarning("[REST Wallet Client] SubOrder '{SubOrderId}' settlement returned 409 SETTLEMENT_CONFLICT: {ErrorBody}", subOrderId, conflictBody);
+                return false;
             }
 
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -474,19 +361,4 @@ public sealed class WalletClient : IWalletClient
         decimal Balance,
         string Currency,
         string Status);
-
-    private sealed record DirectCheckoutResponseDto(
-        Guid TransactionId,
-        Guid OrderId,
-        decimal Amount,
-        string PaymentUrl,
-        string Status,
-        DateTimeOffset CreatedAt);
-
-    private sealed record DirectCheckoutStatusDto(
-        Guid OrderId,
-        Guid? TransactionId,
-        string Status,
-        decimal Amount,
-        DateTimeOffset? PaidAt);
 }

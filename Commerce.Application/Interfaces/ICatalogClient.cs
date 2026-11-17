@@ -13,7 +13,8 @@ public sealed record CatalogProductCheckResult(
     decimal UnitPrice,
     bool IsPurchasable,
     int StockQuantity = 100,
-    string? ErrorReason = null);
+    string? ErrorReason = null,
+    string? SaleType = "Regular");
 
 public sealed record CatalogVariantSwitchResult(
     bool IsValid,

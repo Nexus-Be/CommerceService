@@ -82,7 +82,8 @@ public sealed class CatalogClient : ICatalogClient
                                     : (!string.IsNullOrWhiteSpace(item.VariantName) ? item.VariantName : $"Product {item.VariantId.ToString()[..8]}"),
                                 UnitPrice: unitPrice,
                                 IsPurchasable: isPurchasable,
-                                StockQuantity: 100);
+                                StockQuantity: 100,
+                                SaleType: item.SaleType ?? "Regular");
                         }
                     }
                     continue;

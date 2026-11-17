@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 using Commerce.Application.Common;
 using Commerce.Application.Common.Models;
 using Commerce.Application.Interfaces;
+using Commerce.Application.Services.Discount;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
 using Commerce.Domain.Exceptions;
@@ -26,6 +27,8 @@ public sealed class OrderService : IOrderService
     private readonly IUserClient _userClient;
     private readonly IDistributedCache _cache;
     private readonly ILogger<OrderService> _logger;
+    private readonly IVoucherDiscountCalculator? _voucherCalculator;
+    private readonly IVoucherLifecycleService? _voucherLifecycleService;
 
     public OrderService(
         ICommerceDbContext dbContext,
@@ -34,7 +37,7 @@ public sealed class OrderService : IOrderService
         ICatalogClient catalogClient,
         IDistributedCache cache,
         ILogger<OrderService> logger)
-        : this(dbContext, walletClient, fulfillmentClient, catalogClient, null!, cache, logger)
+        : this(dbContext, walletClient, fulfillmentClient, catalogClient, null!, cache, logger, null, null)
     {
     }
 
@@ -45,7 +48,9 @@ public sealed class OrderService : IOrderService
         ICatalogClient catalogClient,
         IUserClient userClient,
         IDistributedCache cache,
-        ILogger<OrderService> logger)
+        ILogger<OrderService> logger,
+        IVoucherDiscountCalculator? voucherCalculator = null,
+        IVoucherLifecycleService? voucherLifecycleService = null)
     {
         _dbContext = dbContext;
         _walletClient = walletClient;
@@ -54,6 +59,36 @@ public sealed class OrderService : IOrderService
         _userClient = userClient;
         _cache = cache;
         _logger = logger;
+        _voucherCalculator = voucherCalculator;
+        _voucherLifecycleService = voucherLifecycleService;
+    }
+
+    private async Task<decimal> GetActivePlatformMarkupPercentAsync(CancellationToken ct)
+    {
+        try
+        {
+            var cachedVal = await _cache.GetStringAsync("commerce:platform_fee_percent", ct);
+            if (!string.IsNullOrEmpty(cachedVal) && decimal.TryParse(cachedVal, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+            {
+                return parsed;
+            }
+
+            var cachedMetadata = await _cache.GetStringAsync("commerce:platform_fee:metadata", ct);
+            if (!string.IsNullOrEmpty(cachedMetadata))
+            {
+                var response = JsonSerializer.Deserialize<PlatformFeeResponse>(cachedMetadata);
+                if (response != null)
+                {
+                    return response.DefaultPercent;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to retrieve platform fee percent from cache. Using fallback default.");
+        }
+
+        return 0.0m;
     }
 
     public async Task<CheckoutQuoteResponse> QuoteCheckoutAsync(Guid buyerId, CheckoutQuoteRequest request, CancellationToken ct = default)
@@ -96,6 +131,11 @@ public sealed class OrderService : IOrderService
 
         var shopQuotes = new List<ShopOrderQuote>();
         var groupedBySeller = selectedItems.GroupBy(i => i.SellerId);
+        var platformMarkupPercent = await GetActivePlatformMarkupPercentAsync(ct);
+
+        var sellerItemsAmounts = new Dictionary<Guid, decimal>();
+        var sellerShippingFees = new Dictionary<Guid, decimal>();
+        var preQuotes = new List<(Guid SellerId, List<ShopQuoteItem> ShopItems, decimal ItemsAmount, decimal ShippingFee)>();
 
         foreach (var group in groupedBySeller)
         {
@@ -111,10 +151,6 @@ public sealed class OrderService : IOrderService
             )).ToList();
 
             decimal itemsAmount = shopItems.Sum(i => i.LineTotal);
-            decimal productDiscount = 0m;
-            decimal shopDiscount = 0m;
-            decimal systemDiscount = 0m;
-            decimal discountAmount = productDiscount + shopDiscount + systemDiscount;
 
             // Tính cước GHN động theo từng Shop qua Fulfillment Service (CHK-01 / T027)
             decimal shippingFeeAmount = 30000m;
@@ -142,18 +178,70 @@ public sealed class OrderService : IOrderService
                 shippingFeeAmount = 30000m;
             }
 
-            decimal totalAmount = itemsAmount - discountAmount + shippingFeeAmount;
+            sellerItemsAmounts[sellerId] = itemsAmount;
+            sellerShippingFees[sellerId] = shippingFeeAmount;
+            preQuotes.Add((sellerId, shopItems, itemsAmount, shippingFeeAmount));
+        }
+
+        VoucherCalculationResult? voucherResult = null;
+        if (_voucherCalculator != null && request.VoucherCodes != null && request.VoucherCodes.Count > 0)
+        {
+            try
+            {
+                var calculationItems = preQuotes.SelectMany(pq => pq.ShopItems.Select(item => new CalculationItemInput(
+                    CartItemId: Guid.Empty,
+                    ProductId: item.ProductId,
+                    SkuId: item.SkuId,
+                    SellerId: pq.SellerId,
+                    ProductName: item.ProductName,
+                    Quantity: item.Quantity,
+                    UnitPrice: item.UnitPrice
+                ))).ToList();
+
+                var vCalcRequest = new VoucherCalculationRequest(
+                    buyerId,
+                    request.VoucherCodes,
+                    sellerItemsAmounts,
+                    sellerShippingFees,
+                    calculationItems);
+
+                voucherResult = await _voucherCalculator.CalculateDiscountsAsync(vCalcRequest, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error executing voucher discount calculation for Buyer '{BuyerId}'.", buyerId);
+            }
+        }
+
+        foreach (var pq in preQuotes)
+        {
+            decimal productDiscount = 0m;
+            decimal shopDiscount = 0m;
+            decimal systemDiscount = 0m;
+
+            if (voucherResult != null && voucherResult.ShopDiscounts.TryGetValue(pq.SellerId, out var breakdown))
+            {
+                productDiscount = breakdown.ProductDiscountAmount;
+                shopDiscount = breakdown.ShopDiscountAmount;
+                systemDiscount = breakdown.SystemDiscountAmount;
+            }
+
+            decimal discountAmount = productDiscount + shopDiscount + systemDiscount;
+            decimal netSeller = Math.Max(0m, pq.ItemsAmount - productDiscount - shopDiscount);
+            decimal platformFeeAmount = Math.Round(netSeller * (platformMarkupPercent / 100m), 0, MidpointRounding.AwayFromZero);
+            decimal sellerReceiveAmount = Math.Max(0m, netSeller - platformFeeAmount);
+            decimal totalAmount = Math.Max(0m, netSeller - systemDiscount) + pq.ShippingFee;
 
             shopQuotes.Add(new ShopOrderQuote(
-                sellerId,
-                $"Shop {sellerId.ToString()[..8]}",
-                shopItems,
-                itemsAmount,
+                pq.SellerId,
+                $"Shop {pq.SellerId.ToString()[..8]}",
+                pq.ShopItems,
+                pq.ItemsAmount,
                 productDiscount,
                 shopDiscount,
                 systemDiscount,
                 discountAmount,
-                shippingFeeAmount,
+                pq.ShippingFee,
                 totalAmount
             ));
         }
@@ -173,13 +261,23 @@ public sealed class OrderService : IOrderService
             _logger.LogWarning(ex, "Failed to fetch real-time wallet balance for Buyer '{BuyerId}'. Fallback to 0.", buyerId);
         }
 
+        var appliedVouchers = voucherResult?.AppliedVouchers != null && voucherResult.AppliedVouchers.Count > 0
+            ? voucherResult.AppliedVouchers.ToList()
+            : request.VoucherCodes ?? new List<string>();
+
+        var warnings = voucherResult?.Warnings != null && voucherResult.Warnings.Count > 0
+            ? voucherResult.Warnings.ToList()
+            : (voucherResult?.RejectedVouchers != null && voucherResult.RejectedVouchers.Count > 0
+                ? voucherResult.RejectedVouchers.Select(v => $"Voucher '{v}' could not be applied.").ToList()
+                : null);
+
         var quoteResponse = new CheckoutQuoteResponse(
             quoteId,
             grandTotal,
             walletBalance,
             shopQuotes,
-            request.VoucherCodes ?? new List<string>(),
-            null,
+            appliedVouchers,
+            warnings,
             expiredAt
         );
 
@@ -204,6 +302,16 @@ public sealed class OrderService : IOrderService
 
     public async Task<CreateOrderResponse> CreateOrderAsync(Guid buyerId, CreateOrderRequest request, CancellationToken ct = default)
     {
+#pragma warning disable CS0618 // Suppress obsolete warning for decommissioned VNPay guard
+        if (request.PaymentMethod == PaymentMethod.VnPay)
+        {
+            throw new CommerceDomainException(
+                "UNSUPPORTED_PAYMENT_METHOD",
+                "VNPay payment method is no longer supported. Please use Wallet or COD.",
+                400);
+        }
+#pragma warning restore CS0618
+
         // ATOMIC POP (ISSUE-02): Đọc và xóa ngay lập tức khỏi Cache để triệt tiêu Race Condition / Double Submit
         var quoteKey = $"checkout_quote:{request.QuoteId}";
         var quoteJson = await _cache.GetStringAsync(quoteKey, ct);
@@ -314,8 +422,56 @@ public sealed class OrderService : IOrderService
         var orderNo = $"ORD-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString()[..6].ToUpperInvariant()}";
         var subOrderIds = new List<Guid>();
 
+        // TÁI TÍNH TOÁN VOUCHER TRÊN GIÁ MỚI & GIỮ CHỖ ATOMIC
+        VoucherCalculationResult? recalculatedVouchers = null;
+        var reservedUsageIds = new List<Guid>();
+
+        if (_voucherCalculator != null && cachedQuote.Response.AppliedVouchers != null && cachedQuote.Response.AppliedVouchers.Count > 0)
+        {
+            try
+            {
+                var calcItems = allQuoteItems.Select(i => new CalculationItemInput(
+                    CartItemId: Guid.Empty,
+                    ProductId: i.ProductId,
+                    SkuId: i.SkuId,
+                    SellerId: cachedQuote.Response.Shops.First(s => s.Items.Any(si => si.SkuId == i.SkuId)).SellerId,
+                    ProductName: i.ProductName,
+                    Quantity: i.Quantity,
+                    UnitPrice: freshSkuPrices.TryGetValue(i.SkuId, out var freshP) ? freshP : i.UnitPrice
+                )).ToList();
+
+                var shopAmounts = calcItems.GroupBy(ci => ci.SellerId).ToDictionary(g => g.Key, g => g.Sum(x => x.Quantity * x.UnitPrice));
+                var shopShipping = cachedQuote.Response.Shops.ToDictionary(s => s.SellerId, s => s.ShippingFeeAmount);
+
+                var vReq = new VoucherCalculationRequest(
+                    cachedQuote.BuyerId,
+                    cachedQuote.Response.AppliedVouchers,
+                    shopAmounts,
+                    shopShipping,
+                    calcItems
+                );
+
+                recalculatedVouchers = await _voucherCalculator.CalculateDiscountsAsync(vReq, ct);
+
+                if (_voucherLifecycleService != null && recalculatedVouchers.AllocatedUsages != null && recalculatedVouchers.AllocatedUsages.Count > 0)
+                {
+                    var ids = await _voucherLifecycleService.ReserveVouchersAsync(buyerId, recalculatedVouchers.AllocatedUsages, ct);
+                    reservedUsageIds.AddRange(ids);
+                }
+            }
+            catch (CommerceDomainException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to re-evaluate vouchers during order creation for Buyer '{BuyerId}'.", buyerId);
+            }
+        }
+
         decimal grandTotal = 0m;
         var createdSubOrders = new List<SubOrder>();
+        var platformMarkupPercent = await GetActivePlatformMarkupPercentAsync(ct);
 
         foreach (var shop in cachedQuote.Response.Shops)
         {
@@ -359,9 +515,6 @@ public sealed class OrderService : IOrderService
                 });
             }
 
-            var shopTotal = shopItemsAmount - shop.DiscountAmount + shop.ShippingFeeAmount;
-            grandTotal += shopTotal;
-
             var subOrder = new SubOrder
             {
                 Id = subOrderId,
@@ -373,15 +526,6 @@ public sealed class OrderService : IOrderService
                 PaymentMethod = request.PaymentMethod,
                 ShippingAddress = addressSnapshot,
                 ContactPhone = request.ContactPhone,
-                ItemsAmount = shopItemsAmount,
-                ProductDiscountAmount = shop.ProductDiscountAmount,
-                ShopDiscountAmount = shop.ShopDiscountAmount,
-                PlatformMarkupAmount = 0m,
-                SystemDiscountAmount = shop.SystemDiscountAmount,
-                ShippingFeeAmount = shop.ShippingFeeAmount,
-                TotalAmount = shopTotal,
-                SellerReceiveAmount = shopItemsAmount - shop.DiscountAmount,
-                PlatformFeeAmount = 0m,
                 PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
             };
 
@@ -389,6 +533,22 @@ public sealed class OrderService : IOrderService
             {
                 subOrder.Items.Add(soi);
             }
+
+            decimal shopDiscount = shop.ShopDiscountAmount;
+            decimal systemDiscount = shop.SystemDiscountAmount;
+            if (recalculatedVouchers != null && recalculatedVouchers.ShopDiscounts.TryGetValue(shop.SellerId, out var freshBreakdown))
+            {
+                shopDiscount = freshBreakdown.ShopDiscountAmount;
+                systemDiscount = freshBreakdown.SystemDiscountAmount;
+            }
+
+            subOrder.CalculateFinancials(
+                shippingFee: shop.ShippingFeeAmount,
+                shopDiscount: shopDiscount,
+                systemDiscount: systemDiscount,
+                platformMarkupPercent: platformMarkupPercent);
+
+            grandTotal += subOrder.TotalAmount;
 
             _dbContext.SubOrders.Add(subOrder);
             createdSubOrders.Add(subOrder);
@@ -406,6 +566,22 @@ public sealed class OrderService : IOrderService
 
         _dbContext.Orders.Add(order);
 
+        // Gán OrderId và SubOrderId cho các usage đã giữ chỗ
+        if (reservedUsageIds.Count > 0)
+        {
+            var usages = await _dbContext.DiscountCodeUsages.Where(u => reservedUsageIds.Contains(u.Id)).ToListAsync(ct);
+            foreach (var u in usages)
+            {
+                u.OrderId = orderId;
+                var matchingSub = createdSubOrders.FirstOrDefault(so =>
+                    recalculatedVouchers?.AllocatedUsages?.Any(au => au.DiscountCodeId == u.DiscountCodeId && au.SubOrderSellerId == so.SellerId) == true);
+                if (matchingSub != null)
+                {
+                    u.SubOrderId = matchingSub.Id;
+                }
+            }
+        }
+
         // Giữ hàng tạm thời tại Fulfillment Service (TTL 15 phút) (CHK-02)
         var reservationItems = createdSubOrders
             .SelectMany(so => so.Items.Select(i => new StockReservationItem(i.SkuId, i.Quantity, so.SellerId)))
@@ -414,6 +590,10 @@ public sealed class OrderService : IOrderService
         var reserved = await _fulfillmentClient.ReserveStockAsync(orderId, reservationItems, ttlMinutes: 15, ct);
         if (!reserved)
         {
+            if (reservedUsageIds.Count > 0 && _voucherLifecycleService != null)
+            {
+                await _voucherLifecycleService.ReleaseReservationsAsync(reservedUsageIds, ct);
+            }
             throw new CommerceDomainException("INSUFFICIENT_STOCK", "One or more items in the order have insufficient stock.", 400);
         }
 
@@ -460,9 +640,29 @@ public sealed class OrderService : IOrderService
             }
             else
             {
-                // Lỗi dứt khoát (INSUFFICIENT_BALANCE, WALLET_NOT_FOUND):
-                _logger.LogWarning("Payment for Order '{OrderId}' failed definitively ({ErrorCode}): {Message}. Remaining PendingPayment.",
+                // Lỗi dứt khoát (INSUFFICIENT_BALANCE, WALLET_NOT_FOUND): Thất bại fail-closed, trả lại tồn kho, giữ nguyên giỏ hàng
+                _logger.LogWarning("Payment for Order '{OrderId}' failed definitively ({ErrorCode}): {Message}. Rolling back stock reservation and preserving cart.",
                     orderId, paymentResult?.ErrorCode, paymentResult?.ErrorMessage);
+
+                await _fulfillmentClient.ReleaseStockAsync(orderId, ct);
+
+                if (reservedUsageIds.Count > 0 && _voucherLifecycleService != null)
+                {
+                    await _voucherLifecycleService.ReleaseReservationsAsync(reservedUsageIds, ct);
+                }
+
+                if (paymentResult?.ErrorCode == "INSUFFICIENT_BALANCE" || paymentResult?.ErrorCode == "INSUFFICIENT_WALLET_BALANCE")
+                {
+                    throw new CommerceDomainException(
+                        "INSUFFICIENT_WALLET_BALANCE",
+                        "Buyer wallet balance is insufficient to complete the payment.",
+                        400);
+                }
+
+                throw new CommerceDomainException(
+                    paymentResult?.ErrorCode ?? "PAYMENT_FAILED",
+                    paymentResult?.ErrorMessage ?? "Wallet payment failed.",
+                    400);
             }
         }
         else if (request.PaymentMethod == PaymentMethod.Cod)
@@ -500,6 +700,19 @@ public sealed class OrderService : IOrderService
             }
 
             await _dbContext.SaveChangesAsync(ct);
+
+            // Commit vouchers khi thanh toán thành công (Wallet) hoặc tạo đơn COD thành công
+            if (_voucherLifecycleService != null && (paid || request.PaymentMethod == PaymentMethod.Cod))
+            {
+                try
+                {
+                    await _voucherLifecycleService.CommitOrderVouchersAsync(orderId, ct);
+                }
+                catch (Exception cvEx)
+                {
+                    _logger.LogWarning(cvEx, "Failed to commit voucher redemptions for Order '{OrderId}'.", orderId);
+                }
+            }
         }
         catch (Exception dbEx) when (dbEx is not CommerceDomainException)
         {
@@ -544,6 +757,20 @@ public sealed class OrderService : IOrderService
                 }
             }
 
+            // 3. Rollback Voucher: Giải phóng các voucher đã giữ chỗ
+            if (reservedUsageIds.Count > 0 && _voucherLifecycleService != null)
+            {
+                try
+                {
+                    await _voucherLifecycleService.ReleaseReservationsAsync(reservedUsageIds, CancellationToken.None);
+                    _logger.LogInformation("Compensation: Successfully released voucher reservations for Order '{OrderId}'.", orderId);
+                }
+                catch (Exception vEx)
+                {
+                    _logger.LogError(vEx, "Failed to release voucher reservations during compensation for Order '{OrderId}'.", orderId);
+                }
+            }
+
             throw new CommerceDomainException(
                 "ORDER_CREATION_FAILED",
                 "An error occurred while saving the order. All inventory allocations and payments have been safely rolled back.",
@@ -551,34 +778,6 @@ public sealed class OrderService : IOrderService
         }
 
         string? paymentUrl = null;
-        if (request.PaymentMethod == PaymentMethod.VnPay)
-        {
-            var checkoutResult = await _walletClient.InitiateDirectCheckoutAsync(
-                order.Id,
-                order.BuyerId,
-                order.TotalAmount,
-                returnUrl: null,
-                cancellationToken: ct);
-
-            if (checkoutResult.IsSuccess && !string.IsNullOrWhiteSpace(checkoutResult.PaymentUrl))
-            {
-                paymentUrl = checkoutResult.PaymentUrl;
-                if (checkoutResult.TransactionId.HasValue)
-                {
-                    order.WalletTransactionId = checkoutResult.TransactionId;
-                    foreach (var so in createdSubOrders)
-                    {
-                        so.WalletTransactionId = checkoutResult.TransactionId;
-                    }
-                    await _dbContext.SaveChangesAsync(ct);
-                }
-            }
-            else
-            {
-                _logger.LogWarning("Failed to obtain direct VNPay payment URL for Order '{OrderId}': {ErrorCode} {Message}",
-                    order.Id, checkoutResult.ErrorCode, checkoutResult.ErrorMessage);
-            }
-        }
 
         return new CreateOrderResponse(
             order.Id,
@@ -818,6 +1017,38 @@ public sealed class OrderService : IOrderService
         return true;
     }
 
+    private async Task ReleaseVoucherUsagesForSubOrderAsync(Guid subOrderId, DateTimeOffset now, CancellationToken ct)
+    {
+        if (_voucherLifecycleService != null)
+        {
+            await _voucherLifecycleService.ReleaseSubOrderVouchersAsync(subOrderId, ct);
+            return;
+        }
+
+        var usages = await _dbContext.DiscountCodeUsages
+            .Where(u => u.SubOrderId == subOrderId && (u.Status == DiscountUsageStatus.Reserved || u.Status == DiscountUsageStatus.Used))
+            .ToListAsync(ct);
+
+        if (usages.Count > 0)
+        {
+            var discountCodeIds = usages.Select(u => u.DiscountCodeId).Distinct().ToList();
+            var discountCodes = await _dbContext.DiscountCodes
+                .Where(d => discountCodeIds.Contains(d.Id))
+                .ToDictionaryAsync(d => d.Id, ct);
+
+            foreach (var usage in usages)
+            {
+                usage.Status = DiscountUsageStatus.Released;
+                usage.ReleasedAt = now;
+
+                if (discountCodes.TryGetValue(usage.DiscountCodeId, out var code))
+                {
+                    code.ReservedCount = Math.Max(0, code.ReservedCount - 1);
+                }
+            }
+        }
+    }
+
     public async Task CancelOrderAsync(Guid currentUserId, Guid orderId, CancelOrderRequest request, CancellationToken ct = default)
     {
         var order = await _dbContext.Orders
@@ -902,7 +1133,7 @@ public sealed class OrderService : IOrderService
                 }
             }
 
-            if (wasPaid)
+            if (wasPaid && so.PaymentMethod == PaymentMethod.Wallet)
             {
                 var refund = new OrderRefund
                 {
@@ -944,6 +1175,13 @@ public sealed class OrderService : IOrderService
 
                 _dbContext.OrderRefunds.Add(refund);
             }
+            else if (so.PaymentMethod == PaymentMethod.Cod)
+            {
+                _logger.LogInformation("SubOrder '{SubOrderId}' has COD payment method. Skipping wallet refund on cancellation.", so.Id);
+            }
+
+            // Giải phóng voucher đã giữ chỗ cho sub-order
+            await ReleaseVoucherUsagesForSubOrderAsync(so.Id, DateTimeOffset.UtcNow, ct);
         }
 
         await _dbContext.SaveChangesAsync(ct);
@@ -1138,8 +1376,8 @@ public sealed class OrderService : IOrderService
             }
         }
 
-        // TỰ ĐỘNG HOÀN TIỀN VÍ NẾU ĐƠN CON ĐÃ THANH TOÁN (BUG-B)
-        if (wasPaid)
+        // TỰ ĐỘNG HOÀN TIỀN VÍ NẾU ĐƠN CON ĐÃ THANH TOÁN QUA VÍ (BUG-B, US5)
+        if (wasPaid && so.PaymentMethod == PaymentMethod.Wallet)
         {
             var refundId = Guid.NewGuid();
             var refund = new OrderRefund
@@ -1186,6 +1424,13 @@ public sealed class OrderService : IOrderService
 
             _dbContext.OrderRefunds.Add(refund);
         }
+        else if (so.PaymentMethod == PaymentMethod.Cod)
+        {
+            _logger.LogInformation("SubOrder '{SubOrderId}' has COD payment method. Skipping wallet refund on rejection.", so.Id);
+        }
+
+        // Giải phóng voucher đã giữ chỗ cho sub-order
+        await ReleaseVoucherUsagesForSubOrderAsync(so.Id, DateTimeOffset.UtcNow, ct);
 
         await _dbContext.SaveChangesAsync(ct);
 
@@ -1220,27 +1465,35 @@ public sealed class OrderService : IOrderService
         so.UpdatedAt = completedAt;
 
         bool settled = false;
-        try
+        if (so.SellerReceiveAmount > 0m)
         {
-            settled = await _walletClient.SettleSellerSubOrderAsync(
-                so.Id,
-                so.SellerId,
-                so.SellerReceiveAmount,
-                idempotencyKey: $"settle-{so.Id}",
-                cancellationToken: ct);
+            try
+            {
+                settled = await _walletClient.SettleSellerSubOrderAsync(
+                    so.Id,
+                    so.SellerId,
+                    so.SellerReceiveAmount,
+                    idempotencyKey: $"settle-{so.Id}",
+                    cancellationToken: ct);
 
-            if (settled)
-            {
-                _logger.LogInformation("Escrow funds settled successfully for SubOrder '{SubOrderId}', Seller '{SellerId}', Amount: {Amount}", so.Id, so.SellerId, so.SellerReceiveAmount);
+                if (settled)
+                {
+                    _logger.LogInformation("Escrow funds settled successfully for SubOrder '{SubOrderId}', Seller '{SellerId}', Amount: {Amount}", so.Id, so.SellerId, so.SellerReceiveAmount);
+                }
+                else
+                {
+                    _logger.LogWarning("Escrow settlement for SubOrder '{SubOrderId}' returned false. Flagged for settlement reconciliation.", so.Id);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                _logger.LogWarning("Escrow settlement for SubOrder '{SubOrderId}' returned false. Flagged for settlement reconciliation.", so.Id);
+                _logger.LogError(ex, "Error calling WalletService to settle escrow for SubOrder '{SubOrderId}'. Flagged for reconciliation.", so.Id);
             }
         }
-        catch (Exception ex)
+        else
         {
-            _logger.LogError(ex, "Error calling WalletService to settle escrow for SubOrder '{SubOrderId}'. Flagged for reconciliation.", so.Id);
+            _logger.LogInformation("SubOrder '{SubOrderId}' has zero seller receive amount ({Amount}). Skipping escrow wallet disbursement.", so.Id, so.SellerReceiveAmount);
+            settled = true;
         }
 
         // TỰ ĐỘNG CỘNG ĐIỂM UY TÍN CHO SELLER (INT-07)
@@ -1333,18 +1586,25 @@ public sealed class OrderService : IOrderService
                 so.CompletedAt = completedAt;
                 so.UpdatedAt = completedAt;
 
-                try
+                if (so.SellerReceiveAmount > 0m)
                 {
-                    await _walletClient.SettleSellerSubOrderAsync(
-                        so.Id,
-                        so.SellerId,
-                        so.SellerReceiveAmount,
-                        idempotencyKey: $"settle-{so.Id}",
-                        cancellationToken: ct);
+                    try
+                    {
+                        await _walletClient.SettleSellerSubOrderAsync(
+                            so.Id,
+                            so.SellerId,
+                            so.SellerReceiveAmount,
+                            idempotencyKey: $"settle-{so.Id}",
+                            cancellationToken: ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error settling escrow for SubOrder '{SubOrderId}' during master order complete.", so.Id);
+                    }
                 }
-                catch (Exception ex)
+                else
                 {
-                    _logger.LogError(ex, "Error settling escrow for SubOrder '{SubOrderId}' during master order complete.", so.Id);
+                    _logger.LogInformation("SubOrder '{SubOrderId}' has zero seller receive amount. Skipping escrow disbursement.", so.Id);
                 }
             }
 

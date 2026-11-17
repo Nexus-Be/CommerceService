@@ -29,7 +29,7 @@ public static class CommerceSeedData
                 Code = "WELCOME2026",
                 Name = "Khuyến mại chào mừng thành viên mới",
                 ScopeType = DiscountScopeType.System,
-                DiscountType = DiscountType.Fixed,
+                DiscountType = DiscountType.FixedAmount,
                 DiscountValue = 50000m,
                 MaxDiscountAmount = 50000m,
                 MinOrderAmount = 200000m,

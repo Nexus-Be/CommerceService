@@ -24,7 +24,6 @@ builder.WebHost.ConfigureKestrel(options =>
 builder.Services.AddApplicationServices();
 builder.Services.AddInfrastructureServices(builder.Configuration);
 builder.Services.AddHostedService<PaymentTimeoutWorker>();
-builder.Services.AddHostedService<VnPayPaymentPollingWorker>();
 
 // 3. REST Services
 builder.Services.AddControllers()
