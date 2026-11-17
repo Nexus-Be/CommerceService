@@ -140,16 +140,48 @@ sequenceDiagram
     "trackingCode": "GHN-SGN-1029384",
     "note": "Kiện hàng đang trung chuyển tại bưu cục Tân Bình, TP. HCM",
     "location": "Kho trung chuyển Tân Bình, TP. HCM",
-    "deliveredAt": "2026-11-12T14:30:00Z"
+    "deliveredAt": "2026-11-12T14:30:00Z",
+    "podUrl": "https://cdn.logistics.com/pod/proof-1029384.jpg",
+    "shipperName": "Nguyen Van Bưu Tá",
+    "shipperPhone": "0987654321"
   }
   ```
-  *(Lưu ý về tính tương thích ngược: Trường `status` là bắt buộc; các trường `carrierCode`, `trackingCode`, `note`, `location`, `deliveredAt` là tùy chọn. Nếu Fulfillment gửi null, Commerce vẫn tự động map text mặc định phù hợp).*
+  *(Lưu ý về tính tương thích ngược: Trường `status` là bắt buộc; các trường `carrierCode`, `trackingCode`, `note`, `location`, `deliveredAt`, `podUrl`, `shipperName`, `shipperPhone` là tùy chọn. Nếu Fulfillment gửi null, Commerce vẫn tự động map text mặc định phù hợp).*
 * **Response Payload (Commerce phản hồi lại - 200 OK):**
   ```json
   {
     "subOrderId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
     "status": "InTransit",
     "updatedAt": "2026-11-12T14:30:02Z"
+  }
+  ```
+
+---
+
+### 3.4. [OUTBOUND] Hủy vận đơn GHN khi Khách hàng hủy đơn con trước khi lấy hàng
+
+* **HTTP Method:** `POST`
+* **URL:** `/api/v1/shipments/{subOrderId}/cancel`
+* **Caller:** `CommerceService` $\rightarrow$ **Receiver:** `FulfillmentService`
+* **Header bắt buộc:**
+  ```http
+  X-Internal-Service-Key: eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e
+  Content-Type: application/json
+  ```
+* **Path Parameter:**
+  - `subOrderId`: Định danh SubOrder bị hủy (UUIDv4).
+* **Request Payload (Commerce gửi sang Fulfillment):**
+  ```json
+  {
+    "reason": "Buyer cancelled sub-order prior to courier pickup."
+  }
+  ```
+* **Response Payload (Fulfillment phản hồi - 200 OK):**
+  ```json
+  {
+    "subOrderId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "status": "ShipmentCancelled",
+    "cancelledAt": "2026-11-17T10:00:00Z"
   }
   ```
 

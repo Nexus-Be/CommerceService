@@ -56,10 +56,11 @@ public class SubOrder : BaseEntity<Guid>
         decimal shippingFee,
         decimal shopDiscount,
         decimal systemDiscount,
-        decimal platformMarkupPercent = 0m)
+        decimal platformMarkupPercent = 0m,
+        decimal? productDiscount = null)
     {
         ItemsAmount = Items.Sum(i => i.Quantity * i.UnitPrice);
-        ProductDiscountAmount = Items.Sum(i => i.Quantity * (i.UnitPrice - i.UnitPriceAfterDiscount));
+        ProductDiscountAmount = productDiscount ?? Items.Sum(i => i.Quantity * (i.UnitPrice - i.UnitPriceAfterDiscount));
         ShopDiscountAmount = shopDiscount;
         SystemDiscountAmount = systemDiscount;
 

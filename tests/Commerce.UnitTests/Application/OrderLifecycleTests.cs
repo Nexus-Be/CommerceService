@@ -52,6 +52,14 @@ public class OrderLifecycleTests : IDisposable
             .ReturnsAsync(true);
 
         _mockFulfillmentClient
+            .Setup(f => f.ReleaseSubOrderStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _mockFulfillmentClient
+            .Setup(f => f.CancelShipmentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _mockFulfillmentClient
             .Setup(f => f.CreateShipmentAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ShipmentCreationResult("GHN-TRACK-001", "GHN", "https://label.pdf"));
 
@@ -240,6 +248,223 @@ public class OrderLifecycleTests : IDisposable
     }
 
     // =========================================================================
+    // ORD-LIFE-SUB-CANCEL: BUYER CANCEL INDEPENDENT SUB-ORDER
+    // =========================================================================
+
+    [Fact]
+    public async Task CancelSubOrderAsync_ShouldThrowForbidden_WhenUserIsNotOwner()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var otherUserId = Guid.NewGuid();
+        var (_, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, Guid.NewGuid(), OrderStatus.Paid, SubOrderStatus.Paid);
+
+        var service = CreateOrderService();
+        var request = new CancelSubOrderRequest(CancellationReasonCode.BuyerChangedMind, "Cancel reason");
+
+        // Act
+        var act = () => service.CancelSubOrderAsync(otherUserId, subOrder.Id, request, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "FORBIDDEN");
+    }
+
+    [Fact]
+    public async Task CancelSubOrderAsync_ShouldThrowException_WhenSubOrderIsShippedOrDelivered()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var (_, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, Guid.NewGuid(), OrderStatus.Paid, SubOrderStatus.Shipped);
+
+        var service = CreateOrderService();
+        var request = new CancelSubOrderRequest(CancellationReasonCode.BuyerChangedMind);
+
+        // Act
+        var act = () => service.CancelSubOrderAsync(buyerId, subOrder.Id, request, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "SUB_ORDER_CANNOT_BE_CANCELLED" && e.Message == "Sub-order cannot be cancelled once shipped or completed.");
+    }
+
+    [Fact]
+    public async Task CancelSubOrderAsync_ShouldCancelSubOrderAndReleaseStockAndRefund_WhenPaidAndConfirmed()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Confirmed);
+
+        // Give it tracking details
+        subOrder.CarrierCode = "GHN";
+        subOrder.TrackingCode = "GHN-CANCEL-TEST-001";
+        subOrder.Items.Add(new SubOrderItem
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            SellerId = sellerId,
+            ProductId = Guid.NewGuid(),
+            SkuId = Guid.NewGuid(),
+            ProductNameSnapshot = "Product Test",
+            Quantity = 1,
+            UnitPrice = 250000m,
+            UnitPriceAfterDiscount = 250000m,
+            LineTotal = 250000m
+        });
+        await _dbContext.SaveChangesAsync();
+
+        var service = CreateOrderService();
+        var request = new CancelSubOrderRequest(CancellationReasonCode.BuyerChangedMind, "Buyer cancelled sub-order prior to pickup");
+
+        // Act
+        var response = await service.CancelSubOrderAsync(buyerId, subOrder.Id, request, CancellationToken.None);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.SubOrderId.Should().Be(subOrder.Id);
+        response.Status.Should().Be(SubOrderStatus.Cancelled.ToString());
+        response.RefundAmount.Should().Be(subOrder.TotalAmount);
+        response.InventoryReleased.Should().BeTrue();
+        response.CarrierShipmentCancelled.Should().BeTrue();
+
+        var updatedSubOrder = await _dbContext.SubOrders.FirstOrDefaultAsync(s => s.Id == subOrder.Id);
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Cancelled);
+        updatedSubOrder.CancelledAt.Should().NotBeNull();
+
+        _mockFulfillmentClient.Verify(f => f.ReleaseSubOrderStockAsync(
+            order.Id,
+            It.Is<List<StockReservationItem>>(items => items.Count == 1 && items[0].SellerId == sellerId),
+            "BuyerCancelledSubOrder",
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        _mockFulfillmentClient.Verify(f => f.CancelShipmentAsync(
+            subOrder.Id,
+            It.Is<string>(r => r.Contains("Buyer cancelled")),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
+            subOrder.Id,
+            buyerId.ToString(),
+            subOrder.TotalAmount,
+            It.IsAny<string>(),
+            It.Is<string>(k => k == $"refund-suborder-cancel-{subOrder.Id}"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelSubOrderAsync_ShouldIsolateSiblingSubOrders()
+    {
+        // Arrange: Order with 2 sub-orders: SubOrder 1 is Shipped, SubOrder 2 is Paid
+        var buyerId = Guid.NewGuid();
+        var seller1 = Guid.NewGuid();
+        var seller2 = Guid.NewGuid();
+
+        var orderId = Guid.NewGuid();
+        var subOrder1Id = Guid.NewGuid();
+        var subOrder2Id = Guid.NewGuid();
+
+        var order = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 500000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            SubOrders = new List<SubOrder>()
+        };
+
+        var subOrder1 = new SubOrder
+        {
+            Id = subOrder1Id,
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = seller1,
+            SubOrderNo = "SO-001",
+            Status = SubOrderStatus.Shipped,
+            PaymentMethod = PaymentMethod.Wallet,
+            ContactPhone = "0901234567",
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            PaidAt = DateTimeOffset.UtcNow.AddHours(-2),
+            TotalAmount = 250000m,
+            SellerReceiveAmount = 230000m,
+            Items = new List<SubOrderItem>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = subOrder1Id,
+                    SellerId = seller1,
+                    ProductId = Guid.NewGuid(),
+                    SkuId = Guid.NewGuid(),
+                    ProductNameSnapshot = "Product 1",
+                    Quantity = 1,
+                    UnitPrice = 250000m,
+                    UnitPriceAfterDiscount = 250000m,
+                    LineTotal = 250000m
+                }
+            }
+        };
+
+        var subOrder2 = new SubOrder
+        {
+            Id = subOrder2Id,
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = seller2,
+            SubOrderNo = "SO-002",
+            Status = SubOrderStatus.Paid,
+            PaymentMethod = PaymentMethod.Wallet,
+            ContactPhone = "0901234567",
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            PaidAt = DateTimeOffset.UtcNow.AddHours(-1),
+            TotalAmount = 250000m,
+            SellerReceiveAmount = 230000m,
+            Items = new List<SubOrderItem>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = subOrder2Id,
+                    SellerId = seller2,
+                    ProductId = Guid.NewGuid(),
+                    SkuId = Guid.NewGuid(),
+                    ProductNameSnapshot = "Product 2",
+                    Quantity = 1,
+                    UnitPrice = 250000m,
+                    UnitPriceAfterDiscount = 250000m,
+                    LineTotal = 250000m
+                }
+            }
+        };
+
+        order.SubOrders.Add(subOrder1);
+        order.SubOrders.Add(subOrder2);
+
+        _dbContext.Orders.Add(order);
+        _dbContext.SubOrders.AddRange(subOrder1, subOrder2);
+        await _dbContext.SaveChangesAsync();
+
+        var service = CreateOrderService();
+        var request = new CancelSubOrderRequest(CancellationReasonCode.BuyerChangedMind, "Cancelling shop 2 only");
+
+        // Act: Buyer cancels SubOrder 2
+        var response = await service.CancelSubOrderAsync(buyerId, subOrder2.Id, request, CancellationToken.None);
+
+        // Assert: SubOrder 2 is Cancelled, SubOrder 1 is untouched (Shipped), Master Order is still Paid
+        response.Status.Should().Be(SubOrderStatus.Cancelled.ToString());
+
+        var dbSubOrder1 = await _dbContext.SubOrders.FirstOrDefaultAsync(s => s.Id == subOrder1.Id);
+        dbSubOrder1!.Status.Should().Be(SubOrderStatus.Shipped);
+
+        var dbSubOrder2 = await _dbContext.SubOrders.FirstOrDefaultAsync(s => s.Id == subOrder2.Id);
+        dbSubOrder2!.Status.Should().Be(SubOrderStatus.Cancelled);
+
+        var dbMasterOrder = await _dbContext.Orders.FirstOrDefaultAsync(o => o.Id == orderId);
+        dbMasterOrder!.Status.Should().Be(OrderStatus.Paid);
+    }
+
+    // =========================================================================
     // ORD-LIFE-04 & 05: SELLER ACCEPT SUB-ORDER
     // =========================================================================
 
@@ -375,6 +600,67 @@ public class OrderLifecycleTests : IDisposable
         _mockUserClient.Verify(u => u.AdjustReputationAsync(
             It.Is<ReputationAdjustRequest>(r => r.UserId == sellerId && r.ScoreDelta == 1 && r.Reason == "OrderCompleted"),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ConfirmReceipt_ShouldThrowInvalidStatus_WhenSubOrderIsShipped()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Shipped);
+
+        var service = CreateOrderService();
+
+        // Act
+        var act = () => service.BuyerConfirmSubOrderReceiptAsync(buyerId, subOrder.Id, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "INVALID_STATUS" && e.Message == "Sub-order cannot be confirmed until it is delivered.");
+
+        _mockWalletClient.Verify(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CompleteOrder_ShouldThrowInvalidStatus_WhenAnySubOrderIsNotDelivered()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Shipped);
+
+        var service = CreateOrderService();
+
+        // Act
+        var act = () => service.CompleteOrderAsync(buyerId, order.Id, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "INVALID_STATUS" && e.Message.Contains("delivered"));
+    }
+
+    [Fact]
+    public async Task ConfirmReceipt_ShouldSkipWalletSettlement_WhenPaymentMethodIsCod()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Delivered, PaymentMethod.Cod);
+
+        var service = CreateOrderService();
+
+        // Act
+        var response = await service.BuyerConfirmSubOrderReceiptAsync(buyerId, subOrder.Id, CancellationToken.None);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.Status.Should().Be(SubOrderStatus.Completed.ToString());
+        response.EscrowSettled.Should().BeTrue();
+
+        _mockWalletClient.Verify(w => w.SettleSellerSubOrderAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]

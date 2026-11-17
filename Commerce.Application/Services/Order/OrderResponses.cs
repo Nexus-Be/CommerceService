@@ -184,3 +184,12 @@ public sealed record OrderCompleteResponse(
     int CompletedSubOrderCount,
     List<Guid> CompletedSubOrderIds
 );
+
+public sealed record CancelSubOrderResponse(
+    Guid SubOrderId,
+    string Status,
+    DateTimeOffset CancelledAt,
+    decimal RefundAmount,
+    bool InventoryReleased,
+    bool CarrierShipmentCancelled
+);

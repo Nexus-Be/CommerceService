@@ -52,4 +52,11 @@ public sealed record UpdateDeliveryStatusRequest(
     string? CarrierCode = null,
     string? TrackingCode = null,
     string? Note = null,
-    string? Location = null);
+    string? Location = null,
+    string? PodUrl = null,
+    string? ShipperName = null,
+    string? ShipperPhone = null);
+
+public sealed record CancelSubOrderRequest(
+    CancellationReasonCode ReasonCode = CancellationReasonCode.BuyerChangedMind,
+    string? ReasonNote = null);

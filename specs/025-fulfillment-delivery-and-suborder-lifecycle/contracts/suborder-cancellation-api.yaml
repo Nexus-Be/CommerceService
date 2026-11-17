@@ -1,0 +1,91 @@
+openapi: 3.0.3
+info:
+  title: Sub-Order Independent Cancellation API
+  description: Public API endpoint allowing buyers to cancel an individual sub-order belonging to a specific shop.
+  version: 1.0.0
+paths:
+  /api/v1/sub-orders/{subOrderId}/cancel:
+    post:
+      summary: Cancels an individual sub-order belonging to the authenticated buyer before dispatch.
+      operationId: cancelSubOrder
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: subOrderId
+          in: path
+          required: true
+          description: Unique identifier of the SubOrder
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelSubOrderRequest'
+      responses:
+        '200':
+          description: SubOrder cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelSubOrderResponse'
+        '400':
+          description: SubOrder cannot be cancelled in its current status
+        '403':
+          description: Caller is not the owner of the sub-order
+        '404':
+          description: SubOrder not found
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    CancelSubOrderRequest:
+      type: object
+      properties:
+        reasonCode:
+          type: string
+          enum:
+            - BuyerChangedMind
+            - OutOfStock
+            - PaymentTimeout
+            - SellerRejected
+            - Other
+            - DeliveryFailed
+            - PackageReturned
+            - CancellationWithoutReason
+          default: BuyerChangedMind
+        reasonNote:
+          type: string
+          example: Ordered by mistake, cancelling before shop dispatches.
+    CancelSubOrderResponse:
+      type: object
+      required:
+        - subOrderId
+        - status
+        - cancelledAt
+        - refundAmount
+        - inventoryReleased
+      properties:
+        subOrderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          example: Cancelled
+        cancelledAt:
+          type: string
+          format: date-time
+        refundAmount:
+          type: number
+          format: decimal
+          example: 250000.00
+        inventoryReleased:
+          type: boolean
+          example: true
+        carrierShipmentCancelled:
+          type: boolean
+          example: true

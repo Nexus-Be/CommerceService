@@ -55,6 +55,8 @@ public sealed class PaymentTimeoutWorker : BackgroundService
         var auctionClient = scope.ServiceProvider.GetService<IAuctionClient>();
         var walletClient = scope.ServiceProvider.GetService<IWalletClient>();
         var userClient = scope.ServiceProvider.GetService<IUserClient>();
+        var catalogClient = scope.ServiceProvider.GetService<ICatalogClient>();
+        var configuration = scope.ServiceProvider.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
         var voucherLifecycleService = scope.ServiceProvider.GetService<Commerce.Application.Services.Discount.IVoucherLifecycleService>();
 
         var now = DateTimeOffset.UtcNow;
@@ -364,6 +366,127 @@ public sealed class PaymentTimeoutWorker : BackgroundService
             {
                 _logger.LogWarning(ex, "[PaymentTimeoutWorker] Failed to sweep expired orphan voucher reservations.");
             }
+        }
+
+        // 5. Tự động hoàn tất các đơn con đã giao (Delivered) quá thời hạn khiếu nại (mặc định 3 ngày / 4320 phút)
+        try
+        {
+            var autoCompleteMinutes = configuration?.GetValue<int>("OrderLifecycle:AutoCompleteDeliveredMinutes") ?? 4320;
+            if (autoCompleteMinutes <= 0)
+            {
+                autoCompleteMinutes = 4320;
+            }
+
+            var deliveryCutoff = now.AddMinutes(-autoCompleteMinutes);
+
+            var deliveredSubOrders = await dbContext.SubOrders
+                .Include(s => s.Items)
+                .Include(s => s.Order!)
+                    .ThenInclude(o => o.SubOrders)
+                .Where(s => s.Status == SubOrderStatus.Delivered && s.DeliveredAt.HasValue && s.DeliveredAt.Value <= deliveryCutoff)
+                .OrderBy(s => s.DeliveredAt)
+                .Take(50)
+                .ToListAsync(ct);
+
+            if (deliveredSubOrders.Count > 0)
+            {
+                _logger.LogInformation("[PaymentTimeoutWorker] Found {Count} delivered SubOrders past {Minutes}m inspection window to auto-complete.", deliveredSubOrders.Count, autoCompleteMinutes);
+
+                foreach (var so in deliveredSubOrders)
+                {
+                    so.Status = SubOrderStatus.Completed;
+                    so.CompletedAt = now;
+                    so.UpdatedAt = now;
+
+                    dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+                    {
+                        Id = Guid.NewGuid(),
+                        SubOrderId = so.Id,
+                        FromStatus = SubOrderStatus.Delivered,
+                        ToStatus = SubOrderStatus.Completed,
+                        ActorRole = OrderActorRole.System,
+                        Reason = "Order automatically completed after delivery grace period.",
+                        CreatedAt = now
+                    });
+
+                    // Giải ngân Escrow sang ví người bán (bỏ qua nếu COD)
+                    if (walletClient != null && so.PaymentMethod != PaymentMethod.Cod && so.SellerReceiveAmount > 0m)
+                    {
+                        try
+                        {
+                            var settled = await walletClient.SettleSellerSubOrderAsync(
+                                so.Id,
+                                so.SellerId,
+                                so.SellerReceiveAmount,
+                                idempotencyKey: $"settle-auto-{so.Id}",
+                                cancellationToken: ct);
+
+                            if (settled)
+                            {
+                                _logger.LogInformation("[PaymentTimeoutWorker] Auto-completed SubOrder '{SubOrderId}' escrow settled successfully. Amount: {Amount}", so.Id, so.SellerReceiveAmount);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("[PaymentTimeoutWorker] Auto-completed SubOrder '{SubOrderId}' settlement returned false.", so.Id);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "[PaymentTimeoutWorker] Failed to settle seller escrow for auto-completed SubOrder '{SubOrderId}'.", so.Id);
+                        }
+                    }
+
+                    // Thưởng điểm uy tín Seller (+1)
+                    if (userClient != null)
+                    {
+                        try
+                        {
+                            await userClient.AdjustReputationAsync(new ReputationAdjustRequest(
+                                UserId: so.SellerId,
+                                TargetRole: "Seller",
+                                PartnerUserId: so.BuyerId,
+                                ScoreDelta: 1,
+                                Reason: "OrderCompleted",
+                                ReferenceType: "Order",
+                                ReferenceId: so.SubOrderNo,
+                                Note: $"Auto-completion reward for sub-order {so.SubOrderNo}."
+                            ), ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "[PaymentTimeoutWorker] Failed to adjust reputation for Seller '{SellerId}' on auto-completed SubOrder '{SubOrderId}'.", so.SellerId, so.Id);
+                        }
+                    }
+
+                    // Đồng bộ dữ liệu sang Catalog để mở quyền đánh giá sản phẩm
+                    if (catalogClient != null && so.Items.Count > 0)
+                    {
+                        try
+                        {
+                            var productIds = so.Items.Select(i => i.ProductId);
+                            await catalogClient.SyncPurchasesBatchAsync(so.BuyerId, so.Id, productIds, now, ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "[PaymentTimeoutWorker] Failed to sync purchases to Catalog for auto-completed SubOrder '{SubOrderId}'.", so.Id);
+                        }
+                    }
+
+                    // Đồng bộ trạng thái master order nếu tất cả đơn con đã Completed hoặc Cancelled
+                    if (so.Order != null && so.Order.SubOrders.All(s => s.Id == so.Id || s.Status == SubOrderStatus.Completed || s.Status == SubOrderStatus.Cancelled))
+                    {
+                        so.Order.Status = OrderStatus.Completed;
+                        so.Order.UpdatedAt = now;
+                    }
+                }
+
+                await dbContext.SaveChangesAsync(ct);
+                _logger.LogInformation("[PaymentTimeoutWorker] Successfully processed auto-completion for {Count} delivered SubOrders.", deliveredSubOrders.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[PaymentTimeoutWorker] Error during auto-completion sweep of delivered SubOrders.");
         }
     }
 }

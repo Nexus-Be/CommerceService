@@ -207,6 +207,23 @@ public class OrdersController : ControllerBase
         return Ok(response);
     }
 
+    /// <summary>R102: Người mua hủy riêng một đơn hàng con trước khi giao hàng (SubOrderStatus to Cancelled).</summary>
+    [HttpPost("/api/v1/sub-orders/{subOrderId:guid}/cancel")]
+    public async Task<IActionResult> CancelSubOrder(
+        [FromRoute] Guid subOrderId,
+        [FromBody] CancelSubOrderRequest? request = null,
+        CancellationToken ct = default)
+    {
+        if (!this.TryGetUserId(out var currentUserId, out var authError))
+        {
+            return authError;
+        }
+
+        var effectiveRequest = request ?? new CancelSubOrderRequest(CancellationReasonCode.BuyerChangedMind, "Buyer cancelled sub-order.");
+        var response = await _orderService.CancelSubOrderAsync(currentUserId, subOrderId, effectiveRequest, ct);
+        return Ok(response);
+    }
+
     /// <summary>R99: Khởi tạo yêu cầu hoàn tiền cho đơn hàng con.</summary>
     [HttpPost("/api/v1/sub-orders/{subOrderId:guid}/refund")]
     public async Task<IActionResult> RefundSubOrder(

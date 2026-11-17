@@ -536,17 +536,20 @@ public sealed class OrderService : IOrderService
 
             decimal shopDiscount = shop.ShopDiscountAmount;
             decimal systemDiscount = shop.SystemDiscountAmount;
+            decimal productDiscount = shop.ProductDiscountAmount;
             if (recalculatedVouchers != null && recalculatedVouchers.ShopDiscounts.TryGetValue(shop.SellerId, out var freshBreakdown))
             {
                 shopDiscount = freshBreakdown.ShopDiscountAmount;
                 systemDiscount = freshBreakdown.SystemDiscountAmount;
+                productDiscount = freshBreakdown.ProductDiscountAmount;
             }
 
             subOrder.CalculateFinancials(
                 shippingFee: shop.ShippingFeeAmount,
                 shopDiscount: shopDiscount,
                 systemDiscount: systemDiscount,
-                platformMarkupPercent: platformMarkupPercent);
+                platformMarkupPercent: platformMarkupPercent,
+                productDiscount: productDiscount);
 
             grandTotal += subOrder.TotalAmount;
 
@@ -1200,6 +1203,188 @@ public sealed class OrderService : IOrderService
         }
     }
 
+    public async Task<CancelSubOrderResponse> CancelSubOrderAsync(Guid currentUserId, Guid subOrderId, CancelSubOrderRequest request, CancellationToken ct = default)
+    {
+        var subOrder = await _dbContext.SubOrders
+            .Include(s => s.Items)
+            .FirstOrDefaultAsync(s => s.Id == subOrderId, ct)
+            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
+
+        if (subOrder.BuyerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to cancel this sub-order.", 403);
+        }
+
+        if (subOrder.Status != SubOrderStatus.PendingPayment &&
+            subOrder.Status != SubOrderStatus.Paid &&
+            subOrder.Status != SubOrderStatus.Confirmed)
+        {
+            throw new CommerceDomainException("SUB_ORDER_CANNOT_BE_CANCELLED", "Sub-order cannot be cancelled once shipped or completed.");
+        }
+
+        var previousStatus = subOrder.Status;
+        var wasPaid = subOrder.PaidAt.HasValue || previousStatus == SubOrderStatus.Paid || previousStatus == SubOrderStatus.Confirmed;
+        var now = DateTimeOffset.UtcNow;
+
+        subOrder.Status = SubOrderStatus.Cancelled;
+        subOrder.CancelledAt = now;
+        subOrder.UpdatedAt = now;
+
+        var cancellationId = Guid.NewGuid();
+        _dbContext.OrderCancellations.Add(new OrderCancellation
+        {
+            Id = cancellationId,
+            SubOrderId = subOrder.Id,
+            CancelledBy = currentUserId,
+            ActorRole = OrderActorRole.Buyer,
+            ReasonCode = request.ReasonCode,
+            ReasonNote = request.ReasonNote ?? "Buyer cancelled sub-order.",
+            WasPaid = wasPaid,
+            InventoryReleased = true
+        });
+
+        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            FromStatus = previousStatus,
+            ToStatus = SubOrderStatus.Cancelled,
+            ActorRole = OrderActorRole.Buyer,
+            Reason = request.ReasonNote ?? "Buyer cancelled sub-order.",
+            CreatedAt = now
+        });
+
+        decimal refundAmount = 0m;
+        if (wasPaid && subOrder.PaymentMethod == PaymentMethod.Wallet && subOrder.TotalAmount > 0)
+        {
+            refundAmount = subOrder.TotalAmount;
+            var refund = new OrderRefund
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = subOrder.Id,
+                OrderId = subOrder.OrderId,
+                CancellationId = cancellationId,
+                RefundType = RefundType.Full,
+                Amount = refundAmount,
+                Status = RefundStatus.Requested,
+                ReasonCode = "BUYER_CANCELLED",
+                ReasonNote = request.ReasonNote ?? "Buyer cancelled sub-order before shipping.",
+                ActorRole = OrderActorRole.Buyer,
+                RequestedBy = currentUserId,
+                RequestedAt = now
+            };
+
+            try
+            {
+                var refundSucceeded = await _walletClient.RefundSubOrderPaymentAsync(
+                    subOrder.Id,
+                    subOrder.BuyerId.ToString(),
+                    refundAmount,
+                    request.ReasonNote ?? "Buyer cancelled sub-order before shipping.",
+                    idempotencyKey: $"refund-suborder-cancel-{subOrder.Id}",
+                    cancellationToken: ct);
+
+                if (refundSucceeded)
+                {
+                    refund.Status = RefundStatus.Completed;
+                    refund.CompletedAt = DateTimeOffset.UtcNow;
+                    _logger.LogInformation("SubOrder '{SubOrderId}' refund on cancel succeeded via WalletClient. Amount: {Amount}", subOrder.Id, refundAmount);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to automatically refund wallet balance on cancel for SubOrder '{SubOrderId}'.", subOrder.Id);
+            }
+
+            _dbContext.OrderRefunds.Add(refund);
+        }
+        else if (subOrder.PaymentMethod == PaymentMethod.Cod)
+        {
+            _logger.LogInformation("SubOrder '{SubOrderId}' has COD payment method. Skipping wallet refund on cancellation.", subOrder.Id);
+        }
+
+        // Giải phóng voucher đã giữ chỗ cho sub-order
+        await ReleaseVoucherUsagesForSubOrderAsync(subOrder.Id, now, ct);
+
+        // Đồng bộ trạng thái master order nếu tất cả đơn con còn lại đều Cancelled, Completed, hoặc Delivered
+        var parentOrder = await _dbContext.Orders
+            .Include(o => o.SubOrders)
+            .FirstOrDefaultAsync(o => o.Id == subOrder.OrderId, ct);
+
+        if (parentOrder != null)
+        {
+            var nonCancelledSubOrders = parentOrder.SubOrders
+                .Where(s => s.Id != subOrder.Id && s.Status != SubOrderStatus.Cancelled)
+                .ToList();
+
+            if (nonCancelledSubOrders.Count == 0)
+            {
+                parentOrder.Status = OrderStatus.Cancelled;
+                parentOrder.UpdatedAt = now;
+            }
+            else if (nonCancelledSubOrders.All(s => s.Status == SubOrderStatus.Completed))
+            {
+                parentOrder.Status = OrderStatus.Completed;
+                parentOrder.UpdatedAt = now;
+            }
+            else if (nonCancelledSubOrders.All(s => s.Status == SubOrderStatus.Delivered))
+            {
+                parentOrder.Status = OrderStatus.Delivered;
+                parentOrder.UpdatedAt = now;
+            }
+        }
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        // Hủy bưu tá / vận đơn giao hàng nếu đã tạo tracking
+        bool carrierShipmentCancelled = false;
+        if (!string.IsNullOrWhiteSpace(subOrder.TrackingCode) || !string.IsNullOrWhiteSpace(subOrder.CarrierCode))
+        {
+            try
+            {
+                carrierShipmentCancelled = await _fulfillmentClient.CancelShipmentAsync(
+                    subOrder.Id,
+                    request.ReasonNote ?? "Buyer cancelled sub-order prior to courier pickup.",
+                    ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to cancel shipment for SubOrder '{SubOrderId}' via FulfillmentClient.", subOrder.Id);
+            }
+        }
+
+        // Nhả tồn kho riêng cho các món thuộc sub-order bị hủy
+        bool inventoryReleased = false;
+        var itemsToRelease = subOrder.Items
+            .Select(i => new StockReservationItem(i.SkuId, i.Quantity, subOrder.SellerId))
+            .ToList();
+
+        if (itemsToRelease.Count > 0)
+        {
+            try
+            {
+                inventoryReleased = await _fulfillmentClient.ReleaseSubOrderStockAsync(
+                    subOrder.OrderId,
+                    itemsToRelease,
+                    "BuyerCancelledSubOrder",
+                    ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to release stock for SubOrder '{SubOrderId}' via FulfillmentClient.", subOrder.Id);
+            }
+        }
+
+        return new CancelSubOrderResponse(
+            SubOrderId: subOrder.Id,
+            Status: subOrder.Status.ToString(),
+            CancelledAt: now,
+            RefundAmount: refundAmount,
+            InventoryReleased: inventoryReleased,
+            CarrierShipmentCancelled: carrierShipmentCancelled
+        );
+    }
+
     public async Task SellerAcceptSubOrderAsync(Guid sellerId, Guid orderId, SellerAcceptOrderRequest request, CancellationToken ct = default)
     {
         var so = await _dbContext.SubOrders
@@ -1454,9 +1639,9 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("FORBIDDEN", "You do not have permission to confirm this sub-order.", 403);
         }
 
-        if (so.Status != SubOrderStatus.Delivered && so.Status != SubOrderStatus.Shipped)
+        if (so.Status != SubOrderStatus.Delivered)
         {
-            throw new CommerceDomainException("INVALID_STATUS", "Sub-order cannot be confirmed in its current status.");
+            throw new CommerceDomainException("INVALID_STATUS", "Sub-order cannot be confirmed until it is delivered.");
         }
 
         var completedAt = DateTimeOffset.UtcNow;
@@ -1465,7 +1650,12 @@ public sealed class OrderService : IOrderService
         so.UpdatedAt = completedAt;
 
         bool settled = false;
-        if (so.SellerReceiveAmount > 0m)
+        if (so.PaymentMethod == PaymentMethod.Cod)
+        {
+            _logger.LogInformation("COD SubOrder '{SubOrderId}' confirmed. Courier reconciles physical cash directly. Skipping wallet escrow disbursement.", so.Id);
+            settled = true;
+        }
+        else if (so.SellerReceiveAmount > 0m)
         {
             try
             {
@@ -1570,6 +1760,12 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("INVALID_STATUS", "Order cannot be completed in its current status.");
         }
 
+        var activeSubOrders = order.SubOrders.Where(s => s.Status != SubOrderStatus.Cancelled).ToList();
+        if (activeSubOrders.Count == 0 || activeSubOrders.Any(s => s.Status != SubOrderStatus.Delivered && s.Status != SubOrderStatus.Completed))
+        {
+            throw new CommerceDomainException("INVALID_STATUS", "Order cannot be completed until all active sub-orders are delivered.");
+        }
+
         var completedAt = DateTimeOffset.UtcNow;
         var completedSubOrderIds = new List<Guid>();
 
@@ -1586,7 +1782,11 @@ public sealed class OrderService : IOrderService
                 so.CompletedAt = completedAt;
                 so.UpdatedAt = completedAt;
 
-                if (so.SellerReceiveAmount > 0m)
+                if (so.PaymentMethod == PaymentMethod.Cod)
+                {
+                    _logger.LogInformation("COD SubOrder '{SubOrderId}' completed during master order complete. Courier reconciles physical cash directly. Skipping escrow disbursement.", so.Id);
+                }
+                else if (so.SellerReceiveAmount > 0m)
                 {
                     try
                     {
@@ -1915,7 +2115,7 @@ public sealed class OrderService : IOrderService
             return;
         }
 
-        string formattedReason = FormatHistoryReason(status, request.Note, request.Location);
+        string formattedReason = FormatHistoryReason(status, request.Note, request.Location, request.ShipperName, request.ShipperPhone, request.PodUrl);
 
         if (string.Equals(status, "ReadyToPick", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(status, "Picking", StringComparison.OrdinalIgnoreCase) ||
@@ -2184,7 +2384,7 @@ public sealed class OrderService : IOrderService
         if (!string.IsNullOrWhiteSpace(request.CarrierCode)) auctionOrder.CarrierCode = request.CarrierCode;
         if (!string.IsNullOrWhiteSpace(request.TrackingCode)) auctionOrder.TrackingCode = request.TrackingCode;
 
-        string formattedReason = FormatHistoryReason(status, request.Note, request.Location);
+        string formattedReason = FormatHistoryReason(status, request.Note, request.Location, request.ShipperName, request.ShipperPhone, request.PodUrl);
 
         if (string.Equals(status, "ReadyToPick", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(status, "Picking", StringComparison.OrdinalIgnoreCase) ||
@@ -2426,14 +2626,33 @@ public sealed class OrderService : IOrderService
         _ => carrierCode ?? "Standard Delivery"
     };
 
-    private static string FormatHistoryReason(string status, string? note, string? location)
+    private static string FormatHistoryReason(
+        string status,
+        string? note,
+        string? location,
+        string? shipperName = null,
+        string? shipperPhone = null,
+        string? podUrl = null)
     {
         var desc = !string.IsNullOrWhiteSpace(note) ? note : GetDefaultDescription(status);
+        var sb = new System.Text.StringBuilder($"[{status}] {desc}");
+
         if (!string.IsNullOrWhiteSpace(location))
         {
-            return $"[{status}] {desc} | Location: {location}";
+            sb.Append($" | Location: {location}");
         }
-        return $"[{status}] {desc}";
+
+        if (!string.IsNullOrWhiteSpace(shipperName) || !string.IsNullOrWhiteSpace(shipperPhone))
+        {
+            sb.Append($" | Courier: {shipperName?.Trim()} ({shipperPhone?.Trim()})");
+        }
+
+        if (!string.IsNullOrWhiteSpace(podUrl))
+        {
+            sb.Append($" | POD: {podUrl.Trim()}");
+        }
+
+        return sb.ToString();
     }
 
     public async Task<OrderDto> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)

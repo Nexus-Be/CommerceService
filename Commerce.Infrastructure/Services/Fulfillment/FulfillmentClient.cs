@@ -407,6 +407,34 @@ public sealed class FulfillmentClient : IFulfillmentClient
         }
     }
 
+    public async Task<bool> CancelShipmentAsync(Guid subOrderId, string reason = "SubOrderCancelled", CancellationToken ct = default)
+    {
+        try
+        {
+            var payload = new { reason };
+            var response = await _httpClient.PostAsJsonAsync($"api/v1/shipments/{subOrderId}/cancel", payload, JsonOptions, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("[REST Fulfillment Client] Carrier shipment cancelled successfully for SubOrder '{SubOrderId}'.", subOrderId);
+                return true;
+            }
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                _logger.LogInformation("[REST Fulfillment Client] No active carrier shipment found to cancel for SubOrder '{SubOrderId}'.", subOrderId);
+                return true;
+            }
+
+            _logger.LogWarning("[REST Fulfillment Client] Cancel shipment returned status {StatusCode} for SubOrder '{SubOrderId}'.", response.StatusCode, subOrderId);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[REST Fulfillment Client] Connection error cancelling carrier shipment for SubOrder '{SubOrderId}'.", subOrderId);
+            return false;
+        }
+    }
+
     private sealed record StockCheckApiResponse(bool IsAvailable, int AvailableStock);
     private sealed record ShippingFeeResult(decimal FeeAmount);
 

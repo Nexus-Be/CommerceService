@@ -74,4 +74,7 @@ public interface IFulfillmentClient
 
     /// <summary>Tạo vận đơn GHN khi Shop tiếp nhận đơn hàng con (ORD-04).</summary>
     Task<ShipmentCreationResult> CreateShipmentAsync(Guid subOrderId, CancellationToken ct = default);
+
+    /// <summary>Hủy vận đơn đã tạo bên bưu cục GHN khi đơn con bị hủy trước khi lấy hàng.</summary>
+    Task<bool> CancelShipmentAsync(Guid subOrderId, string reason = "SubOrderCancelled", CancellationToken ct = default);
 }

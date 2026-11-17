@@ -25,6 +25,7 @@ public class PaymentTimeoutWorkerTests : IDisposable
     private readonly Mock<IAuctionClient> _mockAuctionClient = new();
     private readonly Mock<IWalletClient> _mockWalletClient = new();
     private readonly Mock<IUserClient> _mockUserClient = new();
+    private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IServiceProvider> _mockServiceProvider = new();
     private readonly Mock<IServiceScope> _mockServiceScope = new();
     private readonly Mock<IServiceScopeFactory> _mockScopeFactory = new();
@@ -43,6 +44,7 @@ public class PaymentTimeoutWorkerTests : IDisposable
         scopedServices.Setup(s => s.GetService(typeof(IAuctionClient))).Returns(_mockAuctionClient.Object);
         scopedServices.Setup(s => s.GetService(typeof(IWalletClient))).Returns(_mockWalletClient.Object);
         scopedServices.Setup(s => s.GetService(typeof(IUserClient))).Returns(_mockUserClient.Object);
+        scopedServices.Setup(s => s.GetService(typeof(ICatalogClient))).Returns(_mockCatalogClient.Object);
 
         _mockServiceScope.Setup(s => s.ServiceProvider).Returns(scopedServices.Object);
 
@@ -382,5 +384,200 @@ public class PaymentTimeoutWorkerTests : IDisposable
             p.ReferenceId == "AO-20261111-00002" &&
             p.CustomScoreDeduction == 5 &&
             p.PolicyClauseCode == "POLICY-AUC-SELLER-TIMEOUT"), default), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessExpiredOrdersAsync_ShouldAutoCompleteDeliveredSubOrders_WhenPastInspectionWindow()
+    {
+        // Arrange
+        var now = DateTimeOffset.UtcNow;
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+        var recentSubOrderId = Guid.NewGuid();
+
+        var masterOrder = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 500000m,
+            PaymentDeadlineAt = now.AddMinutes(15),
+            SubOrders = new List<SubOrder>()
+        };
+
+        var expiredDeliveredSubOrder = new SubOrder
+        {
+            Id = subOrderId,
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            SubOrderNo = "SO-DELIV-001",
+            Status = SubOrderStatus.Delivered,
+            PaymentMethod = PaymentMethod.Wallet,
+            ContactPhone = "0901234567",
+            PaymentDeadlineAt = now.AddMinutes(15),
+            DeliveredAt = now.AddMinutes(-4325), // Older than 4320 minutes (3 days)
+            TotalAmount = 250000m,
+            SellerReceiveAmount = 230000m,
+            Items = new List<SubOrderItem>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = subOrderId,
+                    SellerId = sellerId,
+                    ProductId = Guid.NewGuid(),
+                    SkuId = Guid.NewGuid(),
+                    ProductNameSnapshot = "Product 1",
+                    Quantity = 1,
+                    UnitPrice = 250000m,
+                    UnitPriceAfterDiscount = 250000m,
+                    LineTotal = 250000m
+                }
+            }
+        };
+
+        var recentDeliveredSubOrder = new SubOrder
+        {
+            Id = recentSubOrderId,
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            SubOrderNo = "SO-DELIV-002",
+            Status = SubOrderStatus.Delivered,
+            PaymentMethod = PaymentMethod.Wallet,
+            ContactPhone = "0901234567",
+            PaymentDeadlineAt = now.AddMinutes(15),
+            DeliveredAt = now.AddMinutes(-60), // Delivered 1 hour ago (within inspection window)
+            TotalAmount = 250000m,
+            SellerReceiveAmount = 230000m,
+            Items = new List<SubOrderItem>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = recentSubOrderId,
+                    SellerId = sellerId,
+                    ProductId = Guid.NewGuid(),
+                    SkuId = Guid.NewGuid(),
+                    ProductNameSnapshot = "Product 2",
+                    Quantity = 1,
+                    UnitPrice = 250000m,
+                    UnitPriceAfterDiscount = 250000m,
+                    LineTotal = 250000m
+                }
+            }
+        };
+
+        masterOrder.SubOrders.Add(expiredDeliveredSubOrder);
+        masterOrder.SubOrders.Add(recentDeliveredSubOrder);
+
+        _dbContext.Orders.Add(masterOrder);
+        _dbContext.SubOrders.AddRange(expiredDeliveredSubOrder, recentDeliveredSubOrder);
+        await _dbContext.SaveChangesAsync();
+
+        _mockWalletClient
+            .Setup(w => w.SettleSellerSubOrderAsync(subOrderId, sellerId, 230000m, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _mockUserClient
+            .Setup(u => u.AdjustReputationAsync(It.IsAny<ReputationAdjustRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ReputationAdjustResponse(Guid.NewGuid(), "Seller", false, false, 50, 51, 1, "Standard"));
+
+        var worker = new PaymentTimeoutWorker(_mockServiceProvider.Object, NullLogger<PaymentTimeoutWorker>.Instance);
+
+        // Act
+        await worker.ProcessExpiredOrdersAsync(CancellationToken.None);
+
+        // Assert: Expired suborder should be Completed, recent suborder should stay Delivered
+        var dbExpiredSubOrder = await _dbContext.SubOrders.FindAsync(subOrderId);
+        dbExpiredSubOrder!.Status.Should().Be(SubOrderStatus.Completed);
+        dbExpiredSubOrder.CompletedAt.Should().NotBeNull();
+
+        var dbRecentSubOrder = await _dbContext.SubOrders.FindAsync(recentSubOrderId);
+        dbRecentSubOrder!.Status.Should().Be(SubOrderStatus.Delivered);
+
+        var dbMasterOrder = await _dbContext.Orders.FindAsync(orderId);
+        dbMasterOrder!.Status.Should().Be(OrderStatus.Paid); // Still Paid because recentSubOrder is not completed yet
+
+        _mockWalletClient.Verify(w => w.SettleSellerSubOrderAsync(subOrderId, sellerId, 230000m, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockUserClient.Verify(u => u.AdjustReputationAsync(It.Is<ReputationAdjustRequest>(r => r.UserId == sellerId && r.ScoreDelta == 1), It.IsAny<CancellationToken>()), Times.Once);
+        _mockCatalogClient.Verify(c => c.SyncPurchasesBatchAsync(buyerId, subOrderId, It.IsAny<IEnumerable<Guid>>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessExpiredOrdersAsync_ShouldSkipWalletSettlement_WhenDeliveredSubOrderIsCod()
+    {
+        // Arrange
+        var now = DateTimeOffset.UtcNow;
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+
+        var masterOrder = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 250000m,
+            PaymentDeadlineAt = now.AddMinutes(15),
+            SubOrders = new List<SubOrder>()
+        };
+
+        var expiredCodSubOrder = new SubOrder
+        {
+            Id = subOrderId,
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            SubOrderNo = "SO-COD-001",
+            Status = SubOrderStatus.Delivered,
+            PaymentMethod = PaymentMethod.Cod, // COD
+            ContactPhone = "0901234567",
+            PaymentDeadlineAt = now.AddMinutes(15),
+            DeliveredAt = now.AddMinutes(-5000), // Past 4320 minutes
+            TotalAmount = 250000m,
+            SellerReceiveAmount = 230000m,
+            Items = new List<SubOrderItem>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = subOrderId,
+                    SellerId = sellerId,
+                    ProductId = Guid.NewGuid(),
+                    SkuId = Guid.NewGuid(),
+                    ProductNameSnapshot = "Product 1",
+                    Quantity = 1,
+                    UnitPrice = 250000m,
+                    UnitPriceAfterDiscount = 250000m,
+                    LineTotal = 250000m
+                }
+            }
+        };
+
+        masterOrder.SubOrders.Add(expiredCodSubOrder);
+
+        _dbContext.Orders.Add(masterOrder);
+        _dbContext.SubOrders.Add(expiredCodSubOrder);
+        await _dbContext.SaveChangesAsync();
+
+        var worker = new PaymentTimeoutWorker(_mockServiceProvider.Object, NullLogger<PaymentTimeoutWorker>.Instance);
+
+        // Act
+        await worker.ProcessExpiredOrdersAsync(CancellationToken.None);
+
+        // Assert
+        var dbSubOrder = await _dbContext.SubOrders.FindAsync(subOrderId);
+        dbSubOrder!.Status.Should().Be(SubOrderStatus.Completed);
+
+        var dbMasterOrder = await _dbContext.Orders.FindAsync(orderId);
+        dbMasterOrder!.Status.Should().Be(OrderStatus.Completed); // Sole sub-order is completed
+
+        // Wallet settlement MUST be skipped for COD
+        _mockWalletClient.Verify(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

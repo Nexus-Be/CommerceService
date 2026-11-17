@@ -531,6 +531,7 @@ Toàn bộ các yêu cầu từ Frontend (Web/Mobile) gửi qua API Gateway đư
 | **`ORD-05 / R84`** | `POST` | `/api/v1/orders/{orderId}/reject` | Shop từ chối đơn con (Nhả kho mục tiêu + hoàn tiền ví tự động) | `seller` |
 | **`ORD-06 / R80`** | `POST` | `/api/v1/orders/{orderId}/cancel` | Người mua hủy đơn đang chờ thanh toán | `buyer` |
 | **`ORD-07`** | `POST` | `/api/v1/sub-orders/{subOrderId}/confirm-receipt` | Người mua xác nhận đã nhận hàng (`Completed` & giải ngân Escrow) | `buyer` |
+| **`ORD-14 / R102`** | `POST` | `/api/v1/sub-orders/{subOrderId}/cancel` | Người mua hủy riêng một đơn hàng con trước khi giao | `buyer` |
 | **`ORD-08 / R87`** | `GET` | `/api/v1/shipments/order/{orderId}` | Tra cứu danh sách vận đơn và tiến độ giao hàng | `buyer`, `seller` |
 | **`ORD-08B / R101`** | `GET` | `/api/v1/sub-orders/{subOrderId}/shipments/timeline` | Theo dõi dòng thời gian hành trình giao hàng trực quan | `buyer`, `seller` |
 | **`ORD-04B / R100`** | `POST` | `/api/v1/sub-orders/{subOrderId}/shipments/retry` | Tạo lại vận đơn GHN khi gặp sự cố mạng tạm thời | `seller` |
@@ -744,11 +745,14 @@ Toàn bộ các yêu cầu từ Frontend (Web/Mobile) gửi qua API Gateway đư
 #### `ORD-07`: Người Mua Xác Nhận Nhận Hàng & Giải Ngân Escrow
 * **Endpoint:** `POST /api/v1/sub-orders/{subOrderId}/confirm-receipt`
 * **Quyền:** `buyer`
-* **Mô tả:** Khách hàng bấm xác nhận khi hàng đã giao tới nơi (`Delivered` hoặc `Shipped`). SubOrder chuyển sang `Completed`. Hệ thống kích hoạt giải ngân quỹ Escrow sang ví người bán.
+* **Mô tả:** Khách hàng bấm xác nhận khi hàng đã giao tới nơi (`Delivered`). SubOrder chuyển sang `Completed`. Hệ thống kích hoạt giải ngân quỹ Escrow sang ví người bán (bỏ qua nếu thanh toán COD).
 * **Cơ chế kỹ thuật:**
   - Kiểm tra quyền sở hữu (`so.BuyerId == currentUserId`).
+  - Kiểm tra trạng thái bắt buộc: `SubOrder.Status == Delivered`.
   - Cập nhật `SubOrder.Status = Completed`, `CompletedAt = UtcNow`.
-  - Gọi Wallet Service: `POST /api/v1/wallets/sub-orders/{subOrderId}/settle` chuyển số tiền `SellerReceiveAmount` sang ví Seller với Idempotency Key `settle-{subOrderId}`.
+  - Với đơn Ví số: Gọi Wallet Service `POST /api/v1/wallets/sub-orders/{subOrderId}/settle` chuyển số tiền `SellerReceiveAmount` sang ví Seller với Idempotency Key `settle-{subOrderId}`.
+  - Với đơn COD: Bỏ qua giải ngân ví (bưu tá GHN đối soát trực tiếp).
+  - Tự động thưởng +1 điểm uy tín cho Seller qua UserService và mở quyền đánh giá sản phẩm qua CatalogService.
 * **Response (HTTP 200 OK):**
   ```json
   {
@@ -757,6 +761,37 @@ Toàn bộ các yêu cầu từ Frontend (Web/Mobile) gửi qua API Gateway đư
     "completedAt": "2026-11-09T14:00:00Z",
     "escrowSettled": true,
     "amountSettled": 503500.0
+  }
+  ```
+
+#### `ORD-14 / R102`: Người Mua Hủy Riêng Đơn Hàng Con Trước Khi Giao
+* **Endpoint:** `POST /api/v1/sub-orders/{subOrderId}/cancel`
+* **Quyền:** `buyer`
+* **Mô tả:** Người mua hủy riêng một đơn hàng con của một Shop cụ thể trước khi hàng được gửi đi (`PendingPayment`, `Paid`, hoặc `Confirmed`). Không làm gián đoạn các đơn con anh em khác trong cùng Master Order.
+* **Cơ chế kỹ thuật:**
+  - Kiểm tra quyền sở hữu (`so.BuyerId == currentUserId`).
+  - Rào chắn trạng thái: Chỉ cho phép hủy khi đang `PendingPayment`, `Paid`, `Confirmed`. Nếu đã `Shipped`, `Delivered` hoặc `Completed`, ném lỗi `SUB_ORDER_CANNOT_BE_CANCELLED`.
+  - Hoàn tiền tự động 100%: Nếu đã thanh toán qua Ví, hoàn tiền tức thời qua `IWalletClient.RefundSubOrderPaymentAsync`.
+  - Nhả tồn kho: Gọi `IFulfillmentClient.ReleaseSubOrderStockAsync` để trả lại hàng cho kho của Shop đó.
+  - Hủy bưu tá GHN: Nếu đơn con đã tạo mã vận đơn GHN, gọi `IFulfillmentClient.CancelShipmentAsync` để hủy phân công bưu tá.
+  - Giải phóng voucher: Nhả lại các voucher shop/product tương ứng đã áp dụng cho đơn con.
+  - Đồng bộ Master Order: Nếu tất cả các đơn con còn lại đều Cancelled, Master Order chuyển `Cancelled`.
+* **Request Body:**
+  ```json
+  {
+    "reasonCode": "BuyerChangedMind",
+    "reasonNote": "Khách đổi ý không muốn mua món này nữa."
+  }
+  ```
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "subOrderId": "b1c2d3e4-8888-4f9a-8b0c-2d3e4f5a6b08",
+    "status": "Cancelled",
+    "cancelledAt": "2026-11-17T10:00:00Z",
+    "refundAmount": 250000.0,
+    "inventoryReleased": true,
+    "carrierShipmentCancelled": true
   }
   ```
 

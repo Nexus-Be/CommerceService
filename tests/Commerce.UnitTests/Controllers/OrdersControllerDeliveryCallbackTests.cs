@@ -110,4 +110,41 @@ public class OrdersControllerDeliveryCallbackTests
             s => s.UpdateSubOrderDeliveryStatusAsync(subOrderId, request, It.IsAny<CancellationToken>()),
             Times.Once);
     }
+
+    [Fact]
+    public async Task UpdateDeliveryStatus_ShouldForwardPodAndCourierInfo_WhenProvidedInRequest()
+    {
+        // Arrange
+        var controller = CreateController(headerKey: "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e");
+        var subOrderId = Guid.NewGuid();
+        var deliveryTime = DateTimeOffset.UtcNow;
+        var request = new UpdateDeliveryStatusRequest(
+            Status: "Delivered",
+            DeliveredAt: deliveryTime,
+            CarrierCode: "GHN",
+            TrackingCode: "GHN-SGN-1029384",
+            Note: "Handed over to recipient",
+            Location: "District 1, HCMC",
+            PodUrl: "https://cdn.ghn.vn/pod/20261117/sign_001.jpg",
+            ShipperName: "Nguyen Van C",
+            ShipperPhone: "0987654321");
+
+        _mockOrderService
+            .Setup(s => s.UpdateSubOrderDeliveryStatusAsync(subOrderId, request, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await controller.UpdateDeliveryStatus(subOrderId, request, _configuration, CancellationToken.None);
+
+        // Assert
+        var okResult = result.Should().BeOfType<OkObjectResult>().Subject;
+        okResult.StatusCode.Should().Be(StatusCodes.Status200OK);
+
+        _mockOrderService.Verify(
+            s => s.UpdateSubOrderDeliveryStatusAsync(subOrderId, It.Is<UpdateDeliveryStatusRequest>(r =>
+                r.PodUrl == "https://cdn.ghn.vn/pod/20261117/sign_001.jpg" &&
+                r.ShipperName == "Nguyen Van C" &&
+                r.ShipperPhone == "0987654321"), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
 }
