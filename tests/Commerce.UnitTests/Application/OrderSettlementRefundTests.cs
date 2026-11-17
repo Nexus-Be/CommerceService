@@ -325,6 +325,82 @@ public class OrderSettlementRefundTests : IDisposable
     }
 
     [Fact]
+    public async Task Returned_WhenCod_ShouldCancelOrder_ReleaseStock_AndStrictlySkipWalletRefund()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Shipped, 150000m, 135000m);
+
+        var skuId = Guid.NewGuid();
+        subOrder.Items.Add(new SubOrderItem
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            ProductId = Guid.NewGuid(),
+            SkuId = skuId,
+            SellerId = sellerId,
+            ProductNameSnapshot = "Returned COD Product",
+            Quantity = 1,
+            UnitPrice = 120000m,
+            UnitPriceAfterDiscount = 120000m,
+            LineTotal = 120000m
+        });
+        subOrder.PaymentMethod = PaymentMethod.Cod;
+        subOrder.PaidAt = null;
+        await _dbContext.SaveChangesAsync();
+
+        _mockFulfillmentClient
+            .Setup(f => f.ReleaseSubOrderStockAsync(order.Id, It.IsAny<List<StockReservationItem>>(), "PackageReturned", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var service = CreateOrderService();
+
+        // Act: Webhook cap nhat trang thai Returned cho don COD
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrder.Id, new UpdateDeliveryStatusRequest(
+            Status: "Returned",
+            DeliveredAt: DateTimeOffset.UtcNow,
+            Note: "COD Package returned to sender warehouse"
+        ), CancellationToken.None);
+
+        // Assert 1: Status Cancelled
+        var updatedSubOrder = await _dbContext.SubOrders.FindAsync(subOrder.Id);
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Cancelled);
+
+        // Assert 2: OrderCancellation recorded with PackageReturned and InventoryReleased = true
+        var cancellation = await _dbContext.OrderCancellations.FirstOrDefaultAsync(c => c.SubOrderId == subOrder.Id);
+        cancellation.Should().NotBeNull();
+        cancellation!.ReasonCode.Should().Be(CancellationReasonCode.PackageReturned);
+
+        // Assert 3: ZERO wallet refund for COD order
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<decimal>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+
+        _mockWalletClient.Verify(w => w.RefundOrderPaymentAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<decimal>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+
+        var refunds = await _dbContext.OrderRefunds.Where(r => r.SubOrderId == subOrder.Id).ToListAsync();
+        refunds.Should().BeEmpty();
+
+        // Assert 4: Warehouse stock release with PackageReturned reason must be called
+        _mockFulfillmentClient.Verify(f => f.ReleaseSubOrderStockAsync(
+            order.Id,
+            It.Is<List<StockReservationItem>>(items => items.Count == 1 && items[0].SkuId == skuId && items[0].Quantity == 1),
+            "PackageReturned",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task CancelOrder_ShouldSkipWalletRefund_WhenPaymentMethodIsCod()
     {
         // Arrange

@@ -160,6 +160,60 @@ public class PaymentTimeoutWorkerTests : IDisposable
         _mockFulfillmentClient.Verify(
             f => f.ReleaseStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
             Times.Never);
+
+        // VERIFY: Tuyệt đối không gọi sang WalletClient vì đơn hết hạn thanh toán chưa từng bị trừ tiền
+        _mockWalletClient.Invocations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ProcessExpiredOrdersAsync_ShouldNeverInvokeWalletClient_WhenCancellingExpiredOrders()
+    {
+        // Arrange
+        var now = DateTimeOffset.UtcNow;
+        var orderId = Guid.NewGuid();
+        var buyerId = Guid.NewGuid();
+        var expiredOrder = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.PendingPayment,
+            TotalAmount = 250000m,
+            PaymentDeadlineAt = now.AddMinutes(-10),
+            SubOrders = new List<SubOrder>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderNo = "SO-TIMEOUT-NOWALLET-001",
+                    OrderId = orderId,
+                    BuyerId = buyerId,
+                    SellerId = Guid.NewGuid(),
+                    Status = SubOrderStatus.PendingPayment,
+                    PaymentMethod = PaymentMethod.Wallet,
+                    ContactPhone = "0909999999",
+                    PaymentDeadlineAt = now.AddMinutes(-10)
+                }
+            }
+        };
+
+        _dbContext.Orders.Add(expiredOrder);
+        await _dbContext.SaveChangesAsync();
+
+        var worker = new PaymentTimeoutWorker(_mockServiceProvider.Object, NullLogger<PaymentTimeoutWorker>.Instance);
+
+        // Act
+        await worker.ProcessExpiredOrdersAsync(CancellationToken.None);
+
+        // Assert
+        var cancelledOrder = await _dbContext.Orders.Include(o => o.SubOrders).FirstAsync(o => o.Id == orderId);
+        cancelledOrder.Status.Should().Be(OrderStatus.Cancelled);
+        cancelledOrder.SubOrders.First().Status.Should().Be(SubOrderStatus.Cancelled);
+
+        // VERIFY: _mockWalletClient received 0 calls of any kind
+        _mockWalletClient.Invocations.Should().BeEmpty();
+        _mockWalletClient.Verify(w => w.RefundOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockWalletClient.Verify(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

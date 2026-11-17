@@ -723,9 +723,16 @@ Toàn bộ các yêu cầu từ Frontend (Web/Mobile) gửi qua API Gateway đư
   }
   ```
 
-#### `ORD-06 / R80`: Người Mua Hủy Đơn Chờ Thanh Toán
+#### `ORD-06 / R80`: Người Mua Hủy Đơn Hàng (Trước Khi Giao)
 * **Endpoint:** `POST /api/v1/orders/{orderId}/cancel`
 * **Quyền:** `buyer`
+* **Mô tả:** Người mua hủy toàn bộ đơn hàng mẹ trước khi hàng được gửi đi (`PendingPayment` hoặc `Paid`).
+* **Cơ chế kỹ thuật:**
+  - **Rào chắn trạng thái (Pre-Shipping Boundary)**: Chỉ cho phép hủy khi đơn ở trạng thái `PendingPayment` hoặc `Paid` và **không có bất kỳ đơn con nào** đã chuyển sang `Shipping`, `Delivered`, hoặc `Completed`. Nếu có đơn con đã sang các trạng thái này, hệ thống ném HTTP 400 `ORDER_CANNOT_BE_CANCELLED` với message `"Order cannot be cancelled once shipped, delivered, or completed."`.
+  - **Quy tắc Final Sale**: Sau khi hàng đã giao thành công (`Delivered`) hoặc hoàn tất (`Completed`), Escrow đã giải ngân cho Seller. Cấm 100% việc hủy đơn và hoàn tiền tự động.
+  - **Hoàn tiền Master Order Escrow**: Nếu đơn đã thanh toán qua Ví số (`PaymentMethod.Wallet`), gọi duy nhất 1 lần endpoint đơn mẹ `POST /api/v1/wallets/orders/{orderId}/refund` để hoàn toàn bộ số tiền từ Escrow gốc sang ví người mua.
+  - **An toàn COD (COD Safety)**: Nếu phương thức thanh toán là `Cod`, tuyệt đối không gọi Wallet Service.
+  - **Nhả tồn kho & Voucher**: Nhả toàn bộ tồn kho qua `_fulfillmentClient.ReleaseStockAsync` và giải phóng voucher đã giữ chỗ trong cơ sở dữ liệu (`Reserved` $\rightarrow$ `Released`).
 * **Request Body:**
   ```json
   {
@@ -1117,7 +1124,8 @@ Commerce Service giao tiếp với 3 dịch vụ vệ tinh qua các Typed HTTP C
 | **400** | `MAX_QUANTITY_EXCEEDED` | Mua vượt quá 99 chiếc/món | `"Quantity per item cannot exceed 99."` |
 | **400** | `MAX_ITEMS_REACHED` | Vượt quá 50 món khác nhau trong giỏ | `"Cart cannot contain more than 50 distinct items."` |
 | **400** | `INVALID_STATUS` | Chuyển trạng thái đơn không hợp lệ | `"Sub-order cannot be confirmed in its current status."` |
-| **400** | `ORDER_CANNOT_BE_CANCELLED` | Hủy đơn không ở trạng thái PendingPayment | `"Order cannot be cancelled in its current status."` |
+| **400** | `ORDER_CANNOT_BE_CANCELLED` | Cố hủy đơn khi đã giao, đang giao hoặc hoàn tất | `"Order cannot be cancelled once shipped, delivered, or completed."` |
+| **400** | `SUB_ORDER_CANNOT_BE_CANCELLED` | Cố hủy đơn con khi đã xuất kho vận chuyển hoặc hoàn tất | `"Sub-order cannot be cancelled once shipped or completed."` |
 | **400** | `CATALOG_SKU_INACTIVE` | Sản phẩm đã ngừng bán trên sàn | `"Product is no longer available for purchase."` |
 | **400** | `INVALID_DELIVERY_STATUS` | Webhook gửi status giao vận lạ | `"The provided delivery status is not supported."` |
 | **403** | `FORBIDDEN` | Truy cập đơn hàng/giỏ hàng của người khác | `"You do not have permission to access this order."` |

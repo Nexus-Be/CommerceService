@@ -223,9 +223,33 @@ public class OrderLifecycleTests : IDisposable
 
         // Assert
         await act.Should().ThrowAsync<CommerceDomainException>()
-            .Where(e => e.ErrorCode == "ORDER_CANNOT_BE_CANCELLED");
+            .Where(e => e.ErrorCode == "ORDER_CANNOT_BE_CANCELLED" && e.Message == "Order cannot be cancelled once shipped, delivered, or completed.");
 
         _mockFulfillmentClient.Verify(f => f.ReleaseStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(SubOrderStatus.Delivered)]
+    [InlineData(SubOrderStatus.Completed)]
+    public async Task CancelOrderAsync_ShouldThrowException_WhenSubOrderIsDeliveredOrCompleted(SubOrderStatus postDeliveryStatus)
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, _) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, postDeliveryStatus);
+
+        var service = CreateOrderService();
+        var request = new CancelOrderRequest(CancellationReasonCode.BuyerChangedMind);
+
+        // Act
+        var act = () => service.CancelOrderAsync(buyerId, order.Id, request, CancellationToken.None);
+
+        // Assert
+        await act.Should().ThrowAsync<CommerceDomainException>()
+            .Where(e => e.ErrorCode == "ORDER_CANNOT_BE_CANCELLED" && e.Message == "Order cannot be cancelled once shipped, delivered, or completed.");
+
+        _mockFulfillmentClient.Verify(f => f.ReleaseStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockWalletClient.Verify(w => w.RefundOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -270,12 +294,15 @@ public class OrderLifecycleTests : IDisposable
             .Where(e => e.ErrorCode == "FORBIDDEN");
     }
 
-    [Fact]
-    public async Task CancelSubOrderAsync_ShouldThrowException_WhenSubOrderIsShippedOrDelivered()
+    [Theory]
+    [InlineData(SubOrderStatus.Shipping)]
+    [InlineData(SubOrderStatus.Delivered)]
+    [InlineData(SubOrderStatus.Completed)]
+    public async Task CancelSubOrderAsync_ShouldThrowException_WhenSubOrderIsShippedOrDeliveredOrCompleted(SubOrderStatus nonCancellableStatus)
     {
         // Arrange
         var buyerId = Guid.NewGuid();
-        var (_, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, Guid.NewGuid(), OrderStatus.Paid, SubOrderStatus.Shipped);
+        var (_, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, Guid.NewGuid(), OrderStatus.Paid, nonCancellableStatus);
 
         var service = CreateOrderService();
         var request = new CancelSubOrderRequest(CancellationReasonCode.BuyerChangedMind);
@@ -286,6 +313,9 @@ public class OrderLifecycleTests : IDisposable
         // Assert
         await act.Should().ThrowAsync<CommerceDomainException>()
             .Where(e => e.ErrorCode == "SUB_ORDER_CANNOT_BE_CANCELLED" && e.Message == "Sub-order cannot be cancelled once shipped or completed.");
+
+        _mockFulfillmentClient.Verify(f => f.ReleaseSubOrderStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

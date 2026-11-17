@@ -1,0 +1,163 @@
+openapi: 3.0.3
+info:
+  title: Order Cancellation & Lifecycle API Contracts
+  description: Canonical contracts for cancelling orders, sub-orders, and handling delivery return events in CommerceService.
+  version: 1.0.0
+
+paths:
+  /api/v1/orders/{orderId}/cancel:
+    post:
+      summary: Cancel entire master order before shipment
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: x-user-id
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reasonCode
+              properties:
+                reasonCode:
+                  type: string
+                  enum: [BuyerChangedMind, OutOfStock, Other, CancellationWithoutReason]
+                reasonText:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: Master order cancelled successfully
+        '400':
+          description: Order cannot be cancelled once shipped, delivered, or completed
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Forbidden - caller does not own the order
+        '404':
+          description: Order not found
+
+  /api/v1/sub-orders/{subOrderId}/cancel:
+    post:
+      summary: Cancel an individual sub-order before shipment
+      parameters:
+        - name: subOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: x-user-id
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reasonCode
+              properties:
+                reasonCode:
+                  type: string
+                  enum: [BuyerChangedMind, OutOfStock, Other]
+                reasonNote:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: Sub-order cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelSubOrderResponse'
+        '400':
+          description: Sub-order cannot be cancelled once shipped or completed
+
+  /api/v1/sub-orders/{subOrderId}/reject:
+    post:
+      summary: Seller rejects sub-order
+      parameters:
+        - name: subOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: x-user-id
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reasonCode
+              properties:
+                reasonCode:
+                  type: string
+                  enum: [OutOfStock, SellerRejected, CancellationWithoutReason]
+                reasonText:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: Sub-order rejected by seller, wallet refund initiated if paid
+
+components:
+  schemas:
+    CancelSubOrderResponse:
+      type: object
+      properties:
+        subOrderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          example: Cancelled
+        refundAmount:
+          type: number
+          format: decimal
+        cancelledAt:
+          type: string
+          format: date-time
+
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+          example: ORDER_CANNOT_BE_CANCELLED
+        detail:
+          type: string
+          example: Order cannot be cancelled once shipped, delivered, or completed.
+        traceId:
+          type: string

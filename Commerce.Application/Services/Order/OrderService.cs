@@ -2412,7 +2412,7 @@ public sealed class OrderService : IOrderService
             };
             _dbContext.OrderCancellations.Add(cancellation);
 
-            if (so.PaidAt.HasValue)
+            if (so.PaidAt.HasValue && so.PaymentMethod == PaymentMethod.Wallet)
             {
                 var refund = new OrderRefund
                 {
@@ -2430,6 +2430,10 @@ public sealed class OrderService : IOrderService
                     RequestedAt = timestamp
                 };
                 _dbContext.OrderRefunds.Add(refund);
+            }
+            else if (so.PaymentMethod == PaymentMethod.Cod)
+            {
+                _logger.LogInformation("Delivery-failed SubOrder '{SubOrderId}' has COD payment method. Skipping refund request.", so.Id);
             }
         }
         else
