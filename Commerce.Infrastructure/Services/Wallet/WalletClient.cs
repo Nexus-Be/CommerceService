@@ -172,8 +172,22 @@ public sealed class WalletClient : IWalletClient
                 return true;
             }
 
+            var statusCode = (int)response.StatusCode;
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogWarning("[REST Wallet Client] SubOrder '{SubOrderId}' refund failed with status {StatusCode}: {ErrorBody}", subOrderId, (int)response.StatusCode, errorBody);
+            var (errorCode, errorMessage) = ParseProblemDetails(errorBody, statusCode);
+
+            if (statusCode == 503 || errorCode == "FEATURE_DISABLED")
+            {
+                _logger.LogError("[REST Wallet Client] SubOrder '{SubOrderId}' refund failed with 503 FEATURE_DISABLED. Wallet feature flag 'LegacyCommerceCreditsEnabled' may be disabled: {ErrorBody}", subOrderId, errorBody);
+            }
+            else if (statusCode == 409)
+            {
+                _logger.LogError("[REST Wallet Client] SubOrder '{SubOrderId}' refund returned 409 ({ErrorCode}): {ErrorMessage}", subOrderId, errorCode, errorMessage);
+            }
+            else
+            {
+                _logger.LogWarning("[REST Wallet Client] SubOrder '{SubOrderId}' refund failed with status {StatusCode} ({ErrorCode}): {ErrorMessage}", subOrderId, statusCode, errorCode, errorMessage);
+            }
             return false;
         }
         catch (Exception ex)
@@ -216,8 +230,22 @@ public sealed class WalletClient : IWalletClient
                 return true;
             }
 
+            var statusCode = (int)response.StatusCode;
             var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogWarning("[REST Wallet Client] Order '{OrderId}' refund failed with status {StatusCode}: {ErrorBody}", orderId, (int)response.StatusCode, errorBody);
+            var (errorCode, errorMessage) = ParseProblemDetails(errorBody, statusCode);
+
+            if (statusCode == 503 || errorCode == "FEATURE_DISABLED")
+            {
+                _logger.LogError("[REST Wallet Client] Order '{OrderId}' refund failed with 503 FEATURE_DISABLED. Wallet feature flag 'LegacyCommerceCreditsEnabled' may be disabled: {ErrorBody}", orderId, errorBody);
+            }
+            else if (statusCode == 409)
+            {
+                _logger.LogError("[REST Wallet Client] Order '{OrderId}' refund returned 409 ({ErrorCode}): {ErrorMessage}", orderId, errorCode, errorMessage);
+            }
+            else
+            {
+                _logger.LogWarning("[REST Wallet Client] Order '{OrderId}' refund failed with status {StatusCode} ({ErrorCode}): {ErrorMessage}", orderId, statusCode, errorCode, errorMessage);
+            }
             return false;
         }
         catch (Exception ex)
@@ -258,15 +286,30 @@ public sealed class WalletClient : IWalletClient
                 return true;
             }
 
-            if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            var statusCode = (int)response.StatusCode;
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            var (errorCode, errorMessage) = ParseProblemDetails(errorBody, statusCode);
+
+            if (statusCode == 503 || errorCode == "FEATURE_DISABLED")
             {
-                var conflictBody = await response.Content.ReadAsStringAsync(cancellationToken);
-                _logger.LogWarning("[REST Wallet Client] SubOrder '{SubOrderId}' settlement returned 409 SETTLEMENT_CONFLICT: {ErrorBody}", subOrderId, conflictBody);
+                _logger.LogError("[REST Wallet Client] SubOrder '{SubOrderId}' settlement failed with 503 FEATURE_DISABLED. Wallet feature flag 'LegacyCommerceCreditsEnabled' may be disabled: {ErrorBody}", subOrderId, errorBody);
                 return false;
             }
 
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogWarning("[REST Wallet Client] SubOrder '{SubOrderId}' settlement failed with status {StatusCode}: {ErrorBody}", subOrderId, (int)response.StatusCode, errorBody);
+            if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                if (errorCode == "ORDER_ESCROW_INSUFFICIENT")
+                {
+                    _logger.LogError("[REST Wallet Client] SubOrder '{SubOrderId}' settlement returned 409 ORDER_ESCROW_INSUFFICIENT. Flagged for financial audit: {ErrorBody}", subOrderId, errorBody);
+                }
+                else
+                {
+                    _logger.LogWarning("[REST Wallet Client] SubOrder '{SubOrderId}' settlement returned 409 {ErrorCode}: {ErrorBody}", subOrderId, errorCode, errorBody);
+                }
+                return false;
+            }
+
+            _logger.LogWarning("[REST Wallet Client] SubOrder '{SubOrderId}' settlement failed with status {StatusCode} ({ErrorCode}): {ErrorMessage}", subOrderId, statusCode, errorCode, errorMessage);
             return false;
         }
         catch (Exception ex)
@@ -322,6 +365,10 @@ public sealed class WalletClient : IWalletClient
                 {
                     errorMessage = detailElem.GetString();
                 }
+                if (string.IsNullOrWhiteSpace(errorMessage) && doc.RootElement.TryGetProperty("title", out var titleElem))
+                {
+                    errorMessage = titleElem.GetString();
+                }
             }
             catch
             {
@@ -336,6 +383,7 @@ public sealed class WalletClient : IWalletClient
             403 => "FORBIDDEN",
             404 => "WALLET_NOT_FOUND",
             409 => "PAYMENT_ORDER_CONFLICT",
+            503 => "FEATURE_DISABLED",
             _ => "PAYMENT_FAILED"
         });
 

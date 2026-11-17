@@ -165,3 +165,27 @@
 - [x] T023 [TEST] Run `dotnet build Commerce.sln -c Release -m:1 /p:UseSharedCompilation=false` verifying **0 Errors, 0 Warnings**.
 - [x] T024 [TEST] Run `dotnet test Commerce.sln` verifying all unit tests pass 100%.
 - [x] T025 [P] [TEST] Run `speckit-analyze` to verify non-destructive cross-artifact consistency across `spec.md`, `plan.md`, `tasks.md`, `data-model.md`, and `contracts/`.
+
+---
+
+## Phase 8: Shopee Alignment & Unified Shop-Level Voucher Stacking (Feature Update)
+
+**Purpose**: Transition voucher stacking from 3 arbitrary tiers to the Shopee 2-tier model: Shop-Level Exclusivity (single voucher per shop, eliminating double-discounting margin erosion) + Platform Voucher Stacking, with Catalog Service batch endpoint alignment and 5% platform fee financial invariant.
+
+- [x] T026 [CALC] Update `VoucherCalculationEngine.cs` in `Commerce.Application/Services/Discount/VoucherCalculationEngine.cs`:
+  - Enforce Shop-Level Exclusivity Guard: Group input vouchers by `OwnerSellerId` for `Product` and `Shop` scopes. If a shop has $\ge 2$ vouchers, throw `CommerceDomainException("SHOP_MULTIPLE_VOUCHERS_NOT_ALLOWED", "Only one voucher per shop can be applied.", 400)`.
+  - For each shop, calculate discount from the single selected voucher (either product-level eligible items or shop-wide total).
+  - Compute `NetSellerAmount = ItemsAmount - ShopDiscountAmount`.
+- [x] T027 [CALC] Update `RecommendVouchersAsync` in `DiscountService.cs`:
+  - When auto-recommending vouchers for a shop, evaluate both product and shop vouchers, and select the single voucher with $\max(\text{ProductDiscount}, \text{ShopDiscount})$.
+- [x] T028 [DTO] Update `TierSavingsDto` in `Commerce.Application/Services/Discount/DiscountDtos.cs`:
+  - Streamline to 2-tier savings: `decimal ShopDiscount`, `decimal SystemDiscount`, `decimal TotalSavings`.
+- [x] T029 [HOOK] Update `OrderService.cs` & `VoucherDiscountCalculator.cs` in `Commerce.Application/Services/`:
+  - Ensure `OrderService.CreateOrderAsync` and `QuoteCheckoutAsync` enforce Shop-Level Exclusivity.
+  - Assert the Shopee financial invariant: $ShopNetEarnings = ShopGrossRevenue - ShopDiscounts - PlatformFeeAmount + PlatformVoucherRebate$.
+- [x] T030 [TEST] Add & update unit tests in `tests/Commerce.UnitTests/Services/`:
+  - Test 1: Verify `SHOP_MULTIPLE_VOUCHERS_NOT_ALLOWED` thrown when 2 vouchers of the same shop are passed.
+  - Test 2: Verify `RecommendVouchersAsync` picks the single best voucher for a shop.
+  - Test 3: Multi-shop order with 1 voucher per shop + 1 platform voucher.
+  - Test 4: Financial invariant exact match without penny rounding discrepancy.
+- [x] T031 [TEST] Run `dotnet build Commerce.sln -c Release -m:1 /p:UseSharedCompilation=false` verifying **0 Warnings, 0 Errors**.

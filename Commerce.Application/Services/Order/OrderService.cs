@@ -207,6 +207,10 @@ public sealed class OrderService : IOrderService
 
                 voucherResult = await _voucherCalculator.CalculateDiscountsAsync(vCalcRequest, ct);
             }
+            catch (CommerceDomainException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Error executing voucher discount calculation for Buyer '{BuyerId}'.", buyerId);
@@ -1085,6 +1089,9 @@ public sealed class OrderService : IOrderService
             order.Status = OrderStatus.Cancelled;
         }
 
+        bool wasOrderPaid = order.Status == OrderStatus.Paid || targetSubOrders.Any(s => s.PaidAt.HasValue || s.Status == SubOrderStatus.Paid);
+        var orderPaymentMethod = targetSubOrders.FirstOrDefault()?.PaymentMethod ?? PaymentMethod.Wallet;
+
         foreach (var so in targetSubOrders)
         {
             if (so.Status == SubOrderStatus.Cancelled)
@@ -1136,7 +1143,8 @@ public sealed class OrderService : IOrderService
                 }
             }
 
-            if (wasPaid && so.PaymentMethod == PaymentMethod.Wallet)
+            // Nếu người bán tự hủy SubOrder của mình và SubOrder đó đã thanh toán qua ví:
+            if (!isBuyer && wasPaid && so.PaymentMethod == PaymentMethod.Wallet)
             {
                 var refund = new OrderRefund
                 {
@@ -1147,9 +1155,9 @@ public sealed class OrderService : IOrderService
                     RefundType = RefundType.Full,
                     Amount = so.TotalAmount,
                     Status = RefundStatus.Requested,
-                    ReasonCode = isBuyer ? "BUYER_CANCELLED" : "SELLER_CANCELLED",
-                    ReasonNote = request.ReasonText ?? (isBuyer ? "Buyer cancelled order before shipping." : "Seller cancelled order."),
-                    ActorRole = isBuyer ? OrderActorRole.Buyer : OrderActorRole.Seller,
+                    ReasonCode = "SELLER_CANCELLED",
+                    ReasonNote = request.ReasonText ?? "Seller cancelled order.",
+                    ActorRole = OrderActorRole.Seller,
                     RequestedBy = currentUserId,
                     RequestedAt = DateTimeOffset.UtcNow
                 };
@@ -1160,7 +1168,7 @@ public sealed class OrderService : IOrderService
                         so.Id,
                         so.BuyerId.ToString(),
                         so.TotalAmount,
-                        request.ReasonText ?? (isBuyer ? "Buyer cancelled order before shipping." : "Seller cancelled order."),
+                        request.ReasonText ?? "Seller cancelled order.",
                         idempotencyKey: $"refund-suborder-cancel-{so.Id}",
                         cancellationToken: ct);
 
@@ -1185,6 +1193,60 @@ public sealed class OrderService : IOrderService
 
             // Giải phóng voucher đã giữ chỗ cho sub-order
             await ReleaseVoucherUsagesForSubOrderAsync(so.Id, DateTimeOffset.UtcNow, ct);
+        }
+
+        // KHI NGƯỜI MUA HỦY TOÀN BỘ ĐƠN MẸ:
+        // Gọi duy nhất 1 lần endpoint đơn mẹ POST api/v1/wallets/orders/{orderId}/refund để khấu trừ thẳng từ OrderEscrow gốc
+        if (isBuyer && wasOrderPaid && orderPaymentMethod == PaymentMethod.Wallet)
+        {
+            var refundAmount = order.TotalAmount;
+            var refund = new OrderRefund
+            {
+                Id = Guid.NewGuid(),
+                OrderId = order.Id,
+                SubOrderId = null,
+                CancellationId = null,
+                RefundType = RefundType.Full,
+                Amount = refundAmount,
+                Status = RefundStatus.Requested,
+                ReasonCode = "BUYER_CANCELLED",
+                ReasonNote = request.ReasonText ?? "Buyer cancelled order before shipping.",
+                ActorRole = OrderActorRole.Buyer,
+                RequestedBy = currentUserId,
+                RequestedAt = DateTimeOffset.UtcNow
+            };
+
+            try
+            {
+                var refundSucceeded = await _walletClient.RefundOrderPaymentAsync(
+                    order.Id,
+                    order.BuyerId.ToString(),
+                    refundAmount,
+                    request.ReasonText ?? "Buyer cancelled order before shipping.",
+                    idempotencyKey: $"refund-order-cancel-{order.Id}",
+                    cancellationToken: ct);
+
+                if (refundSucceeded)
+                {
+                    refund.Status = RefundStatus.Completed;
+                    refund.CompletedAt = DateTimeOffset.UtcNow;
+                    _logger.LogInformation("Order '{OrderId}' master refund on cancel succeeded via WalletClient. Amount: {Amount}", order.Id, refundAmount);
+                }
+                else
+                {
+                    _logger.LogWarning("Order '{OrderId}' master refund returned false via WalletClient.", order.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to automatically refund master wallet balance on cancel for Order '{OrderId}'.", order.Id);
+            }
+
+            _dbContext.OrderRefunds.Add(refund);
+        }
+        else if (isBuyer && orderPaymentMethod == PaymentMethod.Cod)
+        {
+            _logger.LogInformation("Order '{OrderId}' has COD payment method. Skipping master wallet refund on cancellation.", order.Id);
         }
 
         await _dbContext.SaveChangesAsync(ct);
@@ -2238,7 +2300,7 @@ public sealed class OrderService : IOrderService
             };
             _dbContext.OrderCancellations.Add(cancellation);
 
-            if (so.PaidAt.HasValue)
+            if (so.PaidAt.HasValue && so.PaymentMethod == PaymentMethod.Wallet)
             {
                 var refund = new OrderRefund
                 {
@@ -2283,6 +2345,10 @@ public sealed class OrderService : IOrderService
                 }
 
                 _dbContext.OrderRefunds.Add(refund);
+            }
+            else if (so.PaymentMethod == PaymentMethod.Cod)
+            {
+                _logger.LogInformation("Returned SubOrder '{SubOrderId}' has COD payment method. Skipping wallet refund.", so.Id);
             }
 
             try

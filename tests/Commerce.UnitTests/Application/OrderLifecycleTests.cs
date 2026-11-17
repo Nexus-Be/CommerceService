@@ -174,10 +174,10 @@ public class OrderLifecycleTests : IDisposable
         var sellerId = Guid.NewGuid();
         var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Paid);
 
-        _mockWalletClient.Setup(w => w.RefundSubOrderPaymentAsync(
-            subOrder.Id,
+        _mockWalletClient.Setup(w => w.RefundOrderPaymentAsync(
+            order.Id,
             buyerId.ToString(),
-            subOrder.TotalAmount,
+            order.TotalAmount,
             It.IsAny<string>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
@@ -194,13 +194,13 @@ public class OrderLifecycleTests : IDisposable
         updatedOrder!.Status.Should().Be(OrderStatus.Cancelled);
         updatedOrder.SubOrders.First().Status.Should().Be(SubOrderStatus.Cancelled);
 
-        // Verify Wallet refund was invoked
-        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
-            subOrder.Id,
+        // Verify Master Wallet refund was invoked once
+        _mockWalletClient.Verify(w => w.RefundOrderPaymentAsync(
+            order.Id,
             buyerId.ToString(),
-            subOrder.TotalAmount,
+            order.TotalAmount,
             It.IsAny<string>(),
-            It.Is<string>(key => key.StartsWith("refund-suborder-cancel-")),
+            It.Is<string>(key => key.StartsWith("refund-order-cancel-")),
             It.IsAny<CancellationToken>()), Times.Once);
 
         // Verify stock was released

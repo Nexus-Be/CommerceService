@@ -9,6 +9,7 @@ using Moq;
 using Xunit;
 using Commerce.Application.Interfaces;
 using Commerce.Application.Services.Discount;
+using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
 using Commerce.Domain.Exceptions;
 using Commerce.UnitTests.Common;
@@ -177,5 +178,100 @@ public class DiscountServiceTests
         // Assert
         var ex = await act.Should().ThrowAsync<CommerceDomainException>();
         ex.Where(e => e.ErrorCode == "VOUCHER_SELLER_SKU_FORBIDDEN" && e.StatusCode == 403);
+    }
+
+    [Fact]
+    public async Task RecommendVouchersAsync_ShouldPickSingleBestVoucherPerShop_WithMaxDiscount()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+
+        _mockCalculationEngine
+            .Setup(e => e.CalculateRawDiscount(It.IsAny<decimal>(), It.IsAny<DiscountCode>()))
+            .Returns<decimal, DiscountCode>((baseAmount, voucher) => new VoucherCalculationEngine().CalculateRawDiscount(baseAmount, voucher));
+
+        _mockCalculationEngine
+            .Setup(e => e.EvaluateAndApplyVouchers(It.IsAny<EvaluateVouchersRequest>()))
+            .Returns<EvaluateVouchersRequest>(req => new VoucherCalculationEngine().EvaluateAndApplyVouchers(req));
+
+        var cart = new Cart
+        {
+            Id = Guid.NewGuid(),
+            BuyerId = buyerId,
+            Status = CartStatus.Active,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        var cartItem = new CartItem
+        {
+            Id = Guid.NewGuid(),
+            CartId = cart.Id,
+            ProductId = Guid.NewGuid(),
+            SkuId = skuId,
+            SellerId = sellerId,
+            ProductNameSnapshot = "Test Item",
+            Quantity = 2,
+            UnitPriceSnapshot = 200000m // Total: 400,000 VND
+        };
+        cart.Items.Add(cartItem);
+        _db.Carts.Add(cart);
+        _db.CartItems.Add(cartItem);
+
+        // Voucher 1: Product voucher 30k off
+        var prodVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "PROD30K",
+            Name = "Product 30k",
+            ScopeType = DiscountScopeType.Product,
+            OwnerSellerId = sellerId,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 30000m,
+            MinOrderAmount = 100000m,
+            Status = DiscountStatus.Active,
+            IsVisible = true,
+            Scopes = new List<DiscountCodeScope>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    DiscountCodeId = Guid.NewGuid(),
+                    ScopeRefType = DiscountScopeRefType.Sku,
+                    ScopeRefId = skuId
+                }
+            }
+        };
+
+        // Voucher 2: Shop voucher 50k off (Better!)
+        var shopVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "SHOP50K",
+            Name = "Shop 50k",
+            ScopeType = DiscountScopeType.Shop,
+            OwnerSellerId = sellerId,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 50000m,
+            MinOrderAmount = 200000m,
+            Status = DiscountStatus.Active,
+            IsVisible = true
+        };
+
+        _db.DiscountCodes.AddRange(prodVoucher, shopVoucher);
+        await _db.SaveChangesAsync();
+
+        var request = new RecommendVouchersRequest(new List<Guid> { cartItem.Id });
+
+        // Act
+        var response = await _service.RecommendVouchersAsync(buyerId, request);
+
+        // Assert
+        response.RecommendedVoucherCodes.Should().ContainSingle()
+            .Which.Should().Be("SHOP50K");
+        response.SavingsBreakdown.ShopDiscount.Should().Be(50000m);
+        response.SavingsBreakdown.SystemDiscount.Should().Be(0m);
+        response.SavingsBreakdown.TotalSavings.Should().Be(50000m);
     }
 }

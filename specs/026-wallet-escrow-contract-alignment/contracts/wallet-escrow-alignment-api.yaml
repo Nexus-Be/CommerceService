@@ -1,0 +1,197 @@
+openapi: 3.0.3
+info:
+  title: Commerce-Wallet Alignment Interface Contract
+  description: Authoritative contract for outbound calls from CommerceService (port 8003) to WalletService (port 8008).
+  version: 1.0.0
+
+paths:
+  /api/v1/wallets/orders/{orderId}/payment:
+    post:
+      summary: Pay order from buyer wallet balance into system escrow
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: x-user-id
+          in: header
+          required: true
+          description: Effective Buyer UUID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - amount
+              properties:
+                amount:
+                  type: number
+                  format: decimal
+                  minimum: 1
+      responses:
+        '200':
+          description: Payment successful, funds transferred to OrderEscrow
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletTransactionDto'
+        '400':
+          description: Insufficient wallet balance or validation failure
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Payment conflict (different amount or duplicate payment)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/wallets/orders/{orderId}/refund:
+    post:
+      summary: Refund entire master order payment from OrderEscrow back to buyer wallet
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+                - amount
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+                amount:
+                  type: number
+                  format: decimal
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: Master order refund successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletTransactionDto'
+        '409':
+          description: Escrow insufficient or refund exceeds payment
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Feature flag LegacyCommerceCreditsEnabled is disabled
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/wallets/sub-orders/{subOrderId}/settle:
+    post:
+      summary: Settle seller earnings from OrderEscrow to seller personal wallet
+      parameters:
+        - name: subOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - sellerId
+                - amount
+              properties:
+                sellerId:
+                  type: string
+                  format: uuid
+                amount:
+                  type: number
+                  format: decimal
+      responses:
+        '200':
+          description: Escrow payout settled to seller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletTransactionDto'
+        '409':
+          description: Settlement conflict or insufficient escrow
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+components:
+  schemas:
+    WalletTransactionDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        walletId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [PurchaseDebit, EscrowRelease, RefundCredit]
+        amount:
+          type: number
+          format: decimal
+        currency:
+          type: string
+          example: Vnd
+        balanceAfter:
+          type: number
+          format: decimal
+        status:
+          type: string
+          example: Success
+        note:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+          example: ORDER_ESCROW_INSUFFICIENT
+        detail:
+          type: string
+        traceId:
+          type: string

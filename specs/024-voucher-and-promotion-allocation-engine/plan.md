@@ -122,3 +122,20 @@ tests/Commerce.UnitTests/
 3. **Concurrency Test Gate**: 20 concurrent tasks competing for 1 remaining voucher slot; exactly 1 succeeds with `Reserved`, 19 receive `400 VOUCHER_USAGE_LIMIT_EXCEEDED`.
 4. **Integration Gate**: Complete checkout quote with 3-tier stacking; total amount invariant matches $\sum (\text{Items} - \text{Discounts} + \text{Shipping} + \text{PlatformMarkup})$.
 5. **Full Suite**: `dotnet test Commerce.sln` passes 100% of test cases.
+
+---
+
+## 6. Phase 8 Delta Architecture: Shopee Alignment (Unified Shop Voucher Stacking)
+
+### 6.1. Architectural Shift
+* **From**: Unconstrained 3-tier stacking (Product + Shop + System on same item).
+* **To**: Shopee 2-tier model:
+  1. **Shop Tier**: Max 1 voucher per shop (Product OR Shop scope, non-stackable per shop).
+  2. **Platform Tier**: Max 1 voucher per order (System scope, funded by platform rebate).
+
+### 6.2. Key Code Adjustments
+1. `VoucherCalculationEngine.cs`: Group candidate vouchers by `OwnerSellerId`. Enforce `SHOP_MULTIPLE_VOUCHERS_NOT_ALLOWED` if any shop has $\ge 2$ vouchers.
+2. `RecommendVouchersAsync`: Compare $\max(\text{ProductDiscount}, \text{ShopDiscount})$ per shop and propose the single best voucher.
+3. `DiscountDtos.cs`: Align `TierSavingsDto` with 2-tier savings breakdown.
+4. `CatalogClient.cs`: Fully verified against existing `POST api/v1/internal/variants` with `SaleType` parsing and auction rejection.
+5. `OrderService.cs`: Assert financial invariant $ShopNetEarnings = ShopGrossRevenue - ShopDiscounts - PlatformFeeAmount + PlatformVoucherRebate$.

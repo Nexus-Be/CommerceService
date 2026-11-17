@@ -107,7 +107,7 @@ public class DiscountsControllerTests
         var request = new RecommendVouchersRequest(new List<Guid> { Guid.NewGuid() });
         var expectedResponse = new RecommendVouchersResponse(
             new List<string> { "SYS10K" },
-            new TierSavingsDto(0m, 0m, 10000m, 10000m)
+            new TierSavingsDto(0m, 10000m, 10000m)
         );
 
         _mockDiscountService

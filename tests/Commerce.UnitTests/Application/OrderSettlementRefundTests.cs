@@ -353,6 +353,14 @@ public class OrderSettlementRefundTests : IDisposable
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Never);
 
+        _mockWalletClient.Verify(w => w.RefundOrderPaymentAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<decimal>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+
         var refunds = await _dbContext.OrderRefunds.Where(r => r.SubOrderId == subOrder.Id).ToListAsync();
         refunds.Should().BeEmpty();
     }
@@ -379,6 +387,14 @@ public class OrderSettlementRefundTests : IDisposable
 
         // Verify NO wallet refund was called
         _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<decimal>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+
+        _mockWalletClient.Verify(w => w.RefundOrderPaymentAsync(
             It.IsAny<Guid>(),
             It.IsAny<string>(),
             It.IsAny<decimal>(),

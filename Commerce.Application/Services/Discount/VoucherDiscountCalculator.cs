@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Commerce.Application.Interfaces;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
+using Commerce.Domain.Exceptions;
 
 public sealed class VoucherDiscountCalculator : IVoucherDiscountCalculator
 {
@@ -102,6 +103,10 @@ public sealed class VoucherDiscountCalculator : IVoucherDiscountCalculator
         try
         {
             evalResult = _calculationEngine.EvaluateAndApplyVouchers(evalRequest);
+        }
+        catch (CommerceDomainException)
+        {
+            throw;
         }
         catch (Exception ex)
         {

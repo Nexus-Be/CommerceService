@@ -362,4 +362,149 @@ public class VoucherCalculationEngineTests
         result.RejectedVoucherCodes.Should().Contain("EXPIRED_VOUCHER");
         result.Warnings.Should().ContainMatch("*expired*");
     }
+
+    [Fact]
+    public void Case9_ShopLevelExclusivity_ShouldThrowShopMultipleVouchersNotAllowed_WhenMultipleVouchersPassedForSameShop()
+    {
+        // Arrange
+        var sellerId = Guid.NewGuid();
+        var item = new CalculationItemInput(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), sellerId, "Item", 2, 200000m);
+
+        var prodVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "PROD10K",
+            Name = "Prod 10K",
+            ScopeType = DiscountScopeType.Product,
+            OwnerSellerId = sellerId,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 10000m,
+            Status = DiscountStatus.Active
+        };
+
+        var shopVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "SHOP20K",
+            Name = "Shop 20K",
+            ScopeType = DiscountScopeType.Shop,
+            OwnerSellerId = sellerId,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 20000m,
+            Status = DiscountStatus.Active
+        };
+
+        var request = new EvaluateVouchersRequest(
+            Items: new List<CalculationItemInput> { item },
+            AvailableVouchers: new List<DiscountCode> { prodVoucher, shopVoucher }
+        );
+
+        // Act & Assert
+        var act = () => _engine.EvaluateAndApplyVouchers(request);
+        act.Should().Throw<CommerceDomainException>()
+            .WithMessage("Only one voucher per shop can be applied.")
+            .Where(e => e.ErrorCode == "SHOP_MULTIPLE_VOUCHERS_NOT_ALLOWED" && e.StatusCode == 400);
+    }
+
+    [Fact]
+    public void Case10_MultiShopTwoTier_ShouldEnforceOneVoucherPerShopAndPlatformVoucher_WithShopeeFinancials()
+    {
+        // Arrange: Shop 1 (400k) with Shop voucher (20k off), Shop 2 (300k) with Product voucher (10k off), System voucher (30k off)
+        var seller1 = Guid.Parse("00000000-0000-0000-0000-000000000001");
+        var seller2 = Guid.Parse("00000000-0000-0000-0000-000000000002");
+        var sku2 = Guid.NewGuid();
+
+        var item1 = new CalculationItemInput(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), seller1, "Item Shop 1", 2, 200000m);
+        var item2 = new CalculationItemInput(Guid.NewGuid(), Guid.NewGuid(), sku2, seller2, "Item Shop 2", 1, 300000m);
+
+        var shop1Voucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "SHOP1_20K",
+            Name = "Shop 1 20K",
+            ScopeType = DiscountScopeType.Shop,
+            OwnerSellerId = seller1,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 20000m,
+            MinOrderAmount = 100000m,
+            Status = DiscountStatus.Active
+        };
+
+        var shop2ProdVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "SHOP2_PROD10K",
+            Name = "Shop 2 Prod 10K",
+            ScopeType = DiscountScopeType.Product,
+            OwnerSellerId = seller2,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 10000m,
+            MinOrderAmount = 100000m,
+            Status = DiscountStatus.Active,
+            Scopes = new List<DiscountCodeScope>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    DiscountCodeId = Guid.NewGuid(),
+                    ScopeRefType = DiscountScopeRefType.Sku,
+                    ScopeRefId = sku2
+                }
+            }
+        };
+
+        var sysVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "SYS30K",
+            Name = "Sys 30K",
+            ScopeType = DiscountScopeType.System,
+            OwnerSellerId = null,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 30000m,
+            MinOrderAmount = 150000m,
+            Status = DiscountStatus.Active
+        };
+
+        var request = new EvaluateVouchersRequest(
+            Items: new List<CalculationItemInput> { item1, item2 },
+            AvailableVouchers: new List<DiscountCode> { shop1Voucher, shop2ProdVoucher, sysVoucher },
+            PlatformMarkupPercent: 5.0m,
+            SellerShippingFees: new Dictionary<Guid, decimal>
+            {
+                [seller1] = 25000m,
+                [seller2] = 30000m
+            }
+        );
+
+        // Act
+        var result = _engine.EvaluateAndApplyVouchers(request);
+
+        // Assert
+        result.AppliedVoucherCodes.Should().BeEquivalentTo(new[] { "SHOP1_20K", "SHOP2_PROD10K", "SYS30K" });
+
+        var shop1Res = result.ShopResults[seller1];
+        var shop2Res = result.ShopResults[seller2];
+
+        // Shop 1:
+        // ItemsAmount = 400,000, ShopDiscount = 20,000 => Base = 380,000
+        shop1Res.ItemsAmount.Should().Be(400000m);
+        shop1Res.ShopDiscountAmount.Should().Be(20000m);
+        shop1Res.ProductDiscountAmount.Should().Be(0m);
+
+        // Shop 2:
+        // ItemsAmount = 300,000, ProductDiscount = 10,000 => Base = 290,000
+        shop2Res.ItemsAmount.Should().Be(300000m);
+        shop2Res.ProductDiscountAmount.Should().Be(10000m);
+        shop2Res.ShopDiscountAmount.Should().Be(0m);
+
+        // System Discount total = 30,000 across both shops
+        (shop1Res.SystemDiscountAmount + shop2Res.SystemDiscountAmount).Should().Be(30000m);
+
+        // Invariant for both shops: TotalAmount == SellerReceive + (PlatformFee - SystemDiscount) + ShippingFee
+        (shop1Res.SellerReceiveAmount + (shop1Res.PlatformFeeAmount - shop1Res.SystemDiscountAmount) + shop1Res.ShippingFeeAmount)
+            .Should().Be(shop1Res.TotalAmount);
+        (shop2Res.SellerReceiveAmount + (shop2Res.PlatformFeeAmount - shop2Res.SystemDiscountAmount) + shop2Res.ShippingFeeAmount)
+            .Should().Be(shop2Res.TotalAmount);
+    }
 }

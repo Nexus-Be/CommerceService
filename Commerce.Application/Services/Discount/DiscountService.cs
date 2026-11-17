@@ -537,7 +537,7 @@ public sealed class DiscountService : IDiscountService
 
         if (cartItems.Count == 0)
         {
-            return new RecommendVouchersResponse(Array.Empty<string>(), new TierSavingsDto(0m, 0m, 0m, 0m));
+            return new RecommendVouchersResponse(Array.Empty<string>(), new TierSavingsDto(0m, 0m, 0m));
         }
 
         var calcItems = cartItems.Select(ci => new CalculationItemInput(
@@ -556,41 +556,103 @@ public sealed class DiscountService : IDiscountService
             .Where(d => d.ScopeType == DiscountScopeType.System || (d.OwnerSellerId.HasValue && sellerIds.Contains(d.OwnerSellerId.Value)))
             .ToListAsync(ct);
 
-        // Pick optimal voucher per scope
+        // Pick optimal voucher per shop (Shopee 2-tier model: single best voucher per shop having max(ProductDiscount, ShopDiscount))
         var optimalCandidates = new List<DiscountCode>();
 
-        // 1. Best Product voucher per SKU
-        foreach (var skuId in skuIds)
-        {
-            var matchingProdVouchers = candidateVouchers
-                .Where(v => v.ScopeType == DiscountScopeType.Product && v.Scopes.Any(s => s.ScopeRefType == DiscountScopeRefType.Sku && s.ScopeRefId == skuId))
-                .OrderByDescending(v => v.DiscountValue)
-                .FirstOrDefault();
-            if (matchingProdVouchers != null && !optimalCandidates.Contains(matchingProdVouchers))
-            {
-                optimalCandidates.Add(matchingProdVouchers);
-            }
-        }
-
-        // 2. Best Shop voucher per Seller
         foreach (var sId in sellerIds)
         {
-            var bestShopVoucher = candidateVouchers
-                .Where(v => v.ScopeType == DiscountScopeType.Shop && v.OwnerSellerId == sId)
-                .OrderByDescending(v => v.DiscountValue)
-                .FirstOrDefault();
-            if (bestShopVoucher != null && !optimalCandidates.Contains(bestShopVoucher))
+            var sellerItems = cartItems.Where(i => i.SellerId == sId).ToList();
+            var shopVouchers = candidateVouchers
+                .Where(v => v.OwnerSellerId == sId && (v.ScopeType == DiscountScopeType.Shop || v.ScopeType == DiscountScopeType.Product))
+                .ToList();
+
+            DiscountCode? bestShopVoucher = null;
+            decimal maxShopDiscount = 0m;
+
+            foreach (var v in shopVouchers)
+            {
+                decimal candidateDiscount = 0m;
+                if (v.ScopeType == DiscountScopeType.Product)
+                {
+                    var targetSkuIds = (v.Scopes ?? Enumerable.Empty<DiscountCodeScope>())
+                        .Where(s => s.ScopeRefType == DiscountScopeRefType.Sku && s.ScopeRefId.HasValue)
+                        .Select(s => s.ScopeRefId!.Value)
+                        .ToHashSet();
+
+                    var eligibleItems = targetSkuIds.Count > 0
+                        ? sellerItems.Where(i => targetSkuIds.Contains(i.SkuId)).ToList()
+                        : sellerItems;
+
+                    if (eligibleItems.Count > 0)
+                    {
+                        var baseAmount = eligibleItems.Sum(i => i.Quantity * i.UnitPriceSnapshot);
+                        if (baseAmount >= v.MinOrderAmount)
+                        {
+                            candidateDiscount = _calculationEngine.CalculateRawDiscount(baseAmount, v);
+                        }
+                    }
+                }
+                else if (v.ScopeType == DiscountScopeType.Shop)
+                {
+                    var baseAmount = sellerItems.Sum(i => i.Quantity * i.UnitPriceSnapshot);
+                    if (baseAmount >= v.MinOrderAmount)
+                    {
+                        candidateDiscount = _calculationEngine.CalculateRawDiscount(baseAmount, v);
+                    }
+                }
+
+                if (candidateDiscount > maxShopDiscount)
+                {
+                    maxShopDiscount = candidateDiscount;
+                    bestShopVoucher = v;
+                }
+            }
+
+            if (bestShopVoucher != null && maxShopDiscount > 0m)
             {
                 optimalCandidates.Add(bestShopVoucher);
             }
         }
 
-        // 3. Best System voucher
-        var bestSystemVoucher = candidateVouchers
+        // System voucher: Best Platform-wide voucher evaluated against remaining base
+        var systemCandidates = candidateVouchers
             .Where(v => v.ScopeType == DiscountScopeType.System)
-            .OrderByDescending(v => v.DiscountValue)
-            .FirstOrDefault();
-        if (bestSystemVoucher != null)
+            .ToList();
+
+        DiscountCode? bestSystemVoucher = null;
+        decimal maxSystemDiscount = 0m;
+
+        var totalItemsBase = cartItems.Sum(i => i.Quantity * i.UnitPriceSnapshot);
+        var remainingSystemBase = Math.Max(0m, totalItemsBase - optimalCandidates.Sum(v =>
+        {
+            var sId = v.OwnerSellerId!.Value;
+            var sItems = cartItems.Where(i => i.SellerId == sId);
+            if (v.ScopeType == DiscountScopeType.Product)
+            {
+                var targetSkuIds = (v.Scopes ?? Enumerable.Empty<DiscountCodeScope>())
+                    .Where(s => s.ScopeRefType == DiscountScopeRefType.Sku && s.ScopeRefId.HasValue)
+                    .Select(s => s.ScopeRefId!.Value)
+                    .ToHashSet();
+                var elig = targetSkuIds.Count > 0 ? sItems.Where(i => targetSkuIds.Contains(i.SkuId)) : sItems;
+                return _calculationEngine.CalculateRawDiscount(elig.Sum(i => i.Quantity * i.UnitPriceSnapshot), v);
+            }
+            return _calculationEngine.CalculateRawDiscount(sItems.Sum(i => i.Quantity * i.UnitPriceSnapshot), v);
+        }));
+
+        foreach (var sysV in systemCandidates)
+        {
+            if (remainingSystemBase >= sysV.MinOrderAmount)
+            {
+                var disc = _calculationEngine.CalculateRawDiscount(remainingSystemBase, sysV);
+                if (disc > maxSystemDiscount)
+                {
+                    maxSystemDiscount = disc;
+                    bestSystemVoucher = sysV;
+                }
+            }
+        }
+
+        if (bestSystemVoucher != null && maxSystemDiscount > 0m)
         {
             optimalCandidates.Add(bestSystemVoucher);
         }
@@ -600,18 +662,22 @@ public sealed class DiscountService : IDiscountService
             AvailableVouchers: optimalCandidates
         ));
 
-        decimal prodDisc = 0m;
         decimal shopDisc = 0m;
         decimal sysDisc = 0m;
 
         foreach (var usage in evalResult.AllAllocatedUsages)
         {
-            if (usage.ScopeType == DiscountScopeType.Product) prodDisc += usage.DiscountAmount;
-            else if (usage.ScopeType == DiscountScopeType.Shop) shopDisc += usage.DiscountAmount;
-            else if (usage.ScopeType == DiscountScopeType.System) sysDisc += usage.DiscountAmount;
+            if (usage.ScopeType == DiscountScopeType.Product || usage.ScopeType == DiscountScopeType.Shop)
+            {
+                shopDisc += usage.DiscountAmount;
+            }
+            else if (usage.ScopeType == DiscountScopeType.System)
+            {
+                sysDisc += usage.DiscountAmount;
+            }
         }
 
-        var savings = new TierSavingsDto(prodDisc, shopDisc, sysDisc, prodDisc + shopDisc + sysDisc);
+        var savings = new TierSavingsDto(shopDisc, sysDisc, shopDisc + sysDisc);
 
         return new RecommendVouchersResponse(
             RecommendedVoucherCodes: evalResult.AppliedVoucherCodes,

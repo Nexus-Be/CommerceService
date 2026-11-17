@@ -209,22 +209,25 @@ public enum DiscountUsageStatus
 
 ## PHẦN 2: QUY TẮC TÀI CHÍNH & THUẬT TOÁN TRỌNG TÂM (CORE ALGORITHMS)
 
-### 2.1. Quy tắc Xếp chồng 3 Tầng (3-Tier Voucher Stacking Rule)
-Trong một phiên Checkout (`CHK-01` & `CHK-02`), người mua được áp dụng tối đa 3 tầng khuyến mãi theo thứ tự tuần tự:
-1. **Tầng 1 — `Product` Voucher:** Tối đa **01 mã / 01 dòng sản phẩm (`CartItem` / `SubOrderItem`)**.
+### 2.1. Quy tắc Áp dụng Voucher Chuẩn Shopee: Độc Quyền Cấp Shop & Cộng Dồn Sàn (2-Tier Checkout Model)
+Trong một phiên Checkout (`CHK-01` & `CHK-02`), hệ thống triển khai mô hình thanh toán 2 tầng tinh gọn theo chuẩn Shopee / TikTok Shop:
+1. **Tầng 1 — Ưu đãi từ Người bán (Seller / Shop Discounts):**
+   * Tối đa **01 mã / 01 gian hàng (`OwnerSellerId` / `SubOrder`)**.
+   * Người mua có thể chọn **Voucher Sản phẩm (`ScopeType == Product`)** HOẶC **Voucher toàn Shop (`ScopeType == Shop`)**.
+   * **Rào chắn Độc quyền cấp Shop (Shop-Level Exclusivity Guard):** Tuyệt đối **KHÔNG CHO PHÉP CỘNG DỒN CẢ HAI MÃ CỦA CÙNG MỘT SHOP** trên cùng một món đồ hay SubOrder. Rào chắn này bảo vệ chủ Shop 100% khỏi rủi ro "Lỗ kép" (Double Discounting).
    * *Ngữ nghĩa giảm giá:*
-     * Nếu `DiscountType == Percentage`: Áp dụng phần trăm giảm trên từng dòng sản phẩm khớp scope.
-     * Nếu `DiscountType == FixedAmount`: Giảm một lần duy nhất cho toàn bộ nhóm sản phẩm khớp scope của mã đó trong Shop.
-   * *Ngữ nghĩa `MinOrderAmount`:* Được kiểm tra trên tổng giá trị các mặt hàng khớp scope của mã đó trong giỏ hàng.
-   * *Quy tắc bản ghi:* Mỗi mã `Product` trên 1 `SubOrder` chỉ tạo **đúng 01 bản ghi `DiscountCodeUsage`** với tổng số tiền giảm gộp của các mặt hàng khớp.
-2. **Tầng 2 — `Shop` Voucher:** Tối đa **01 mã / 01 gian hàng (`SellerId` / `SubOrder`)**. Tính trên tổng tiền hàng của Shop đó **sau khi đã trừ Tầng 1**.
-   * *Phân bổ chiết khấu Tầng 2 xuống các mặt hàng:* Số tiền giảm của Shop voucher được phân bổ tỷ lệ pro-rata xuống từng mặt hàng trong Shop theo giá trị còn lại sau Tầng 1 của mặt hàng đó.
-3. **Tầng 3 — `System` Voucher:** Tối đa **01 mã / toàn bộ phiên đặt hàng (`Master Order`)**. Tính trên tổng tiền hàng còn lại của các mặt hàng hợp lệ toàn phiên **sau khi đã trừ Tầng 1 và Tầng 2**.
+     * Nếu chọn `Product` Voucher: Chỉ tính giảm trên các mặt hàng thuộc diện hợp lệ của mã đó trong giỏ hàng.
+     * Nếu chọn `Shop` Voucher: Tính giảm trên tổng giá trị hàng hóa của Shop đó.
+2. **Tầng 2 — Ưu đãi từ Sàn (Platform / System Discounts):**
+   * Tối đa **01 mã / toàn bộ phiên đặt hàng (`Master Order`)**.
+   * Tính trên tổng tiền hàng còn lại của toàn bộ các Shop **sau khi đã trừ Tầng 1 của từng Shop**.
+   * Sàn tài trợ 100% khoản giảm giá này và bù tiền vào ví cho các Shop (`PlatformVoucherRebate`).
 
-* **Quy tắc Chặn Xung Đột (Conflict Guard):**
+* **Quy tắc Chặn Xung Đột & Bội Chi (Conflict & Over-stacking Guards):**
   * Danh sách `voucherCodes` chứa $\ge 2$ mã `System` $\rightarrow$ Quăng lỗi `400 VOUCHER_STACKING_CONFLICT`.
-  * Danh sách chứa $\ge 2$ mã `Shop` cùng một `OwnerSellerId` $\rightarrow$ Quăng lỗi `400 VOUCHER_STACKING_CONFLICT`.
-  * Danh sách chứa $\ge 2$ mã `Product` cùng khớp trên một `SkuId` $\rightarrow$ Quăng lỗi `400 VOUCHER_STACKING_CONFLICT`.
+  * Danh sách chứa $\ge 2$ mã thuộc cùng một `OwnerSellerId` (bất kể là mã Product hay Shop) $\rightarrow$ Quăng lỗi `400 SHOP_MULTIPLE_VOUCHERS_NOT_ALLOWED` (Message: `"Only one voucher per shop can be applied."`).
+
+---
 
 ### 2.2. Công thức Tính Tiền Giảm & Phân bổ Pro-Rata Chuẩn Hóa Số Nguyên VND
 
@@ -237,26 +240,30 @@ Cho giá trị cơ sở hợp lệ $B \ge 0$ và thực thể `DiscountCode` $V$
   $$D_{\text{capped}} = V.\text{MaxDiscountAmount.HasValue} ? \min(D_{\text{pct}}, V.\text{MaxDiscountAmount.Value}) : D_{\text{pct}}$$
   $$D = \min(D_{\text{capped}}, B)$$
 
-#### Bước 2: Tính toán Tầng 1 (`Product`) và Tầng 2 (`Shop`) cho từng Shop $k$
+#### Bước 2: Tính toán Tầng 1 (Ưu đãi Shop) cho từng Shop $k$
 Với mỗi Shop $k \in \{1 \dots M\}$ có tập mặt hàng $i \in \{1 \dots N_k\}$:
 1. Tổng tiền hàng gốc của Shop $k$:
    $$\text{itemsAmount}_k = \sum_{i=1}^{N_k} (\text{UnitPrice}_{k,i} \times \text{Quantity}_{k,i})$$
-2. Nếu có mã `Product` $V_{\text{prod}}$: Tính tổng giảm sản phẩm $\text{productDiscountAmount}_k$ theo Bước 1.
-3. Tiền hàng của Shop $k$ sau Tầng 1:
-   $$\text{AfterProd}_k = \text{itemsAmount}_k - \text{productDiscountAmount}_k$$
-4. Nếu Shop $k$ có áp dụng mã `Shop` $V_{\text{shop}}$: Tính cơ sở hợp lệ $\text{EligibleShopBase}_k$. Nếu $\text{EligibleShopBase}_k \ge V_{\text{shop}}.\text{MinOrderAmount}$, tính $\text{shopDiscountAmount}_k = \text{CalculateRawDiscount}(\text{EligibleShopBase}_k, V_{\text{shop}})$.
-5. Doanh thu bán hàng ròng của Seller $k$ trước phí sàn (`NetSellerAmount`):
-   $$\text{NetSeller}_k = \text{itemsAmount}_k - \text{productDiscountAmount}_k - \text{shopDiscountAmount}_k$$
-6. **Hoa hồng sàn thu từ Seller $k$ (`PlatformFeeAmount`):**
-   *(Áp dụng mô hình chuẩn Shopee / TikTok Shop: Phí sàn $r = 5\%$ khấu trừ trực tiếp từ doanh thu bán của Shop, $r$ quản trị động bởi Staff qua `AdminPlatformFeeController`)*:
+2. Mỗi Shop $k$ chỉ có tối đa 01 voucher hợp lệ $V_{k}$ (Product hoặc Shop):
+   * Nếu $V_k$ là `Product` Voucher:
+     Tính tổng tiền các sản phẩm khớp scope $\text{eligibleProdAmount}_k$. Nếu $\ge V_k.\text{MinOrderAmount}$, tính:
+     $$\text{shopDiscountAmount}_k = \text{CalculateRawDiscount}(\text{eligibleProdAmount}_k, V_k)$$
+   * Nếu $V_k$ là `Shop` Voucher:
+     Nếu $\text{itemsAmount}_k \ge V_k.\text{MinOrderAmount}$, tính:
+     $$\text{shopDiscountAmount}_k = \text{CalculateRawDiscount}(\text{itemsAmount}_k, V_k)$$
+   * Nếu không có voucher nào cho Shop $k$: $\text{shopDiscountAmount}_k = 0đ$.
+3. Doanh thu bán hàng ròng của Seller $k$ trước phí sàn (`NetSellerAmount`):
+   $$\text{NetSeller}_k = \text{itemsAmount}_k - \text{shopDiscountAmount}_k$$
+4. **Hoa hồng sàn thu từ Seller $k$ (`PlatformFeeAmount`):**
+   *(Khấu trừ trực tiếp từ doanh thu bán của Shop, $r = 5\%$ quản trị động bởi Staff qua `AdminPlatformFeeController`)*:
    $$\text{platformFeeAmount}_k = \text{Math.Round}\left(\text{NetSeller}_k \times \frac{r}{100m}, 0, \text{MidpointRounding.AwayFromZero}\right)$$
-7. **Tiền thực tế giải ngân vào ví Seller $k$ (`SellerReceiveAmount`):**
+5. **Tiền thực tế giải ngân vào ví Seller $k$ (`SellerReceiveAmount`):**
    $$\text{sellerReceiveAmount}_k = \text{NetSeller}_k - \text{platformFeeAmount}_k$$
 
-#### Bước 3: Tính toán Tầng 3 (`System`) & Phân bổ Pro-rata (Thứ tự Xác định)
+#### Bước 3: Tính toán Tầng 2 (Voucher Sàn) & Phân bổ Pro-rata (Thứ tự Xác định)
 Nếu phiên đặt hàng có áp dụng mã `System` $V_{\text{sys}}$:
 1. **Xác định cơ sở hợp lệ của từng Shop ($\text{EligibleSysBase}_k$):**
-   * Tính tổng giá trị của các mặt hàng trong Shop $k$ **thực sự khớp với Scopes của $V_{\text{sys}}$** sau khi đã trừ chiết khấu Tầng 1 và Tầng 2 của các mặt hàng đó.
+   * Tính tổng giá trị các mặt hàng trong Shop $k$ thực sự khớp với Scopes của $V_{\text{sys}}$ sau khi đã trừ chiết khấu Tầng 1 của Shop đó.
    * Lọc danh sách $L$ shop có $\text{EligibleSysBase}_k > 0$, **bắt buộc sắp xếp theo `SellerId` tăng dần**.
 2. Tổng cơ sở xét điều kiện toàn sàn:
    $$\text{Base}_{\text{sys}} = \sum_{j=1}^{L} \text{EligibleSysBase}_{k_j}$$
@@ -271,16 +278,13 @@ Nếu phiên đặt hàng có áp dụng mã `System` $V_{\text{sys}}$:
 
 #### Bước 4: Bất biến Tài chính trên `SubOrders` và `Orders` (Chuẩn Shopee / TikTok Shop Số Nguyên VND)
 * **Trên từng `SubOrder` $k$:**
-  * $\text{discountAmount}_k = \text{productDiscountAmount}_k + \text{shopDiscountAmount}_k + \text{systemDiscountAmount}_k$
+  * $\text{discountAmount}_k = \text{shopDiscountAmount}_k + \text{systemDiscountAmount}_k$
   * **Tổng tiền Buyer thanh toán cho SubOrder $k$ (`TotalAmount`):**
-    *(Buyer trả đúng giá niêm yết trừ toàn bộ voucher cộng phí ship, tuyệt đối KHÔNG bị cộng phụ thu phí sàn)*:
     $$\text{totalAmount}_k = \text{NetSeller}_k - \text{systemDiscountAmount}_k + \text{shippingFeeAmount}_k$$
     $$\text{totalAmount}_k = \text{itemsAmount}_k - \text{discountAmount}_k + \text{shippingFeeAmount}_k$$
-  * **Khoản tiền Sàn thực nhận / tài trợ ròng trên đơn con (`NetPlatformRetained`):**
-    $$\text{netPlatformRetained}_k = \text{platformFeeAmount}_k - \text{systemDiscountAmount}_k$$
-    *(Nếu dương $\rightarrow$ Sàn có lợi nhuận hoa hồng; Nếu âm $\rightarrow$ Sàn bù chi phí marketing tài trợ voucher).*
+  * **Tiền Sàn bù lại cho Shop $k$ (`PlatformVoucherRebate`):**
+    $$\text{platformVoucherRebate}_k = \text{systemDiscountAmount}_k$$
   * **Bất biến đối ứng kế toán trên SubOrder (Financial Invariant Assertion):**
-    Vì $\text{NetSeller}_k = \text{sellerReceiveAmount}_k + \text{platformFeeAmount}_k$, ta có:
     $$\boxed{\text{totalAmount}_k \equiv \text{sellerReceiveAmount}_k + (\text{platformFeeAmount}_k - \text{systemDiscountAmount}_k) + \text{shippingFeeAmount}_k}$$
 * **Trên `Master Order` (`Orders`):**
   * $\text{Orders.TotalAmount} = \sum_{k=1}^{M} \text{totalAmount}_k$ (Tổng số tiền Buyer thực thanh toán qua Ví hoặc COD).
@@ -296,47 +300,44 @@ Nếu phiên đặt hàng có áp dụng mã `System` $V_{\text{sys}}$:
   * **Shop B:** 01 Giày thể thao ($600.000đ$). Tiền hàng: $600.000đ$. Cước ship GHN: $40.000đ$.
   * Tổng tiền hàng niêm yết Catalog: $1.400.000đ$.
 * **Voucher áp dụng:**
-  * *Tầng 1 (Product):* Mã `JEAN20` giảm $20.000đ$ cho Quần Jean tại Shop A.
-  * *Tầng 2 (Shop):* Mã `SHOPA50` giảm $50.000đ$ cho đơn từ $700.000đ$ tại Shop A.
-  * *Tầng 3 (System):* Mã `ALLSALL` giảm $10\%$ tối đa $100.000đ$ cho đơn toàn sàn từ $1.000.000đ$.
+  * *Tầng 1 (Ưu đãi Shop):* Shop A áp dụng 01 mã duy nhất `SHOPA50` giảm $50.000đ$ cho đơn từ $700.000đ$ (hoặc mã sản phẩm `JEAN50` giảm $50.000đ$ cho Quần Jean, hệ thống tự động chọn mã tối ưu).
+  * *Tầng 2 (Ưu đãi Sàn):* Mã toàn sàn `ALLSALL` giảm $10\%$ tối đa $100.000đ$ cho đơn từ $1.000.000đ$.
   * Hoa hồng sàn thu từ Shop: $r = 5\%$.
 
 * **Các bước tính toán chi tiết:**
   1. **Shop A:**
      * `ItemsAmount` = $800.000đ$.
-     * `ProductDiscountAmount` = $20.000đ \rightarrow \text{AfterProd} = 780.000đ$.
      * `ShopDiscountAmount` = $50.000đ$.
-     * `NetSeller` (Shop A) = $780.000đ - 50.000đ = \mathbf{730.000đ}$.
-     * `PlatformFeeAmount` (Shop A) = $\text{Round}(730.000 \times 5\%) = \mathbf{36.500đ}$ (Hoa hồng sàn thu từ Shop A).
-     * `SellerReceiveAmount` (Shop A) = $730.000 - 36.500 = \mathbf{693.500đ}$ (Tiền giải ngân vào ví Shop A sau trừ phí sàn).
+     * `NetSeller` (Shop A) = $800.000đ - 50.000đ = \mathbf{750.000đ}$.
+     * `PlatformFeeAmount` (Shop A) = $\text{Round}(750.000 \times 5\%) = \mathbf{37.500đ}$ (Hoa hồng sàn thu từ Shop A).
+     * `SellerReceiveAmount` (Shop A) = $750.000 - 37.500 = \mathbf{712.500đ}$ (Tiền giải ngân vào ví Shop A sau trừ phí sàn).
   2. **Shop B:**
      * `ItemsAmount` = $600.000đ$.
-     * `ProductDiscountAmount` = $0đ$.
      * `ShopDiscountAmount` = $0đ$.
      * `NetSeller` (Shop B) = $\mathbf{600.000đ}$.
      * `PlatformFeeAmount` (Shop B) = $\text{Round}(600.000 \times 5\%) = \mathbf{30.000đ}$ (Hoa hồng sàn thu từ Shop B).
      * `SellerReceiveAmount` (Shop B) = $600.000 - 30.000 = \mathbf{570.000đ}$ (Tiền giải ngân vào ví Shop B sau trừ phí sàn).
-  3. **Tầng 3 (System Voucher Toàn Sàn $100.000đ$ do Sàn Tài Trợ):**
-     * Cơ sở xét điều kiện sàn: $\text{Base}_{\text{sys}} = 730.000 + 600.000 = 1.330.000đ$ ($> 1.000.000đ$ min order).
-     * Mức giảm lý thuyết: $1.330.000 \times 10\% = 133.000đ$. Bị chặn trần `MaxDiscountAmount` $\rightarrow D_{\text{sys\_total}} = \mathbf{100.000đ}$.
-     * Phân bổ Shop A: $\text{Round}(100.000 \times \frac{730.000}{1.330.000}, 0) = \mathbf{54.887đ}$.
-     * Phân bổ Shop B (Penny Rounding lock): $100.000 - 54.887 = \mathbf{45.113đ}$.
-     * Tổng phân bổ: $54.887 + 45.113 = 100.000đ$ (Khớp tuyệt đối $100\%$).
+  3. **Tầng 2 (System Voucher Toàn Sàn $100.000đ$ do Sàn Tài Trợ):**
+     * Cơ sở xét điều kiện sàn: $\text{Base}_{\text{sys}} = 750.000 + 600.000 = 1.350.000đ$ ($> 1.000.000đ$ min order).
+     * Mức giảm lý thuyết: $1.350.000 \times 10\% = 135.000đ$. Bị chặn trần `MaxDiscountAmount` $\rightarrow D_{\text{sys\_total}} = \mathbf{100.000đ}$.
+     * Phân bổ Shop A: $\text{Round}(100.000 \times \frac{750.000}{1.350.000}, 0) = \mathbf{55.556đ}$.
+     * Phân bổ Shop B (Penny Rounding lock): $100.000 - 55.556 = \mathbf{44.444đ}$.
+     * Tổng phân bổ: $55.556 + 44.444 = 100.000đ$ (Khớp tuyệt đối $100\%$).
   4. **Quyết toán tài chính cuối cùng:**
      * **Shop A:**
-       * `TotalAmount` (Shop A) = $730.000 - 54.887 + 30.000 = \mathbf{705.113đ}$.
+       * `TotalAmount` (Shop A) = $750.000 - 55.556 + 30.000 = \mathbf{724.444đ}$.
      * **Shop B:**
-       * `TotalAmount` (Shop B) = $600.000 - 45.113 + 40.000 = \mathbf{594.887đ}$.
+       * `TotalAmount` (Shop B) = $600.000 - 44.444 + 40.000 = \mathbf{595.556đ}$.
      * **Master Order (Khách thực thanh toán qua Ví hoặc COD):**
-       * `TotalAmount` = $705.113 + 594.887 = \mathbf{1.300.000đ}$.
+       * `TotalAmount` = $724.444 + 595.556 = \mathbf{1.320.000đ}$.
        * **Kiểm tra trực quan chuẩn TMĐT:**
-         $$\text{Tổng tiền hàng Catalog } (1.400.000) - \text{Tổng giảm giá } (170.000) + \text{Tổng ship } (70.000) = \mathbf{1.300.000đ}$$
+         $$\text{Tổng tiền hàng Catalog } (1.400.000) - \text{Tổng giảm giá } (150.000) + \text{Tổng ship } (70.000) = \mathbf{1.320.000đ}$$
          *(Khách hàng thanh toán đúng từng đồng theo giá niêm yết Catalog, không bị bất kỳ phụ thu bất ngờ nào).*
      * **Đối soát Ví Ký Quỹ Sàn (System Escrow Balance):**
-       * Tiền khách nộp: $1.300.000đ$.
-       * Tiền giải ngân: Shop A ($693.500đ$) + Shop B ($570.000đ$) + GHN ($70.000đ$) = $1.333.500đ$.
-       * Chênh lệch Ví Ký Quỹ: $1.300.000 - 1.333.500 = \mathbf{-33.500đ}$.
-       * Khớp đúng bằng: Tổng hoa hồng Sàn thu ($36.500 + 30.000 = 66.500đ$) - Voucher Sàn tài trợ ($100.000đ$) = $\mathbf{-33.500đ}$ (Sàn tài trợ marketing ròng).
+       * Tiền khách nộp: $1.320.000đ$.
+       * Tiền giải ngân: Shop A ($712.500đ$) + Shop B ($570.000đ$) + GHN ($70.000đ$) = $1.352.500đ$.
+       * Chênh lệch Ví Ký Quỹ: $1.320.000 - 1.352.500 = \mathbf{-32.500đ}$.
+       * Khớp đúng bằng: Tổng hoa hồng Sàn thu ($37.500 + 30.000 = 67.500đ$) - Voucher Sàn tài trợ ($100.000đ$) = $\mathbf{-32.500đ}$ (Sàn tài trợ marketing ròng).
 
 ---
 
@@ -381,17 +382,21 @@ Nếu phiên đặt hàng có áp dụng mã `System` $V_{\text{sys}}$:
 
 ---
 
-#### `UC-03` (`DSC-03`): Tự Động Gợi Ý Tổ Hợp Voucher Tối Ưu (`Auto-Suggest Best Vouchers`)
+#### `UC-03` (`DSC-03`): Tự Động Gợi Ý Tổ Hợp Voucher Tối Ưu Chuẩn Shopee (`Auto-Suggest Best Vouchers`)
 * **Endpoint:** `POST /api/v1/discounts/recommend`
 * **Role:** `[RequireRole("buyer")]`
 * **Request DTO:** `RecommendVouchersRequest(List<Guid> CartItemIds)`
 * **Logic thực thi:**
   1. Lấy danh sách `CartItems` của `buyerId` theo `request.CartItemIds`. Nếu rỗng $\rightarrow$ Quăng `400 CART_EMPTY`.
   2. Tải toàn bộ các `DiscountCodes` đang `Active`, `IsVisible == true`, còn hạn (`now < EndsAt`), còn `MaxUsesTotal`, và `buyerId` chưa dùng hết `MaxUsesPerUser`.
-  3. **Tối ưu Tầng 1 (`Product`):** Với mỗi dòng `CartItem`, chọn 01 mã `Product` hợp lệ cho số tiền giảm lớn nhất.
-  4. **Tối ưu Tầng 2 (`Shop`):** Với mỗi `SellerId` trong giỏ, tính số tiền còn lại sau Tầng 1 và chọn 01 mã `Shop` hợp lệ của `SellerId` đó cho số tiền giảm lớn nhất.
-  5. **Tối ưu Tầng 3 (`System`):** Tính tổng tiền hàng ròng toàn phiên sau Tầng 1 & Tầng 2, chọn 01 mã `System` hợp lệ cho số tiền giảm lớn nhất.
-  6. Trả về `RecommendVouchersResponse` chứa mảng `recommendedVoucherCodes` và chi tiết số tiền tiết kiệm được ở từng tầng (HTTP `200 OK`).
+  3. **Tối ưu Tầng 1 (Ưu đãi Shop - Chọn 01 Mã Hời Nhất Cho Mỗi Shop):**
+     * Với mỗi `SellerId` trong giỏ hàng: Lọc tất cả voucher hợp lệ thuộc Shop đó (cả mã `Product` và mã `Shop`).
+     * Tính toán thử số tiền giảm của từng voucher:
+       * Nếu là mã `Product`: Giảm được $X$ đồng trên các SKU hợp lệ.
+       * Nếu là mã `Shop`: Giảm được $Y$ đồng trên tổng tiền shop.
+     * **Chọn mã có $\max(X, Y)$ làm đại diện duy nhất cho Shop đó.** Tuyệt đối không chọn cả 2 mã của cùng một Shop.
+  4. **Tối ưu Tầng 2 (Ưu đãi Sàn):** Tính tổng tiền hàng ròng toàn phiên sau khi trừ Tầng 1 của từng Shop, chọn 01 mã `System` hợp lệ cho số tiền giảm lớn nhất.
+  5. Trả về `RecommendVouchersResponse` chứa mảng `recommendedVoucherCodes` (Tối đa $M$ mã Shop + 01 mã Sàn) và chi tiết số tiền tiết kiệm (`TierSavingsDto` gồm `ShopDiscount`, `SystemDiscount`, `TotalSavings`) (HTTP `200 OK`).
 
 ---
 
@@ -412,12 +417,14 @@ Nếu phiên đặt hàng có áp dụng mã `System` $V_{\text{sys}}$:
      * Nếu `ScopeType == DiscountScopeType.System`: Chỉ role `"admin"` được phép tạo (`OwnerSellerId = null`). Nếu `"seller"` gọi $\rightarrow$ Quăng `403 VOUCHER_ADMIN_ONLY`.
      * Nếu `ScopeType == DiscountScopeType.Shop` hoặc `Product`: Gán `OwnerSellerId = isAdmin && request.OwnerSellerId.HasValue ? request.OwnerSellerId.Value : currentUserId`.
   4. **Kiểm tra trùng mã:** Bắt `DbUpdateException` khi vi phạm Unique Index trên cột `Code` (mã lỗi PostgreSQL `23505`) $\rightarrow$ Quăng `409 VOUCHER_CODE_ALREADY_EXISTS`.
-  5. **Xác thực Phạm vi (`Scopes`) & Đối chiếu Catalog Service (`:8002`):**
+  5. **Xác thực Phạm vi (`Scopes`) & Đối chiếu Catalog Service (`:8002` qua `POST /api/v1/internal/variants`):**
      * Nếu `ScopeType == Shop`: Tự động tạo 1 dòng `DiscountCodeScope(ScopeRefType.Shop, ownerSellerId)`.
-     * Nếu `ScopeType == Product`: Bắt buộc `request.Scopes` không rỗng và chỉ chứa `Product` hoặc `Sku`. Với các dòng `Sku`, gọi `_catalogClient.GetSkuBatchDetailsAsync(skuIds, ct)` (Timeout 10s):
+     * Nếu `ScopeType == Product`: Bắt buộc `request.Scopes` không rỗng và chỉ chứa `Product` hoặc `Sku`. Với các dòng `Sku`, gọi `_catalogClient.GetSkuBatchDetailsAsync(skuIds, ct)` (qua endpoint hiện hữu `POST api/v1/internal/variants` với payload `{ variantIds = chunk }`):
        * Nếu Catalog lỗi $\rightarrow$ Quăng `503 CATALOG_SERVICE_UNAVAILABLE`.
-       * Nếu thiếu SKU $\rightarrow$ Quăng `404 CATALOG_SKU_NOT_FOUND`.
-       * Nếu có SKU mà `variant.SellerId != ownerSellerId` $\rightarrow$ Quăng `403 VOUCHER_SELLER_SKU_FORBIDDEN`.
+       * Nếu thiếu SKU trong từ điển $\rightarrow$ Quăng `404 CATALOG_SKU_NOT_FOUND`.
+       * Nếu SKU có `isPurchasable == false` (bị xóa, ẩn, tạm khóa) $\rightarrow$ Quăng `400 CATALOG_SKU_INACTIVE` (Message: `"Product '{productName}' is no longer available for purchase."`).
+       * Nếu SKU có `saleType == "Auction"` $\rightarrow$ Quăng `400 VOUCHER_SKU_AUCTION_NOT_ALLOWED` (Message: `"Voucher cannot be applied to auction products."`).
+       * Nếu có SKU mà `variant.SellerId != ownerSellerId` (và không phải Admin) $\rightarrow$ Quăng `403 VOUCHER_SELLER_SKU_FORBIDDEN` (Message: `"Product SKU '{skuId}' does not belong to your shop."`).
      * Nếu `ScopeType == System`: Nếu `request.Scopes` rỗng, mặc định tạo 1 dòng `DiscountCodeScope(ScopeRefType.All, null)`.
   6. Lưu `DiscountCode`, `DiscountCodeScopes` và ghi `AuditLog` (`Action = Create`), trả về `DiscountDetailResponse` (HTTP `201 Created`).
 
@@ -621,6 +628,9 @@ AI Agent bắt buộc sử dụng chính xác từng ký tự của `errorCode` 
 | **400** | `VOUCHER_MIN_ORDER_AMOUNT_NOT_MET` | `"Order amount does not meet the minimum requirement for this voucher."` |
 | **400** | `VOUCHER_SCOPE_MISMATCH` | `"Voucher is not applicable to any selected items in your cart."` |
 | **400** | `VOUCHER_STACKING_CONFLICT` | `"Only one voucher of the same scope type can be applied per shop or order."` |
+| **400** | `SHOP_MULTIPLE_VOUCHERS_NOT_ALLOWED` | `"Only one voucher per shop can be applied."` |
+| **400** | `VOUCHER_SKU_AUCTION_NOT_ALLOWED` | `"Voucher cannot be applied to auction products."` |
+| **400** | `CATALOG_SKU_INACTIVE` | `"Product is no longer available for purchase."` |
 | **400** | `VOUCHER_ALREADY_IN_USE` | `"Cannot modify core financial fields or delete a voucher that has already been used."` |
 | **400** | `INVALID_STATUS` | `"Voucher status can only be manually set to Active or Inactive."` |
 | **400** | `CART_EMPTY` | `"No valid items selected for checkout."` |

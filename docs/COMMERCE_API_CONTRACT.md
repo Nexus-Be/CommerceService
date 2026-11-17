@@ -1058,31 +1058,44 @@ Commerce Service giao tiếp với 3 dịch vụ vệ tinh qua các Typed HTTP C
 ---
 
 ### 6.3. Wallet Service (`:8008` REST) — `IWalletClient`
-1. **Trừ tiền ví trực tiếp theo đơn hàng:** `POST /api/v1/wallets/orders/{orderId}/payment`
-   * Headers: `Authorization: Bearer <token>`, `x-user-id: <guid>`
+1. **Trừ tiền ví trực tiếp theo đơn hàng (Khởi tạo OrderEscrow):** `POST /api/v1/wallets/orders/{orderId}/payment`
+   * Headers: `x-user-id: <guid>`
    * Payload: `{ "amount": 530000.0 }`
    * Response:
      ```json
      {
-       "success": true,
-       "transactionId": "TXN-20261109-001122",
-       "remainingBalance": 970000.0
+       "id": "33333333-3333-3333-3333-333333333333",
+       "walletId": "44444444-4444-4444-4444-444444444444",
+       "userId": "11111111-1111-1111-1111-000000000004",
+       "type": "PurchaseDebit",
+       "amount": 530000.0,
+       "balanceAfter": 970000.0,
+       "status": "Success",
+       "note": "Payment for order via wallet"
      }
      ```
 2. **Lấy số dư ví thời gian thực:** `GET /api/v1/wallets/me`
+   * Headers: `x-user-id: <guid>`
    * Response: `{ "balance": 1500000.0 }`
-3. **Hoàn tiền ví tự động:** `POST /api/v1/refunds`
-   * Headers: `Idempotency-Key: refund-sub-{subOrderId}`
+3. **Hoàn tiền Đơn hàng mẹ (Rút thẳng từ quỹ OrderEscrow gốc):** `POST /api/v1/wallets/orders/{orderId}/refund`
    * Payload:
      ```json
      {
        "userId": "11111111-1111-1111-1111-000000000004",
        "amount": 530000.0,
-       "reason": "SubOrderRejected"
+       "reason": "Buyer cancelled order before shipping."
      }
      ```
-4. **Giải ngân Escrow sang ví Shop:** `POST /api/v1/wallets/sub-orders/{subOrderId}/settle`
-   * Headers: `Idempotency-Key: settle-{subOrderId}`
+4. **Hoàn tiền Đơn hàng con lẻ:** `POST /api/v1/wallets/sub-orders/{subOrderId}/refund`
+   * Payload:
+     ```json
+     {
+       "userId": "11111111-1111-1111-1111-000000000004",
+       "amount": 260000.0,
+       "reason": "Shop rejected sub-order."
+     }
+     ```
+5. **Giải ngân Escrow sang ví Shop:** `POST /api/v1/wallets/sub-orders/{subOrderId}/settle`
    * Payload:
      ```json
      {
@@ -1114,7 +1127,11 @@ Commerce Service giao tiếp với 3 dịch vụ vệ tinh qua các Typed HTTP C
 | **404** | `SUB_ORDER_NOT_FOUND` | Không tìm thấy đơn hàng con | `"SubOrder was not found."` |
 | **404** | `CATALOG_SKU_NOT_FOUND` | SKU không tồn tại trong Catalog Service | `"Product SKU was not found in catalog."` |
 | **409** | `PRICE_CHANGED` | Sản phẩm bị tăng giá lúc bấm Đặt hàng | `"Price of 'Áo Thun Cotton Nexus' has increased from 240000.00 to 250000.00. Cart prices have been refreshed."` |
+| **409** | `ORDER_ESCROW_INSUFFICIENT` | Quỹ ký quỹ không đủ giải ngân hoặc hoàn tiền | `"Order escrow balance is insufficient to complete the payout."` |
+| **409** | `REFUND_EXCEEDS_PAYMENT` | Yêu cầu hoàn tiền vượt quá số tiền đã trả | `"Refund amount exceeds the original payment."` |
+| **409** | `SETTLEMENT_CONFLICT` | Giao dịch giải ngân bị xung đột người nhận/số tiền | `"A conflicting settlement transaction already exists for this reference."` |
 | **500** | `ORDER_CREATION_FAILED` | Sập DB lúc tạo đơn, đã kích hoạt hoàn tiền bù trừ | `"An error occurred while saving the order. All inventory allocations and payments have been safely rolled back."` |
+| **503** | `FEATURE_DISABLED` | Cờ LegacyCommerceCreditsEnabled trên Wallet chưa bật | `"Wallet credits feature is currently disabled on the payment service."` |
 | **503** | `STOCK_CHECK_UNAVAILABLE` | Kho Fulfillment tạm thời không phản hồi | `"Warehouse inventory service is temporarily unreachable."` |
 | **503** | `FULFILLMENT_SERVICE_UNAVAILABLE` | Tính cước GHN hoặc tạo vận đơn lỗi | `"Fulfillment service is temporarily unreachable."` |
 | **503** | `CATALOG_SERVICE_UNAVAILABLE` | Catalog Service tạm thời mất kết nối | `"Product catalog service is temporarily unreachable."` |

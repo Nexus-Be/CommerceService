@@ -23,7 +23,6 @@ public sealed record RecommendVouchersRequest(
 );
 
 public sealed record TierSavingsDto(
-    decimal ProductDiscount,
     decimal ShopDiscount,
     decimal SystemDiscount,
     decimal TotalSavings

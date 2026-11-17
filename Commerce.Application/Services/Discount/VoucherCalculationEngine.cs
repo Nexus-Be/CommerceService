@@ -92,33 +92,24 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             throw new CommerceDomainException("VOUCHER_STACKING_CONFLICT", "Multiple system vouchers cannot be applied to the same order.", 400);
         }
 
-        var shopCandidates = candidateVouchers.Where(v => v.ScopeType == DiscountScopeType.Shop).ToList();
-        var duplicateShopVoucher = shopCandidates
+        // Shop-Level Exclusivity Guard (Shopee 2-Tier Standard):
+        // Each shop can have at most ONE voucher (Product OR Shop scope).
+        // Multiple vouchers for the same shop are strictly forbidden to prevent double-discounting margin erosion.
+        var shopLevelVouchers = candidateVouchers
+            .Where(v => v.ScopeType == DiscountScopeType.Shop || v.ScopeType == DiscountScopeType.Product)
+            .ToList();
+
+        var multipleShopVoucher = shopLevelVouchers
             .GroupBy(v => v.OwnerSellerId)
             .FirstOrDefault(g => g.Key.HasValue && g.Count() > 1);
-        if (duplicateShopVoucher != null)
+
+        if (multipleShopVoucher != null)
         {
-            throw new CommerceDomainException("VOUCHER_STACKING_CONFLICT", "Multiple shop vouchers cannot be applied to the same shop.", 400);
+            throw new CommerceDomainException("SHOP_MULTIPLE_VOUCHERS_NOT_ALLOWED", "Only one voucher per shop can be applied.", 400);
         }
 
+        var shopCandidates = candidateVouchers.Where(v => v.ScopeType == DiscountScopeType.Shop).ToList();
         var productCandidates = candidateVouchers.Where(v => v.ScopeType == DiscountScopeType.Product).ToList();
-        var skuTargetMap = new Dictionary<Guid, Guid>();
-        foreach (var pv in productCandidates)
-        {
-            var skuScopes = (pv.Scopes ?? Enumerable.Empty<DiscountCodeScope>())
-                .Where(s => s.ScopeRefType == DiscountScopeRefType.Sku && s.ScopeRefId.HasValue)
-                .Select(s => s.ScopeRefId!.Value)
-                .ToList();
-
-            foreach (var skuId in skuScopes)
-            {
-                if (skuTargetMap.ContainsKey(skuId))
-                {
-                    throw new CommerceDomainException("VOUCHER_STACKING_CONFLICT", "Multiple product vouchers cannot be applied to the same product item.", 400);
-                }
-                skuTargetMap[skuId] = pv.Id;
-            }
-        }
 
         // Structure to track amounts per shop
         var shopDiscounts = shopItems.Keys.ToDictionary(
