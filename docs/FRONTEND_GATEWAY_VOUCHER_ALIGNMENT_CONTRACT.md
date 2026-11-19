@@ -142,15 +142,13 @@ DELETE /api/v1/discounts/{discountId}      # UC-09: Xóa mềm voucher (chỉ kh
   ```json
   {
     "recommendedVoucherCodes": [
-      "PROD10K",
       "SHOP20K",
       "SYS30K"
     ],
     "savingsBreakdown": {
-      "productDiscount": 10000.0,
       "shopDiscount": 20000.0,
       "systemDiscount": 30000.0,
-      "totalSavings": 60000.0
+      "totalSavings": 50000.0
     }
   }
   ```
@@ -160,7 +158,7 @@ DELETE /api/v1/discounts/{discountId}      # UC-09: Xóa mềm voucher (chỉ kh
 
 ## 4. Tích hợp Checkout & Đặt hàng (`OrdersController`)
 
-### 4.1. Báo giá Checkout đa Shop (`POST /api/v1/orders/quote`)
+### 4.1. Báo giá Checkout đa Shop (`POST /api/v1/checkouts/quote`)
 Frontend gửi danh sách mã voucher khách đã chọn trong mảng `voucherCodes`:
 - **Request Body**:
   ```json
@@ -276,6 +274,7 @@ Tất cả các lỗi trả về theo chuẩn RFC 9110 Problem Details:
 
 | Mã lỗi (`errorCode`) | HTTP Status | Diễn giải hiển thị UI |
 | :--- | :---: | :--- |
+| `SHOP_MULTIPLE_VOUCHERS_NOT_ALLOWED` | 400 | "Mỗi Shop chỉ được áp dụng tối đa 1 mã giảm giá (Mã SP hoặc Mã Shop)." |
 | `VOUCHER_NOT_FOUND` | 404 | "Mã giảm giá không tồn tại hoặc đã hết hạn." |
 | `VOUCHER_NOT_APPLICABLE` | 400 | "Mã giảm giá không thỏa mãn điều kiện đơn hàng tối thiểu." |
 | `VOUCHER_STACKING_CONFLICT` | 400 | "Không thể áp dụng đồng thời 2 mã giảm giá cùng loại." |

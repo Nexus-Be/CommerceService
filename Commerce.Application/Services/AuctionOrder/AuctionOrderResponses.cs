@@ -60,8 +60,30 @@ public sealed record AuctionOrderSummaryResponse(
     decimal? TotalAmount,
     string Status,
     DateTimeOffset PaymentDeadlineAt,
-    DateTimeOffset CreatedAt
-);
+    DateTimeOffset CreatedAt,
+    Guid? WinningBidId,
+    string? OrderSource,
+    decimal DepositAmount,
+    decimal? ShippingFeeAmount
+)
+{
+    public AuctionOrderSummaryResponse(
+        Guid id,
+        string orderNo,
+        Guid auctionId,
+        Guid buyerId,
+        Guid sellerId,
+        string productName,
+        string? imageUrl,
+        decimal winningAmount,
+        decimal? totalAmount,
+        string status,
+        DateTimeOffset paymentDeadlineAt,
+        DateTimeOffset createdAt)
+        : this(id, orderNo, auctionId, buyerId, sellerId, productName, imageUrl, winningAmount, totalAmount, status, paymentDeadlineAt, createdAt, null, null, 0m, null)
+    {
+    }
+}
 
 public sealed record PayAuctionOrderResponse(
     Guid OrderId,

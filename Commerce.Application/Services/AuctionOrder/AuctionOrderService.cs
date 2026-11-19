@@ -1,5 +1,6 @@
 namespace Commerce.Application.Services.AuctionOrder;
 
+using Commerce.Application.Common.Models;
 using Commerce.Application.Services.Shipment;
 using System;
 using System.Collections.Generic;
@@ -779,5 +780,52 @@ public class AuctionOrderService : IAuctionOrderService
             HasPreviousPage: hasPreviousPage,
             HasNextPage: hasNextPage
         );
+    }
+
+    public async Task<PagedData<AuctionOrderSummaryResponse>> ListBuyerOrdersAsync(
+        Guid buyerId,
+        int pageIndex,
+        int pageSize,
+        SubOrderStatus? status = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (pageIndex < 1) pageIndex = 1;
+        if (pageSize < 1) pageSize = 20;
+
+        var query = _dbContext.AuctionOrders.Where(a => a.BuyerId == buyerId && !a.IsDeleted);
+        if (status.HasValue)
+        {
+            query = query.Where(a => a.Status == status.Value);
+        }
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        var items = await query
+            .OrderByDescending(a => a.CreatedAt)
+            .Skip((pageIndex - 1) * pageSize)
+            .Take(pageSize)
+            .Select(a => new AuctionOrderSummaryResponse(
+                a.Id,
+                a.OrderNo,
+                a.AuctionId,
+                a.BuyerId,
+                a.SellerId,
+                a.ProductNameSnapshot,
+                a.ImageUrlSnapshot,
+                a.WinningAmount,
+                a.TotalAmount,
+                a.Status.ToString(),
+                a.PaymentDeadlineAt,
+                a.CreatedAt,
+                a.WinningBidId,
+                a.OrderSource.ToString(),
+                a.DepositAmount,
+                a.ShippingFeeAmount
+            ))
+            .ToListAsync(cancellationToken);
+
+        return new PagedData<AuctionOrderSummaryResponse>(
+            items,
+            PaginationMetadata.Create(pageIndex, pageSize, totalCount));
     }
 }

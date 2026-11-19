@@ -3,6 +3,8 @@ namespace Commerce.Application.Services.AuctionOrder;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Commerce.Application.Common.Models;
+using Commerce.Domain.Enums;
 
 public sealed record AuctionSettlementResult(
     AuctionSettlementResponse Response,
@@ -61,5 +63,12 @@ public interface IAuctionOrderService
         Guid sellerId,
         int pageIndex,
         int pageSize,
+        CancellationToken cancellationToken = default);
+
+    Task<PagedData<AuctionOrderSummaryResponse>> ListBuyerOrdersAsync(
+        Guid buyerId,
+        int pageIndex,
+        int pageSize,
+        SubOrderStatus? status = null,
         CancellationToken cancellationToken = default);
 }

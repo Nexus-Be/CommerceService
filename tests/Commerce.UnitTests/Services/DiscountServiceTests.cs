@@ -274,4 +274,142 @@ public class DiscountServiceTests
         response.SavingsBreakdown.SystemDiscount.Should().Be(0m);
         response.SavingsBreakdown.TotalSavings.Should().Be(50000m);
     }
+
+    [Fact]
+    public async Task ValidateVoucherAsync_ShouldThrowInvalidInput_WhenCartItemBelongsToAnotherBuyer()
+    {
+        // Arrange
+        var ownerBuyerId = Guid.NewGuid();
+        var attackerBuyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+
+        var cart = new Cart
+        {
+            Id = Guid.NewGuid(),
+            BuyerId = ownerBuyerId,
+            Status = CartStatus.Active
+        };
+        var cartItem = new CartItem
+        {
+            Id = Guid.NewGuid(),
+            CartId = cart.Id,
+            ProductId = Guid.NewGuid(),
+            SkuId = Guid.NewGuid(),
+            SellerId = sellerId,
+            ProductNameSnapshot = "Victim Item",
+            Quantity = 1,
+            UnitPriceSnapshot = 500000m
+        };
+        cart.Items.Add(cartItem);
+        _db.Carts.Add(cart);
+        _db.CartItems.Add(cartItem);
+
+        var voucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "SAVE50",
+            Name = "Save 50k",
+            ScopeType = DiscountScopeType.System,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 50000m,
+            MinOrderAmount = 100000m,
+            Status = DiscountStatus.Active,
+            IsVisible = true
+        };
+        _db.DiscountCodes.Add(voucher);
+        await _db.SaveChangesAsync();
+
+        var request = new ValidateVoucherRequest("SAVE50", new[] { cartItem.Id });
+
+        // Act
+        var act = () => _service.ValidateVoucherAsync(attackerBuyerId, request);
+
+        // Assert
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Which.ErrorCode.Should().Be("VAL_INVALID_INPUT");
+        ex.Which.StatusCode.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task ValidateVoucherAsync_ShouldReturnOutOfStock_WhenTotalUsesReached()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var voucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "LIMITED50",
+            Name = "Limited 50k",
+            ScopeType = DiscountScopeType.System,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 50000m,
+            MinOrderAmount = 100000m,
+            MaxUsesTotal = 5,
+            UsedCount = 3,
+            ReservedCount = 2,
+            Status = DiscountStatus.Active,
+            IsVisible = true
+        };
+        _db.DiscountCodes.Add(voucher);
+        await _db.SaveChangesAsync();
+
+        var request = new ValidateVoucherRequest("LIMITED50", new[] { Guid.NewGuid() });
+
+        // Act
+        var result = await _service.ValidateVoucherAsync(buyerId, request);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.IsValid.Should().BeFalse();
+        result.IneligibleReason.Should().Be("VOUCHER_OUT_OF_STOCK");
+        result.Message.Should().Be("Voucher has reached its total usage limit.");
+        result.EstimatedDiscountAmount.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task ValidateVoucherAsync_ShouldReturnUsageLimitExceeded_WhenUserLimitReached()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var voucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "ONETIME10",
+            Name = "One Time 10k",
+            ScopeType = DiscountScopeType.System,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 10000m,
+            MinOrderAmount = 50000m,
+            MaxUsesTotal = 100,
+            MaxUsesPerUser = 1,
+            UsedCount = 5,
+            ReservedCount = 0,
+            Status = DiscountStatus.Active,
+            IsVisible = true
+        };
+        _db.DiscountCodes.Add(voucher);
+
+        var existingUsage = new DiscountCodeUsage
+        {
+            Id = Guid.NewGuid(),
+            DiscountCodeId = voucher.Id,
+            UserId = buyerId,
+            Status = DiscountUsageStatus.Reserved,
+            DiscountAmount = 10000m
+        };
+        _db.DiscountCodeUsages.Add(existingUsage);
+        await _db.SaveChangesAsync();
+
+        var request = new ValidateVoucherRequest("ONETIME10", new[] { Guid.NewGuid() });
+
+        // Act
+        var result = await _service.ValidateVoucherAsync(buyerId, request);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.IsValid.Should().BeFalse();
+        result.IneligibleReason.Should().Be("VOUCHER_USAGE_LIMIT_EXCEEDED");
+        result.Message.Should().Be("You have reached the usage limit for this voucher.");
+        result.EstimatedDiscountAmount.Should().Be(0m);
+    }
 }

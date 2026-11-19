@@ -409,7 +409,7 @@ public sealed class DiscountService : IDiscountService
         {
             cartItems = await _db.CartItems
                 .AsNoTracking()
-                .Where(ci => cartItemIds.Contains(ci.Id) && !ci.IsDeleted)
+                .Where(ci => cartItemIds.Contains(ci.Id) && ci.Cart != null && ci.Cart.BuyerId == buyerId && !ci.IsDeleted)
                 .ToListAsync(ct);
         }
 
@@ -487,12 +487,29 @@ public sealed class DiscountService : IDiscountService
             throw new CommerceDomainException("VOUCHER_NOT_FOUND", "Voucher code was not found or is not active.", 404);
         }
 
+        if (voucher.MaxUsesTotal.HasValue && (voucher.UsedCount + voucher.ReservedCount) >= voucher.MaxUsesTotal.Value)
+        {
+            return new ValidateVoucherResponse(false, "VOUCHER_OUT_OF_STOCK", "Voucher has reached its total usage limit.", 0m);
+        }
+
+        if (voucher.MaxUsesPerUser.HasValue)
+        {
+            var userUsageCount = await _db.DiscountCodeUsages
+                .AsNoTracking()
+                .CountAsync(u => u.DiscountCodeId == voucher.Id && u.UserId == buyerId && u.Status != DiscountUsageStatus.Released && !u.IsDeleted, ct);
+
+            if (userUsageCount >= voucher.MaxUsesPerUser.Value)
+            {
+                return new ValidateVoucherResponse(false, "VOUCHER_USAGE_LIMIT_EXCEEDED", "You have reached the usage limit for this voucher.", 0m);
+            }
+        }
+
         var cartItems = await _db.CartItems
             .AsNoTracking()
-            .Where(ci => request.CartItemIds.Contains(ci.Id) && !ci.IsDeleted)
+            .Where(ci => request.CartItemIds.Contains(ci.Id) && ci.Cart != null && ci.Cart.BuyerId == buyerId && !ci.IsDeleted)
             .ToListAsync(ct);
 
-        if (cartItems.Count == 0)
+        if (cartItems.Count == 0 || cartItems.Count != request.CartItemIds.Distinct().Count())
         {
             throw new CommerceDomainException("VAL_INVALID_INPUT", "No valid cart items provided for voucher validation.", 400);
         }
@@ -532,7 +549,7 @@ public sealed class DiscountService : IDiscountService
     {
         var cartItems = await _db.CartItems
             .AsNoTracking()
-            .Where(ci => request.CartItemIds.Contains(ci.Id) && !ci.IsDeleted)
+            .Where(ci => request.CartItemIds.Contains(ci.Id) && ci.Cart != null && ci.Cart.BuyerId == buyerId && !ci.IsDeleted)
             .ToListAsync(ct);
 
         if (cartItems.Count == 0)

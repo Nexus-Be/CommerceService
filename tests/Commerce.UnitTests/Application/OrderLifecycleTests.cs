@@ -271,6 +271,35 @@ public class OrderLifecycleTests : IDisposable
             .Where(e => e.ErrorCode == "FORBIDDEN");
     }
 
+    [Fact]
+    public async Task CancelOrderAsync_ShouldCancelShipmentWithCarrier_WhenSubOrderIsConfirmedWithTrackingCode()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (order, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Confirmed);
+
+        subOrder.TrackingCode = "GHN-ORDER-12345";
+        subOrder.CarrierCode = "GHN";
+        await _dbContext.SaveChangesAsync();
+
+        _mockFulfillmentClient.Setup(f => f.CancelShipmentAsync(subOrder.Id, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var service = CreateOrderService();
+        var request = new CancelOrderRequest(CancellationReasonCode.BuyerChangedMind, "Cancelled before courier pickup");
+
+        // Act
+        await service.CancelOrderAsync(buyerId, order.Id, request, CancellationToken.None);
+
+        // Assert
+        var updatedSubOrder = await _dbContext.SubOrders.FirstOrDefaultAsync(s => s.Id == subOrder.Id);
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Cancelled);
+
+        // Verify courier cancellation was triggered
+        _mockFulfillmentClient.Verify(f => f.CancelShipmentAsync(subOrder.Id, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // =========================================================================
     // ORD-LIFE-SUB-CANCEL: BUYER CANCEL INDEPENDENT SUB-ORDER
     // =========================================================================

@@ -9,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Commerce.Api.Extensions;
 using Commerce.Api.Filters;
 using Commerce.Application.Services.AuctionOrder;
+using Commerce.Domain.Enums;
 
 [ApiController]
 [Route("api/v1/auction-orders")]
@@ -124,6 +125,27 @@ public class AuctionOrdersController : ControllerBase
         }
 
         var response = await _auctionOrderService.ConfirmReceiptAsync(auctionOrderId, buyerId, ct);
+        return Ok(response);
+    }
+
+    /// <summary>US3: Tra cứu danh sách đơn hàng đấu giá của Buyer (có phân trang và lọc trạng thái).</summary>
+    [HttpGet("me")]
+    [RequireRole("buyer", "admin", "staff")]
+    public async Task<IActionResult> ListBuyerOrders(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] SubOrderStatus? status = null,
+        CancellationToken ct = default)
+    {
+        if (!this.TryGetUserId(out var buyerId, out var authError))
+        {
+            return authError;
+        }
+
+        if (page < 1) page = 1;
+        if (pageSize < 1 || pageSize > 100) pageSize = 20;
+
+        var response = await _auctionOrderService.ListBuyerOrdersAsync(buyerId, page, pageSize, status, ct);
         return Ok(response);
     }
 

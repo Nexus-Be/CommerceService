@@ -487,6 +487,10 @@ public sealed class OrderService : IOrderService
             subOrderIds.Add(subOrderId);
             var subOrderNo = $"SUB-{DateTime.UtcNow:yyyyMMdd}-{subOrderId.ToString()[..6].ToUpperInvariant()}";
 
+            var effectiveFullAddress = !string.IsNullOrWhiteSpace(cachedQuote.Request.ShippingAddress.FullAddressText)
+                ? cachedQuote.Request.ShippingAddress.FullAddressText
+                : request.ShippingAddress;
+
             var addressSnapshot = new ShippingAddressSnapshot(
                 cachedQuote.Request.ShippingAddress.ReceiverName,
                 cachedQuote.Request.ContactPhone,
@@ -496,7 +500,7 @@ public sealed class OrderService : IOrderService
                 cachedQuote.Request.ShippingAddress.Province,
                 cachedQuote.Request.ShippingAddress.GhnDistrictId ?? 0,
                 cachedQuote.Request.ShippingAddress.GhnWardCode ?? "",
-                request.ShippingAddress
+                effectiveFullAddress
             );
 
             decimal shopItemsAmount = 0m;
@@ -808,7 +812,10 @@ public sealed class OrderService : IOrderService
         );
     }
 
-    public async Task<OrderResponse> GetOrderDetailAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default)
+    public Task<OrderResponse> GetOrderDetailAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default)
+        => GetOrderDetailAsync(currentUserId, orderId, false, ct);
+
+    public async Task<OrderResponse> GetOrderDetailAsync(Guid currentUserId, Guid orderId, bool isAdminOrStaff, CancellationToken ct = default)
     {
         // Passive Guard: Tự động hủy nếu đã quá hạn thanh toán
         await ExpireOrderIfOverdueAsync(orderId, ct);
@@ -820,7 +827,7 @@ public sealed class OrderService : IOrderService
             .FirstOrDefaultAsync(o => o.Id == orderId, ct)
             ?? throw new EntityNotFoundException("ORDER_NOT_FOUND", "Order", orderId);
 
-        if (order.BuyerId != currentUserId)
+        if (!isAdminOrStaff && order.BuyerId != currentUserId)
         {
             throw new CommerceDomainException("FORBIDDEN", "You do not have permission to access this order.", 403);
         }
@@ -916,7 +923,10 @@ public sealed class OrderService : IOrderService
         );
     }
 
-    public async Task<SubOrderDetailResponse> GetSubOrderDetailAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default)
+    public Task<SubOrderDetailResponse> GetSubOrderDetailAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default)
+        => GetSubOrderDetailAsync(currentUserId, subOrderId, false, ct);
+
+    public async Task<SubOrderDetailResponse> GetSubOrderDetailAsync(Guid currentUserId, Guid subOrderId, bool isAdminOrStaff, CancellationToken ct = default)
     {
         var targetSubOrder = await _dbContext.SubOrders
             .AsNoTracking()
@@ -932,7 +942,7 @@ public sealed class OrderService : IOrderService
             .FirstOrDefaultAsync(s => s.Id == subOrderId, ct)
             ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
 
-        if (so.BuyerId != currentUserId && so.SellerId != currentUserId)
+        if (!isAdminOrStaff && so.BuyerId != currentUserId && so.SellerId != currentUserId)
         {
             throw new CommerceDomainException("FORBIDDEN", "You do not have permission to access this sub-order.", 403);
         }
@@ -1110,6 +1120,24 @@ public sealed class OrderService : IOrderService
 
             var wasConfirmedOrPaid = so.PaidAt.HasValue || so.Status == SubOrderStatus.Paid || so.Status == SubOrderStatus.Confirmed;
             var wasPaid = so.PaidAt.HasValue || so.Status == SubOrderStatus.Paid;
+
+            // Hủy bưu tá / vận đơn giao hàng nếu đã tạo tracking
+            if (!string.IsNullOrWhiteSpace(so.TrackingCode) || !string.IsNullOrWhiteSpace(so.CarrierCode))
+            {
+                try
+                {
+                    await _fulfillmentClient.CancelShipmentAsync(
+                        so.Id,
+                        request.ReasonText ?? "Order cancelled prior to courier pickup.",
+                        ct);
+                    _logger.LogInformation("Cancelled carrier shipment for SubOrder '{SubOrderId}' during master order cancellation.", so.Id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to cancel shipment for SubOrder '{SubOrderId}' via FulfillmentClient during master order cancellation.", so.Id);
+                }
+            }
+
             so.Status = SubOrderStatus.Cancelled;
             so.CancelledAt = DateTimeOffset.UtcNow;
 
@@ -1988,7 +2016,10 @@ public sealed class OrderService : IOrderService
         return new PagedData<SubOrderSummaryResponse>(items, PaginationMetadata.Create(page, pageSize, totalCount));
     }
 
-    public async Task<ShipmentTrackingResponse> GetShipmentTrackingAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default)
+    public Task<ShipmentTrackingResponse> GetShipmentTrackingAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default)
+        => GetShipmentTrackingAsync(currentUserId, orderId, false, ct);
+
+    public async Task<ShipmentTrackingResponse> GetShipmentTrackingAsync(Guid currentUserId, Guid orderId, bool isAdminOrStaff, CancellationToken ct = default)
     {
         var order = await _dbContext.Orders
             .AsNoTracking()
@@ -1996,7 +2027,7 @@ public sealed class OrderService : IOrderService
             .FirstOrDefaultAsync(o => o.Id == orderId, ct)
             ?? throw new EntityNotFoundException("ORDER_NOT_FOUND", "Order", orderId);
 
-        if (order.BuyerId != currentUserId)
+        if (!isAdminOrStaff && order.BuyerId != currentUserId)
         {
             throw new CommerceDomainException("FORBIDDEN", "You do not have permission to track this shipment.", 403);
         }
@@ -2021,7 +2052,10 @@ public sealed class OrderService : IOrderService
         );
     }
 
-    public async Task<ShipmentTimelineResponse> GetShipmentTimelineAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default)
+    public Task<ShipmentTimelineResponse> GetShipmentTimelineAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default)
+        => GetShipmentTimelineAsync(currentUserId, subOrderId, false, ct);
+
+    public async Task<ShipmentTimelineResponse> GetShipmentTimelineAsync(Guid currentUserId, Guid subOrderId, bool isAdminOrStaff, CancellationToken ct = default)
     {
         var so = await _dbContext.SubOrders
             .AsNoTracking()
@@ -2030,7 +2064,7 @@ public sealed class OrderService : IOrderService
 
         if (so != null)
         {
-            if (so.BuyerId != currentUserId && so.SellerId != currentUserId)
+            if (!isAdminOrStaff && so.BuyerId != currentUserId && so.SellerId != currentUserId)
             {
                 throw new CommerceDomainException("FORBIDDEN", "You do not have permission to view this shipment timeline.", 403);
             }
@@ -2059,7 +2093,7 @@ public sealed class OrderService : IOrderService
 
         if (ao != null)
         {
-            if (ao.BuyerId != currentUserId && ao.SellerId != currentUserId)
+            if (!isAdminOrStaff && ao.BuyerId != currentUserId && ao.SellerId != currentUserId)
             {
                 throw new CommerceDomainException("FORBIDDEN", "You do not have permission to view this shipment timeline.", 403);
             }

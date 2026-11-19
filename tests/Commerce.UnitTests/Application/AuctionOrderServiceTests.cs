@@ -1514,4 +1514,199 @@ public class AuctionOrderServiceTests
         response.Items.Should().HaveCount(2);
         response.HasNextPage.Should().BeTrue();
     }
+
+    [Fact]
+    public async Task ListBuyerOrdersAsync_FiltersByBuyerIdAndAppliesPagination()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var otherBuyerId = Guid.NewGuid();
+
+        for (int i = 0; i < 3; i++)
+        {
+            _dbContext.AuctionOrders.Add(new AuctionOrder
+            {
+                Id = Guid.NewGuid(),
+                OrderNo = $"AO-BUYER-{i:D5}",
+                AuctionId = Guid.NewGuid(),
+                BuyerId = buyerId,
+                SellerId = Guid.NewGuid(),
+                WinningBidId = Guid.NewGuid(),
+                ProductId = Guid.NewGuid(),
+                ProductNameSnapshot = $"Auction Item {i}",
+                WinningAmount = 1500000m + (i * 100000m),
+                DepositAmount = 200000m,
+                RemainingAmount = 1300000m + (i * 100000m),
+                SellerReceiveAmount = 1425000m,
+                PlatformFeeAmount = 75000m,
+                OrderSource = AuctionOrderSource.Winner,
+                Status = SubOrderStatus.PendingPayment,
+                PaymentMethod = PaymentMethod.Wallet,
+                PaymentDeadlineAt = DateTimeOffset.UtcNow.AddHours(24)
+            });
+        }
+
+        // Add 1 order for another buyer
+        _dbContext.AuctionOrders.Add(new AuctionOrder
+        {
+            Id = Guid.NewGuid(),
+            OrderNo = "AO-OTHER-00001",
+            AuctionId = Guid.NewGuid(),
+            BuyerId = otherBuyerId,
+            SellerId = Guid.NewGuid(),
+            WinningBidId = Guid.NewGuid(),
+            ProductId = Guid.NewGuid(),
+            ProductNameSnapshot = "Other Item",
+            WinningAmount = 500000m,
+            DepositAmount = 50000m,
+            RemainingAmount = 450000m,
+            SellerReceiveAmount = 475000m,
+            PlatformFeeAmount = 25000m,
+            OrderSource = AuctionOrderSource.Winner,
+            Status = SubOrderStatus.PendingPayment,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddHours(24)
+        });
+
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var result = await _service.ListBuyerOrdersAsync(buyerId, pageIndex: 1, pageSize: 2);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Pagination.TotalCount.Should().Be(3);
+        result.Pagination.TotalPages.Should().Be(2);
+        result.Pagination.PageIndex.Should().Be(1);
+        result.Pagination.PageSize.Should().Be(2);
+        result.Pagination.HasNextPage.Should().BeTrue();
+        result.Pagination.HasPreviousPage.Should().BeFalse();
+        result.Items.Should().HaveCount(2);
+        result.Items.Should().OnlyContain(item => item.BuyerId == buyerId);
+        result.Items[0].DepositAmount.Should().Be(200000m);
+        result.Items[0].OrderSource.Should().Be("Winner");
+    }
+
+    [Fact]
+    public async Task ListBuyerOrdersAsync_WithStatusFilter_ReturnsOnlyMatchingStatus()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+
+        _dbContext.AuctionOrders.AddRange(
+            new AuctionOrder
+            {
+                Id = Guid.NewGuid(),
+                OrderNo = "AO-PENDING-1",
+                AuctionId = Guid.NewGuid(),
+                BuyerId = buyerId,
+                SellerId = Guid.NewGuid(),
+                WinningBidId = Guid.NewGuid(),
+                ProductId = Guid.NewGuid(),
+                ProductNameSnapshot = "Pending Item",
+                WinningAmount = 1000000m,
+                DepositAmount = 100000m,
+                RemainingAmount = 900000m,
+                SellerReceiveAmount = 950000m,
+                PlatformFeeAmount = 50000m,
+                OrderSource = AuctionOrderSource.Winner,
+                Status = SubOrderStatus.PendingPayment,
+                PaymentMethod = PaymentMethod.Wallet,
+                PaymentDeadlineAt = DateTimeOffset.UtcNow.AddHours(24)
+            },
+            new AuctionOrder
+            {
+                Id = Guid.NewGuid(),
+                OrderNo = "AO-CONFIRMED-1",
+                AuctionId = Guid.NewGuid(),
+                BuyerId = buyerId,
+                SellerId = Guid.NewGuid(),
+                WinningBidId = Guid.NewGuid(),
+                ProductId = Guid.NewGuid(),
+                ProductNameSnapshot = "Confirmed Item",
+                WinningAmount = 2000000m,
+                DepositAmount = 200000m,
+                RemainingAmount = 1800000m,
+                SellerReceiveAmount = 1900000m,
+                PlatformFeeAmount = 100000m,
+                OrderSource = AuctionOrderSource.Winner,
+                Status = SubOrderStatus.Confirmed,
+                PaymentMethod = PaymentMethod.Wallet,
+                PaymentDeadlineAt = DateTimeOffset.UtcNow.AddHours(24)
+            }
+        );
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var result = await _service.ListBuyerOrdersAsync(buyerId, pageIndex: 1, pageSize: 10, status: SubOrderStatus.PendingPayment);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Pagination.TotalCount.Should().Be(1);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Status.Should().Be("PendingPayment");
+        result.Items[0].OrderNo.Should().Be("AO-PENDING-1");
+    }
+
+    [Fact]
+    public async Task ListBuyerOrdersAsync_ExcludesSoftDeletedOrders()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+
+        _dbContext.AuctionOrders.AddRange(
+            new AuctionOrder
+            {
+                Id = Guid.NewGuid(),
+                OrderNo = "AO-ACTIVE-1",
+                AuctionId = Guid.NewGuid(),
+                BuyerId = buyerId,
+                SellerId = Guid.NewGuid(),
+                WinningBidId = Guid.NewGuid(),
+                ProductId = Guid.NewGuid(),
+                ProductNameSnapshot = "Active Item",
+                WinningAmount = 1000000m,
+                DepositAmount = 100000m,
+                RemainingAmount = 900000m,
+                SellerReceiveAmount = 950000m,
+                PlatformFeeAmount = 50000m,
+                OrderSource = AuctionOrderSource.Winner,
+                Status = SubOrderStatus.PendingPayment,
+                PaymentMethod = PaymentMethod.Wallet,
+                PaymentDeadlineAt = DateTimeOffset.UtcNow.AddHours(24),
+                IsDeleted = false
+            },
+            new AuctionOrder
+            {
+                Id = Guid.NewGuid(),
+                OrderNo = "AO-DELETED-1",
+                AuctionId = Guid.NewGuid(),
+                BuyerId = buyerId,
+                SellerId = Guid.NewGuid(),
+                WinningBidId = Guid.NewGuid(),
+                ProductId = Guid.NewGuid(),
+                ProductNameSnapshot = "Deleted Item",
+                WinningAmount = 2000000m,
+                DepositAmount = 200000m,
+                RemainingAmount = 1800000m,
+                SellerReceiveAmount = 1900000m,
+                PlatformFeeAmount = 100000m,
+                OrderSource = AuctionOrderSource.Winner,
+                Status = SubOrderStatus.PendingPayment,
+                PaymentMethod = PaymentMethod.Wallet,
+                PaymentDeadlineAt = DateTimeOffset.UtcNow.AddHours(24),
+                IsDeleted = true
+            }
+        );
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var result = await _service.ListBuyerOrdersAsync(buyerId, pageIndex: 1, pageSize: 10);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Pagination.TotalCount.Should().Be(1);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].OrderNo.Should().Be("AO-ACTIVE-1");
+    }
 }

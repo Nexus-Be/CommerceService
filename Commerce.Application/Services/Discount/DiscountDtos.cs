@@ -12,11 +12,33 @@ public sealed record ValidateVoucherRequest(
 
 public sealed record ValidateVoucherResponse(
     bool IsValid,
-    Guid DiscountId,
-    string Code,
-    DiscountScopeType ScopeType,
-    decimal EstimatedDiscountAmount
-);
+    Guid? DiscountId,
+    string? Code,
+    DiscountScopeType? ScopeType,
+    decimal EstimatedDiscountAmount,
+    string? IneligibleReason = null,
+    string? Message = null
+)
+{
+    public ValidateVoucherResponse(
+        bool isValid,
+        Guid discountId,
+        string code,
+        DiscountScopeType scopeType,
+        decimal estimatedDiscountAmount)
+        : this(isValid, discountId, code, scopeType, estimatedDiscountAmount, null, null)
+    {
+    }
+
+    public ValidateVoucherResponse(
+        bool isValid,
+        string ineligibleReason,
+        string message,
+        decimal estimatedDiscountAmount = 0m)
+        : this(isValid, null, null, null, estimatedDiscountAmount, ineligibleReason, message)
+    {
+    }
+}
 
 public sealed record RecommendVouchersRequest(
     [Required] IReadOnlyList<Guid> CartItemIds

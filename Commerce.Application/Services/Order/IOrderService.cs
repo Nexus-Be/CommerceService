@@ -16,12 +16,14 @@ public interface IOrderService
 
     /// <summary>R77: Tra cứu thông tin chi tiết đơn hàng cha.</summary>
     Task<OrderResponse> GetOrderDetailAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default);
+    Task<OrderResponse> GetOrderDetailAsync(Guid currentUserId, Guid orderId, bool isAdminOrStaff, CancellationToken ct = default);
 
     /// <summary>R78: Tra cứu lịch sử danh sách đơn hàng có phân trang.</summary>
     Task<PagedData<OrderSummaryResponse>> ListOrdersAsync(Guid currentUserId, int page, int pageSize, OrderStatus? status = null, CancellationToken ct = default);
 
     /// <summary>R79: Tra cứu thông tin chi tiết đơn hàng con của Shop (Single DTO).</summary>
     Task<SubOrderDetailResponse> GetSubOrderDetailAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default);
+    Task<SubOrderDetailResponse> GetSubOrderDetailAsync(Guid currentUserId, Guid subOrderId, bool isAdminOrStaff, CancellationToken ct = default);
 
     /// <summary>R80: Người mua hoặc hệ thống hủy đơn hàng.</summary>
     Task CancelOrderAsync(Guid currentUserId, Guid orderId, CancelOrderRequest request, CancellationToken ct = default);
@@ -46,9 +48,11 @@ public interface IOrderService
 
     /// <summary>R87: Theo dõi tiến độ giao hàng và thông tin vận chuyển.</summary>
     Task<ShipmentTrackingResponse> GetShipmentTrackingAsync(Guid currentUserId, Guid orderId, CancellationToken ct = default);
+    Task<ShipmentTrackingResponse> GetShipmentTrackingAsync(Guid currentUserId, Guid orderId, bool isAdminOrStaff, CancellationToken ct = default);
 
     /// <summary>Theo dõi dòng thời gian hành trình giao hàng chi tiết cho đơn con.</summary>
     Task<ShipmentTimelineResponse> GetShipmentTimelineAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default);
+    Task<ShipmentTimelineResponse> GetShipmentTimelineAsync(Guid currentUserId, Guid subOrderId, bool isAdminOrStaff, CancellationToken ct = default);
 
     /// <summary>Tạo lại vận đơn giao hàng khi đơn con đã xác nhận nhưng gặp sự cố mạng tạm thời với GHN.</summary>
     Task<RetryShipmentResponse> RetryCreateShipmentAsync(Guid sellerId, Guid subOrderId, CancellationToken ct = default);

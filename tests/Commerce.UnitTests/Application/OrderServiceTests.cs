@@ -433,6 +433,99 @@ public class OrderServiceTests
     }
 
     [Fact]
+    public async Task CreateOrderAsync_ShouldRetainAddressSnapshotFromCachedQuote_IgnoringFreeformRequestAddress()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var quoteId = Guid.NewGuid();
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+
+        var cachedQuote = new CachedQuote
+        {
+            QuoteId = quoteId,
+            BuyerId = buyerId,
+            Request = new CheckoutQuoteRequest(
+                new List<Guid> { Guid.NewGuid() },
+                new ShippingAddressInput("Receiver", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+                "0901234567"
+            ),
+            Response = new CheckoutQuoteResponse(
+                quoteId,
+                100000m,
+                500000m,
+                new List<ShopOrderQuote>
+                {
+                    new ShopOrderQuote(
+                        sellerId,
+                        "Shop A",
+                        new List<ShopQuoteItem>
+                        {
+                            new ShopQuoteItem(Guid.NewGuid(), Guid.NewGuid(), skuId, "Product 1", 1, 100000m, 100000m)
+                        },
+                        100000m,
+                        0m, 0m, 0m, 0m,
+                        0m,
+                        100000m
+                    )
+                },
+                new List<string>(),
+                null,
+                DateTimeOffset.UtcNow.AddMinutes(15)
+            ),
+            ExpiredAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+
+        var quoteJsonBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(cachedQuote));
+        _mockCache
+            .Setup(c => c.GetAsync($"checkout_quote:{quoteId}", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(quoteJsonBytes);
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuId, Guid.NewGuid(), sellerId, "Product 1", 100000m, true, 50));
+
+        _mockFulfillmentClient
+            .Setup(f => f.ReserveStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _mockFulfillmentClient
+            .Setup(f => f.CommitStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), 100000m, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletPaymentResult.Success("tx-success-123"));
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var request = new CreateOrderRequest(
+            quoteId,
+            PaymentMethod.Wallet,
+            "999 Dang Thuy Tram, Ha Noi (Should Not Overwrite)",
+            "0999999999"
+        );
+
+        // Act
+        var result = await service.CreateOrderAsync(buyerId, request, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        var subOrder = await dbContext.SubOrders.FirstOrDefaultAsync(s => s.OrderId == result.OrderId);
+        subOrder.Should().NotBeNull();
+        subOrder!.ShippingAddress.FullAddressText.Should().Be("123 Le Loi, Ben Nghe, Quan 1, TP.HCM");
+        subOrder.ShippingAddress.GhnDistrictId.Should().Be(1442);
+        subOrder.ShippingAddress.GhnWardCode.Should().Be("20101");
+    }
+
+    [Fact]
     public async Task GetOrderDetailAsync_ShouldCancelOrderLazily_WhenPaymentOverdue()
     {
         // Arrange
@@ -1162,5 +1255,217 @@ public class OrderServiceTests
         var updated = await dbContext.SubOrders.FirstAsync(s => s.Id == subOrderId);
         updated.TrackingCode.Should().Be("GHN-RETRY-SUCCESS-1");
         updated.ShipmentPendingCreation.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetOrderDetailAsync_WhenAdminOrStaff_ShouldAllowAccessToOtherUsersOrder()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var adminId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+
+        var order = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 500000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+        dbContext.Orders.Add(order);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        // Act
+        var result = await service.GetOrderDetailAsync(adminId, orderId, isAdminOrStaff: true);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.Id.Should().Be(orderId);
+        result.BuyerId.Should().Be(buyerId);
+    }
+
+    [Fact]
+    public async Task GetOrderDetailAsync_WhenNotOwnerAndNotAdminOrStaff_ShouldThrowForbidden()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var strangerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+
+        var order = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 500000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+        dbContext.Orders.Add(order);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        // Act
+        var act = () => service.GetOrderDetailAsync(strangerId, orderId, isAdminOrStaff: false);
+
+        // Assert
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Which.ErrorCode.Should().Be("FORBIDDEN");
+        ex.Which.StatusCode.Should().Be(403);
+    }
+
+    [Fact]
+    public async Task GetSubOrderDetailAsync_WhenAdminOrStaff_ShouldAllowAccess()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var adminId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+
+        var order = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 300000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+        var subOrder = new SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-TEST-00003",
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            Status = SubOrderStatus.Paid,
+            PaymentMethod = PaymentMethod.Wallet,
+            ShippingAddress = new ShippingAddressSnapshot("Buyer", "0901234567", "123 Street", "Ward", "District", "Province", 1, "1"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 300000m,
+            TotalAmount = 300000m,
+            SellerReceiveAmount = 285000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+        dbContext.Orders.Add(order);
+        dbContext.SubOrders.Add(subOrder);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        // Act
+        var result = await service.GetSubOrderDetailAsync(adminId, subOrderId, isAdminOrStaff: true);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.SubOrderId.Should().Be(subOrderId);
+        result.BuyerId.Should().Be(buyerId);
+    }
+
+    [Fact]
+    public async Task GetShipmentTrackingAsync_WhenAdminOrStaff_ShouldAllowAccess()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var adminId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+
+        var order = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 200000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+        dbContext.Orders.Add(order);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        // Act
+        var result = await service.GetShipmentTrackingAsync(adminId, orderId, isAdminOrStaff: true);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.OrderId.Should().Be(orderId);
+    }
+
+    [Fact]
+    public async Task GetShipmentTimelineAsync_WhenAdminOrStaff_ShouldAllowAccess()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var adminId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+
+        var subOrder = new SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-TEST-00005",
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            Status = SubOrderStatus.Shipping,
+            PaymentMethod = PaymentMethod.Wallet,
+            ShippingAddress = new ShippingAddressSnapshot("Buyer", "0901234567", "123 Street", "Ward", "District", "Province", 1, "1"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 200000m,
+            TotalAmount = 200000m,
+            SellerReceiveAmount = 190000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+        dbContext.SubOrders.Add(subOrder);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        // Act
+        var result = await service.GetShipmentTimelineAsync(adminId, subOrderId, isAdminOrStaff: true);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.SubOrderId.Should().Be(subOrderId);
     }
 }

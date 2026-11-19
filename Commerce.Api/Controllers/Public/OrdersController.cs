@@ -57,7 +57,8 @@ public class OrdersController : ControllerBase
             return authError;
         }
 
-        var order = await _orderService.GetOrderDetailAsync(currentUserId, orderId, ct);
+        var isAdminOrStaff = this.IsAdmin() || this.HasRole("staff");
+        var order = await _orderService.GetOrderDetailAsync(currentUserId, orderId, isAdminOrStaff, ct);
         return Ok(order);
     }
 
@@ -104,7 +105,8 @@ public class OrdersController : ControllerBase
             return authError;
         }
 
-        var subOrder = await _orderService.GetSubOrderDetailAsync(currentUserId, subOrderId, ct);
+        var isAdminOrStaff = this.IsAdmin() || this.HasRole("staff");
+        var subOrder = await _orderService.GetSubOrderDetailAsync(currentUserId, subOrderId, isAdminOrStaff, ct);
         return Ok(subOrder);
     }
 
@@ -173,7 +175,8 @@ public class OrdersController : ControllerBase
             return authError;
         }
 
-        var tracking = await _orderService.GetShipmentTrackingAsync(currentUserId, orderId, ct);
+        var isAdminOrStaff = this.IsAdmin() || this.HasRole("staff");
+        var tracking = await _orderService.GetShipmentTrackingAsync(currentUserId, orderId, isAdminOrStaff, ct);
         return Ok(tracking);
     }
 
@@ -321,7 +324,8 @@ public class OrdersController : ControllerBase
             return authError;
         }
 
-        var timeline = await _orderService.GetShipmentTimelineAsync(currentUserId, subOrderId, ct);
+        var isAdminOrStaff = this.IsAdmin() || this.HasRole("staff");
+        var timeline = await _orderService.GetShipmentTimelineAsync(currentUserId, subOrderId, isAdminOrStaff, ct);
         return Ok(timeline);
     }
 
