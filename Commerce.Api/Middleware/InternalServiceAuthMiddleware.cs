@@ -1,6 +1,8 @@
 namespace Commerce.Api.Middleware;
 
 using System;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -39,7 +41,7 @@ public sealed class InternalServiceAuthMiddleware
             if (string.IsNullOrWhiteSpace(expectedKey))
             {
                 _logger.LogError("Internal service key is not configured.");
-                context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
                 context.Response.ContentType = "application/json";
                 await context.Response.WriteAsync("{\"errorCode\":\"INTERNAL_CONFIGURATION_ERROR\",\"message\":\"Internal service authentication is not configured.\"}");
                 return;
@@ -54,7 +56,10 @@ public sealed class InternalServiceAuthMiddleware
 
             if (context.Request.Headers.TryGetValue(HeaderKeyInternalService, out var providedKey))
             {
-                if (!string.Equals(providedKey.ToString(), expectedKey, StringComparison.Ordinal))
+                var providedBytes = Encoding.UTF8.GetBytes(providedKey.ToString());
+                var expectedBytes = Encoding.UTF8.GetBytes(expectedKey);
+
+                if (!CryptographicOperations.FixedTimeEquals(providedBytes, expectedBytes))
                 {
                     _logger.LogWarning("Access denied to internal endpoint with invalid key: {Path}", context.Request.Path);
                     context.Response.StatusCode = StatusCodes.Status403Forbidden;

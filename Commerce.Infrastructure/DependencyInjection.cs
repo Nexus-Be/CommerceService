@@ -54,11 +54,7 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(walletBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
 
-            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
-                ?? configuration["INTERNAL_SERVICE_SECRET"]
-                ?? configuration["InternalSecurity:ServiceKey"]
-                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
-
+            var internalServiceKey = ResolveInternalServiceKey(configuration);
             if (!string.IsNullOrWhiteSpace(internalServiceKey))
             {
                 client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
@@ -77,11 +73,7 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(catalogBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
 
-            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
-                ?? configuration["INTERNAL_SERVICE_SECRET"]
-                ?? configuration["InternalSecurity:ServiceKey"]
-                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
-
+            var internalServiceKey = ResolveInternalServiceKey(configuration);
             if (!string.IsNullOrWhiteSpace(internalServiceKey))
             {
                 client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
@@ -100,11 +92,7 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(fulfillmentBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
 
-            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
-                ?? configuration["INTERNAL_SERVICE_SECRET"]
-                ?? configuration["InternalSecurity:ServiceKey"]
-                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
-
+            var internalServiceKey = ResolveInternalServiceKey(configuration);
             if (!string.IsNullOrWhiteSpace(internalServiceKey))
             {
                 client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
@@ -123,11 +111,7 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(userBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
 
-            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
-                ?? configuration["INTERNAL_SERVICE_SECRET"]
-                ?? configuration["InternalSecurity:ServiceKey"]
-                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
-
+            var internalServiceKey = ResolveInternalServiceKey(configuration);
             if (!string.IsNullOrWhiteSpace(internalServiceKey))
             {
                 client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
@@ -146,11 +130,7 @@ public static class DependencyInjection
             client.BaseAddress = new Uri(auctionBaseUrl.TrimEnd('/') + "/");
             client.Timeout = TimeSpan.FromSeconds(10);
 
-            var internalServiceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
-                ?? configuration["INTERNAL_SERVICE_SECRET"]
-                ?? configuration["InternalSecurity:ServiceKey"]
-                ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
-
+            var internalServiceKey = ResolveInternalServiceKey(configuration);
             if (!string.IsNullOrWhiteSpace(internalServiceKey))
             {
                 client.DefaultRequestHeaders.Add("X-Internal-Service-Key", internalServiceKey);
@@ -158,6 +138,15 @@ public static class DependencyInjection
         }).AddHttpMessageHandler<Services.Common.IdentityPropagationHandler>();
 
         return services;
+    }
+
+    private static string? ResolveInternalServiceKey(IConfiguration configuration)
+    {
+        var key = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
+            ?? configuration["INTERNAL_SERVICE_SECRET"]
+            ?? configuration["InternalSecurity:ServiceKey"];
+
+        return string.IsNullOrWhiteSpace(key) ? null : key;
     }
 
     private static string NormalizeConnectionString(string? connStr)

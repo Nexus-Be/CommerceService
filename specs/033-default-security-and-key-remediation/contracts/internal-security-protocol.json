@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "InternalSecurityProtocol",
+  "description": "Security contract for internal service-to-service communication and failure states in CommerceService.",
+  "type": "object",
+  "definitions": {
+    "InternalSecurityHeader": {
+      "type": "string",
+      "description": "Header name used to deliver the internal service secret key",
+      "const": "X-Internal-Service-Key"
+    },
+    "ConfigurationErrorResponse": {
+      "type": "object",
+      "properties": {
+        "errorCode": {
+          "type": "string",
+          "const": "INTERNAL_CONFIGURATION_ERROR"
+        },
+        "message": {
+          "type": "string",
+          "const": "Internal service authentication is not configured."
+        }
+      },
+      "required": ["errorCode", "message"]
+    },
+    "AuthenticationErrorResponse": {
+      "type": "object",
+      "properties": {
+        "errorCode": {
+          "type": "string",
+          "const": "INTERNAL_KEY_INVALID"
+        },
+        "message": {
+          "type": "string",
+          "const": "Internal service authentication is required."
+        }
+      },
+      "required": ["errorCode", "message"]
+    },
+    "ForbiddenErrorResponse": {
+      "type": "object",
+      "properties": {
+        "errorCode": {
+          "type": "string",
+          "const": "FORBIDDEN"
+        },
+        "message": {
+          "type": "string",
+          "const": "Access denied to internal service resource."
+        }
+      },
+      "required": ["errorCode", "message"]
+    }
+  }
+}

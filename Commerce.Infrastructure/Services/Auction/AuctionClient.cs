@@ -32,8 +32,7 @@ public sealed class AuctionClient : IAuctionClient
         _logger = logger;
         _serviceKey = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")
             ?? configuration["INTERNAL_SERVICE_SECRET"]
-            ?? configuration["InternalSecurity:ServiceKey"]
-            ?? "eaT0Ombups70WJzd85CBBpp8rAno55SxKn1qvYBGH9e";
+            ?? configuration["InternalSecurity:ServiceKey"];
     }
 
     public async Task<bool> NotifyPaymentStatusAsync(
