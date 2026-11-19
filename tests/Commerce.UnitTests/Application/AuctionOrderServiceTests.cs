@@ -87,6 +87,72 @@ public class AuctionOrderServiceTests
     }
 
     [Fact]
+    public async Task ReceiveSettlementAsync_WhenSkuIdProvided_CallsMarkVariantsOrderedAsync()
+    {
+        // Arrange
+        var skuId = Guid.NewGuid();
+        var request = new AuctionSettlementRequest(
+            AuctionId: Guid.NewGuid(),
+            WinnerId: Guid.NewGuid(),
+            SellerId: Guid.NewGuid(),
+            WinningBidId: Guid.NewGuid(),
+            ProductId: Guid.NewGuid(),
+            SkuId: skuId,
+            ProductName: "Vintage Watch",
+            ProductImageUrl: "https://example.com/watch.png",
+            SkuAttributes: "{}",
+            WinningAmount: 1000000m,
+            PaymentDeadlineAt: DateTimeOffset.UtcNow.AddHours(24)
+        );
+
+        _catalogClientMock
+            .Setup(c => c.MarkVariantsOrderedAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // Act
+        var result = await _service.ReceiveSettlementAsync(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.IsNewlyCreated.Should().BeTrue();
+        _catalogClientMock.Verify(c => c.MarkVariantsOrderedAsync(
+            It.Is<IEnumerable<Guid>>(ids => ids.Contains(skuId)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_WhenMarkVariantsOrderedFails_StillCreatesAuctionOrder()
+    {
+        // Arrange
+        var skuId = Guid.NewGuid();
+        var request = new AuctionSettlementRequest(
+            AuctionId: Guid.NewGuid(),
+            WinnerId: Guid.NewGuid(),
+            SellerId: Guid.NewGuid(),
+            WinningBidId: Guid.NewGuid(),
+            ProductId: Guid.NewGuid(),
+            SkuId: skuId,
+            ProductName: "Vintage Watch",
+            ProductImageUrl: "https://example.com/watch.png",
+            SkuAttributes: "{}",
+            WinningAmount: 1000000m,
+            PaymentDeadlineAt: DateTimeOffset.UtcNow.AddHours(24)
+        );
+
+        _catalogClientMock
+            .Setup(c => c.MarkVariantsOrderedAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new System.Net.Http.HttpRequestException("Catalog service unavailable"));
+
+        // Act
+        var result = await _service.ReceiveSettlementAsync(request);
+
+        // Assert: Order creation succeeds despite Catalog error
+        result.Should().NotBeNull();
+        result.IsNewlyCreated.Should().BeTrue();
+        result.Response.OrderId.Should().NotBeEmpty();
+    }
+
+    [Fact]
     public async Task ReceiveSettlementAsync_DuplicateAuctionIdAndWinnerId_ReturnsExistingOrderWithoutDuplicates()
     {
         // Arrange

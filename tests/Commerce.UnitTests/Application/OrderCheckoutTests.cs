@@ -627,7 +627,7 @@ public class OrderCheckoutTests : IDisposable
                 r.GhnDistrictId == 1442 &&
                 r.GhnWardCode == "20101" &&
                 r.Items.Count == 1 &&
-                r.Items[0].WeightGrams == 600), // 3 * 200g
+                r.Items[0].WeightGrams == 200), // Unit chargeable weight is 200g (Fulfillment multiplies by Quantity 3 to get 600g total)
             It.IsAny<CancellationToken>()), Times.Once);
     }
 

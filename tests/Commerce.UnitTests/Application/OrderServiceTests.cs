@@ -1468,4 +1468,264 @@ public class OrderServiceTests
         result.Should().NotBeNull();
         result.SubOrderId.Should().Be(subOrderId);
     }
+
+    [Fact]
+    public async Task QuoteCheckoutAsync_ShouldCalculateGhnVolumetricWeight_AndPassToFulfillmentClient()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+
+        var cart = new Cart
+        {
+            Id = Guid.NewGuid(),
+            BuyerId = buyerId,
+            Status = CartStatus.Active,
+            Items = new List<CartItem>
+            {
+                new CartItem
+                {
+                    Id = Guid.NewGuid(),
+                    CartId = Guid.NewGuid(),
+                    ProductId = productId,
+                    SkuId = skuId,
+                    SellerId = sellerId,
+                    ProductNameSnapshot = "Helmet HJC",
+                    UnitPriceSnapshot = 500000m,
+                    Quantity = 2
+                }
+            }
+        };
+        dbContext.Carts.Add(cart);
+        await dbContext.SaveChangesAsync();
+
+        // Catalog returns packaging dimensions: 30x25x20 cm, 300g -> Volumetric = 30*25*20/5 = 3000g > 300g
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, CatalogProductCheckResult>
+            {
+                [skuId] = new CatalogProductCheckResult(skuId, productId, sellerId, "Helmet HJC", 500000m, true, 100, null, 300, "Regular", 30, 25, 20)
+            });
+
+        ShopShippingQuoteRequest? capturedQuoteRequest = null;
+        _mockFulfillmentClient
+            .Setup(f => f.CalculateShopShippingFeeAsync(It.IsAny<ShopShippingQuoteRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ShopShippingQuoteRequest, CancellationToken>((req, _) => capturedQuoteRequest = req)
+            .ReturnsAsync(45000m);
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var request = new CheckoutQuoteRequest(
+            new List<Guid> { cart.Items.First().Id },
+            new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+            "0901234567"
+        );
+
+        // Act
+        var result = await service.QuoteCheckoutAsync(buyerId, request, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        capturedQuoteRequest.Should().NotBeNull();
+        capturedQuoteRequest!.Items.Should().HaveCount(1);
+        capturedQuoteRequest.Items[0].WeightGrams.Should().Be(3000); // 3000g per unit
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldCallMarkVariantsOrderedAsync_WhenOrderCreated()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var quoteId = Guid.NewGuid();
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+
+        var cachedQuote = new CachedQuote
+        {
+            QuoteId = quoteId,
+            BuyerId = buyerId,
+            Request = new CheckoutQuoteRequest(
+                new List<Guid> { Guid.NewGuid() },
+                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                "0901234567"
+            ),
+            Response = new CheckoutQuoteResponse(
+                quoteId,
+                100000m,
+                500000m,
+                new List<ShopOrderQuote>
+                {
+                    new ShopOrderQuote(
+                        sellerId,
+                        "Shop A",
+                        new List<ShopQuoteItem>
+                        {
+                            new ShopQuoteItem(Guid.NewGuid(), Guid.NewGuid(), skuId, "Product 1", 1, 100000m, 100000m)
+                        },
+                        100000m,
+                        0m, 0m, 0m, 0m,
+                        0m,
+                        100000m
+                    )
+                },
+                new List<string>(),
+                null,
+                DateTimeOffset.UtcNow.AddMinutes(15)
+            ),
+            ExpiredAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+
+        var quoteJsonBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(cachedQuote));
+        _mockCache
+            .Setup(c => c.GetAsync($"checkout_quote:{quoteId}", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(quoteJsonBytes);
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuId, Guid.NewGuid(), sellerId, "Product 1", 100000m, true, 50));
+
+        _mockFulfillmentClient
+            .Setup(f => f.ReserveStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletPaymentResult.Success("tx-success-123"));
+
+        _mockFulfillmentClient
+            .Setup(f => f.CommitStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _mockCatalogClient
+            .Setup(c => c.MarkVariantsOrderedAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var request = new CreateOrderRequest(
+            quoteId,
+            PaymentMethod.Wallet,
+            "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
+            "0901234567"
+        );
+
+        // Act
+        var result = await service.CreateOrderAsync(buyerId, request, CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        _mockCatalogClient.Verify(c => c.MarkVariantsOrderedAsync(
+            It.Is<IEnumerable<Guid>>(ids => ids.Contains(skuId)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldSucceed_EvenWhenMarkVariantsOrderedAsyncFails()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var quoteId = Guid.NewGuid();
+        var buyerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+
+        var cachedQuote = new CachedQuote
+        {
+            QuoteId = quoteId,
+            BuyerId = buyerId,
+            Request = new CheckoutQuoteRequest(
+                new List<Guid> { Guid.NewGuid() },
+                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                "0901234567"
+            ),
+            Response = new CheckoutQuoteResponse(
+                quoteId,
+                100000m,
+                500000m,
+                new List<ShopOrderQuote>
+                {
+                    new ShopOrderQuote(
+                        sellerId,
+                        "Shop A",
+                        new List<ShopQuoteItem>
+                        {
+                            new ShopQuoteItem(Guid.NewGuid(), Guid.NewGuid(), skuId, "Product 1", 1, 100000m, 100000m)
+                        },
+                        100000m,
+                        0m, 0m, 0m, 0m,
+                        0m,
+                        100000m
+                    )
+                },
+                new List<string>(),
+                null,
+                DateTimeOffset.UtcNow.AddMinutes(15)
+            ),
+            ExpiredAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+
+        var quoteJsonBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(cachedQuote));
+        _mockCache
+            .Setup(c => c.GetAsync($"checkout_quote:{quoteId}", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(quoteJsonBytes);
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuDetailsAsync(skuId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CatalogProductCheckResult(skuId, Guid.NewGuid(), sellerId, "Product 1", 100000m, true, 50));
+
+        _mockFulfillmentClient
+            .Setup(f => f.ReserveStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletPaymentResult.Success("tx-success-123"));
+
+        _mockFulfillmentClient
+            .Setup(f => f.CommitStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // Catalog mark-ordered throws exception
+        _mockCatalogClient
+            .Setup(c => c.MarkVariantsOrderedAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new System.Net.Http.HttpRequestException("Catalog service unavailable"));
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var request = new CreateOrderRequest(
+            quoteId,
+            PaymentMethod.Wallet,
+            "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
+            "0901234567"
+        );
+
+        // Act
+        var result = await service.CreateOrderAsync(buyerId, request, CancellationToken.None);
+
+        // Assert: Order creation succeeds despite Catalog error
+        result.Should().NotBeNull();
+        result.OrderId.Should().NotBeEmpty();
+    }
 }

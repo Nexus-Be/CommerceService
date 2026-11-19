@@ -15,7 +15,10 @@ public sealed record CatalogProductCheckResult(
     int StockQuantity = 100,
     string? ErrorReason = null,
     int WeightGrams = 0,
-    string? SaleType = "Regular");
+    string? SaleType = "Regular",
+    int LengthCm = 0,
+    int WidthCm = 0,
+    int HeightCm = 0);
 
 public sealed record CatalogVariantSwitchResult(
     bool IsValid,
@@ -25,7 +28,10 @@ public sealed record CatalogVariantSwitchResult(
     string NewSkuName,
     decimal NewUnitPrice,
     bool IsPurchasable,
-    int WeightGrams = 200);
+    int WeightGrams = 200,
+    int LengthCm = 0,
+    int WidthCm = 0,
+    int HeightCm = 0);
 
 public sealed record CatalogPurchaseSyncRequest(
     Guid BuyerId,
@@ -57,5 +63,9 @@ public interface ICatalogClient
         Guid orderId,
         IEnumerable<Guid> productIds,
         DateTimeOffset? completedAt = null,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> MarkVariantsOrderedAsync(
+        IEnumerable<Guid> variantIds,
         CancellationToken cancellationToken = default);
 }

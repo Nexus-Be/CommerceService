@@ -180,6 +180,20 @@ public class AuctionOrderService : IAuctionOrderService
         _logger.LogInformation("[AuctionOrder] Created AuctionOrder '{OrderId}' ({OrderNo}) for Auction '{AuctionId}', Winner '{WinnerId}'.",
             orderId, orderNo, request.AuctionId, request.WinnerId);
 
+        // Đồng bộ cờ HasOrder = true sang Catalog Service nếu có SkuId (INT-09 / 034)
+        if (_catalogClient != null && request.SkuId.HasValue && request.SkuId.Value != Guid.Empty)
+        {
+            try
+            {
+                await _catalogClient.MarkVariantsOrderedAsync(new[] { request.SkuId.Value }, cancellationToken);
+            }
+            catch (Exception markEx)
+            {
+                _logger.LogWarning(markEx, "[AuctionOrder] Failed to mark variant '{SkuId}' as ordered for AuctionOrder '{OrderId}'.",
+                    request.SkuId.Value, orderId);
+            }
+        }
+
         return new AuctionSettlementResult(
             new AuctionSettlementResponse(
                 auctionOrder.Id,

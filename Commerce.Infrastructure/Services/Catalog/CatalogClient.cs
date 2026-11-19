@@ -84,7 +84,10 @@ public sealed class CatalogClient : ICatalogClient
                                 IsPurchasable: isPurchasable,
                                 StockQuantity: 100,
                                 WeightGrams: item.WeightGrams ?? 0,
-                                SaleType: item.SaleType ?? "Regular");
+                                SaleType: item.SaleType ?? "Regular",
+                                LengthCm: item.LengthCm ?? 0,
+                                WidthCm: item.WidthCm ?? 0,
+                                HeightCm: item.HeightCm ?? 0);
                         }
                     }
                     continue;
@@ -120,7 +123,7 @@ public sealed class CatalogClient : ICatalogClient
                 newSkuId
             };
 
-            var response = await _httpClient.PostAsJsonAsync("api/v1/internal/catalog/skus/validate-variant-switch", payload, JsonOptions, cancellationToken);
+            var response = await _httpClient.PostAsJsonAsync("api/v1/internal/variants/validate-switch", payload, JsonOptions, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {
@@ -135,7 +138,10 @@ public sealed class CatalogClient : ICatalogClient
                         NewSkuName: data.NewSkuName ?? "New Variant",
                         NewUnitPrice: data.NewUnitPrice,
                         IsPurchasable: data.IsPurchasable,
-                        WeightGrams: data.WeightGrams > 0 ? data.WeightGrams : 200);
+                        WeightGrams: data.WeightGrams > 0 ? data.WeightGrams : 200,
+                        LengthCm: data.LengthCm,
+                        WidthCm: data.WidthCm,
+                        HeightCm: data.HeightCm);
                 }
 
                 throw new CommerceDomainException("CATALOG_SERVICE_UNAVAILABLE", "Product catalog service returned invalid response payload.", 503);
@@ -258,6 +264,55 @@ public sealed class CatalogClient : ICatalogClient
         return successCount;
     }
 
+    public async Task<bool> MarkVariantsOrderedAsync(
+        IEnumerable<Guid> variantIds,
+        CancellationToken cancellationToken = default)
+    {
+        var distinctVariantIds = variantIds
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+
+        if (distinctVariantIds.Count == 0)
+        {
+            return true;
+        }
+
+        try
+        {
+            var payload = new
+            {
+                variantIds = distinctVariantIds
+            };
+
+            var response = await _httpClient.PostAsJsonAsync("api/v1/internal/variants/mark-ordered", payload, JsonOptions, cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                var data = await response.Content.ReadFromJsonAsync<CatalogMarkOrderedResponse>(JsonOptions, cancellationToken);
+                _logger.LogInformation("[REST Catalog Client] Successfully marked {Count} variants as ordered (Catalog updated {UpdatedCount}).",
+                    distinctVariantIds.Count, data?.UpdatedCount ?? 0);
+                return true;
+            }
+
+            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("[REST Catalog Client] Mark variants ordered rejected by Catalog Service ({StatusCode}): {Body}",
+                response.StatusCode, errorBody);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[REST Catalog Client] Connection error marking {Count} variants as ordered.",
+                distinctVariantIds.Count);
+            return false;
+        }
+    }
+
+    private sealed class CatalogMarkOrderedResponse
+    {
+        public int UpdatedCount { get; set; }
+        public List<Guid>? UpdatedVariantIds { get; set; }
+    }
+
     private sealed class CatalogBatchVariantResponse
     {
         public List<CatalogVariantRawItem>? Items { get; set; }
@@ -280,6 +335,9 @@ public sealed class CatalogClient : ICatalogClient
         public string? PrimaryImageUrl { get; set; }
         public bool IsPurchasable { get; set; }
         public int? WeightGrams { get; set; }
+        public int? LengthCm { get; set; }
+        public int? WidthCm { get; set; }
+        public int? HeightCm { get; set; }
     }
 
     private sealed class CatalogSwitchRawResponse
@@ -292,5 +350,8 @@ public sealed class CatalogClient : ICatalogClient
         public decimal NewUnitPrice { get; set; }
         public bool IsPurchasable { get; set; }
         public int WeightGrams { get; set; }
+        public int LengthCm { get; set; }
+        public int WidthCm { get; set; }
+        public int HeightCm { get; set; }
     }
 }

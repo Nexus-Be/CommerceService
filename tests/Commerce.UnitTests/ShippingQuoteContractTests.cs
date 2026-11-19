@@ -62,6 +62,21 @@ public sealed class ShippingQuoteContractTests
         Assert.Equal("SHIPPING_QUOTE_FAILED", ex.ErrorCode);
     }
 
+    [Theory]
+    [InlineData(300, 30, 25, 20, 3000)] // Volumetric (30*25*20/5 = 3000g) > Actual (300g)
+    [InlineData(1500, 10, 10, 5, 1500)]  // Actual (1500g) > Volumetric (10*10*5/5 = 100g)
+    [InlineData(750, 0, 0, 0, 750)]      // Zero dimensions -> fallback to actual weight
+    [InlineData(0, 0, 0, 0, 200)]        // Zero dimensions and zero weight -> safe fallback 200g
+    [InlineData(0, 35, 28, 26, 5096)]    // Actual 0g, Volumetric = ceil(35*28*26/5) = 5096g
+    public void CalculateGhnChargeableWeight_ShouldComputeAccurateVolumetricWeight(
+        int weightGrams, int lengthCm, int widthCm, int heightCm, int expectedChargeableWeight)
+    {
+        var chargeable = Commerce.Application.Services.Order.OrderService.CalculateGhnChargeableWeight(
+            weightGrams, lengthCm, widthCm, heightCm);
+
+        Assert.Equal(expectedChargeableWeight, chargeable);
+    }
+
     private static FulfillmentClient CreateClient(HttpMessageHandler handler) =>
         new(new HttpClient(handler) { BaseAddress = new Uri("http://fulfillment.test/") }, NullLogger<FulfillmentClient>.Instance);
 

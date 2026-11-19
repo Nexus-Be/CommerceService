@@ -178,6 +178,24 @@ public sealed class OrderService : IOrderService
         return (defaultResolved, defaultPhone);
     }
 
+    /// <summary>
+    /// Calculates chargeable weight according to the official Giao Hàng Nhanh (GHN) carrier formula:
+    /// VolumetricWeight (g) = (LengthCm * WidthCm * HeightCm / 5000) * 1000 = (LengthCm * WidthCm * HeightCm) / 5
+    /// ChargeableWeight = Max(ActualWeightGrams, VolumetricWeight)
+    /// </summary>
+    public static int CalculateGhnChargeableWeight(int weightGrams, int lengthCm, int widthCm, int heightCm)
+    {
+        int actualWeight = Math.Max(0, weightGrams);
+        int volumetricWeight = 0;
+        if (lengthCm > 0 && widthCm > 0 && heightCm > 0)
+        {
+            volumetricWeight = (int)Math.Ceiling((double)(lengthCm * widthCm * heightCm) / 5.0);
+        }
+
+        int chargeableWeight = Math.Max(actualWeight, volumetricWeight);
+        return chargeableWeight > 0 ? chargeableWeight : 200;
+    }
+
     public async Task<CheckoutQuoteResponse> QuoteCheckoutAsync(Guid buyerId, CheckoutQuoteRequest request, CancellationToken ct = default)
     {
         if (request.CartItemIds == null || request.CartItemIds.Count == 0)
@@ -205,6 +223,22 @@ public sealed class OrderService : IOrderService
         var groupedBySeller = selectedItems.GroupBy(i => i.SellerId);
         var platformMarkupPercent = await GetActivePlatformMarkupPercentAsync(ct);
 
+        // Batch-fetch SKU packaging dimensions từ Catalog Service để tính cước thể tích chuẩn GHN (034)
+        var allSkuIds = selectedItems.Select(i => i.SkuId).Distinct().ToList();
+        IReadOnlyDictionary<Guid, CatalogProductCheckResult>? batchSkuDetails = null;
+        if (_catalogClient != null && allSkuIds.Count > 0)
+        {
+            try
+            {
+                batchSkuDetails = await _catalogClient.GetSkuBatchDetailsAsync(allSkuIds, ct);
+            }
+            catch (Exception catEx)
+            {
+                _logger.LogWarning(catEx, "Failed to retrieve real-time variant dimensions from Catalog Service for checkout quote. Applying fallback weights.");
+            }
+        }
+        batchSkuDetails ??= new Dictionary<Guid, CatalogProductCheckResult>();
+
         var sellerItemsAmounts = new Dictionary<Guid, decimal>();
         var sellerShippingFees = new Dictionary<Guid, decimal>();
         var preQuotes = new List<(Guid SellerId, List<ShopQuoteItem> ShopItems, decimal ItemsAmount, decimal ShippingFee)>();
@@ -224,13 +258,17 @@ public sealed class OrderService : IOrderService
 
             decimal itemsAmount = shopItems.Sum(i => i.LineTotal);
 
-            // Tính cước GHN động theo từng Shop qua Fulfillment Service (CHK-01 / T027)
+            // Tính cước GHN động theo từng Shop qua Fulfillment Service chuẩn hóa theo kích thước thật (CHK-01 / T027 / 034)
             decimal shippingFeeAmount = 30000m;
-            var quoteItems = shopItems.Select(i => new ShippingQuoteItem(
-                i.SkuId,
-                i.Quantity,
-                Math.Max(100, i.Quantity * 200)
-            )).ToList();
+            var quoteItems = shopItems.Select(i =>
+            {
+                int unitChargeableWeight = 200;
+                if (batchSkuDetails != null && batchSkuDetails.TryGetValue(i.SkuId, out var skuInfo) && skuInfo != null)
+                {
+                    unitChargeableWeight = CalculateGhnChargeableWeight(skuInfo.WeightGrams, skuInfo.LengthCm, skuInfo.WidthCm, skuInfo.HeightCm);
+                }
+                return new ShippingQuoteItem(i.SkuId, i.Quantity, unitChargeableWeight);
+            }).ToList();
 
             var ghnDistrictId = resolvedAddress.GhnDistrictId!.Value;
             var ghnWardCode = resolvedAddress.GhnWardCode!;
@@ -995,6 +1033,20 @@ public sealed class OrderService : IOrderService
                 catch (Exception cvEx)
                 {
                     _logger.LogWarning(cvEx, "Failed to commit voucher redemptions for Order '{OrderId}'.", orderId);
+                }
+            }
+
+            // Đồng bộ cờ HasOrder = true sang Catalog Service để khóa quyền xóa SKU của Seller (INT-09 / 034)
+            if (_catalogClient != null && allQuoteItems.Count > 0)
+            {
+                try
+                {
+                    var orderedSkuIds = allQuoteItems.Select(i => i.SkuId);
+                    await _catalogClient.MarkVariantsOrderedAsync(orderedSkuIds, ct);
+                }
+                catch (Exception markEx)
+                {
+                    _logger.LogWarning(markEx, "Failed to mark variants as ordered in Catalog Service for Order '{OrderId}'.", orderId);
                 }
             }
         }

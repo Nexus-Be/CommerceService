@@ -438,4 +438,190 @@ public class CatalogClientTests
         successCount.Should().Be(2);
         callCount.Should().Be(2);
     }
+
+    [Fact]
+    public async Task GetSkuBatchDetailsAsync_ShouldParsePackagingDimensionsAndWeight()
+    {
+        // Arrange
+        var skuId = Guid.NewGuid();
+        var json = JsonSerializer.Serialize(new
+        {
+            items = new[]
+            {
+                new
+                {
+                    variantId = skuId,
+                    productId = Guid.NewGuid(),
+                    sellerId = Guid.NewGuid(),
+                    productName = "Helmet HJC",
+                    price = (decimal?)8500000m,
+                    isPurchasable = true,
+                    weightGrams = 1350,
+                    lengthCm = 35,
+                    widthCm = 28,
+                    heightCm = 26
+                }
+            },
+            notFoundIds = Array.Empty<Guid>()
+        });
+
+        var (client, _) = CreateClientWithMockHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+        });
+
+        // Act
+        var result = await client.GetSkuBatchDetailsAsync(new[] { skuId });
+
+        // Assert
+        result.Should().ContainKey(skuId);
+        var item = result[skuId];
+        item.WeightGrams.Should().Be(1350);
+        item.LengthCm.Should().Be(35);
+        item.WidthCm.Should().Be(28);
+        item.HeightCm.Should().Be(26);
+    }
+
+    [Fact]
+    public async Task MarkVariantsOrderedAsync_ShouldReturnTrue_WhenCatalogReturns200()
+    {
+        // Arrange
+        var variant1 = Guid.NewGuid();
+        var variant2 = Guid.NewGuid();
+        HttpRequestMessage? capturedRequest = null;
+
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+            {
+                capturedRequest = req;
+            })
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"updatedCount":2,"updatedVariantIds":["00000000-0000-0000-0000-000000000000"]}""", System.Text.Encoding.UTF8, "application/json")
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object) { BaseAddress = new Uri("http://localhost:8002/") };
+        var client = new CatalogClient(httpClient, NullLogger<CatalogClient>.Instance);
+
+        // Act
+        var result = await client.MarkVariantsOrderedAsync(new[] { variant1, variant2, variant1 });
+
+        // Assert
+        result.Should().BeTrue();
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.RequestUri!.PathAndQuery.Should().Be("/api/v1/internal/variants/mark-ordered");
+        var capturedBody = await capturedRequest.Content!.ReadAsStringAsync();
+        capturedBody.Should().Contain(variant1.ToString());
+        capturedBody.Should().Contain(variant2.ToString());
+    }
+
+    [Fact]
+    public async Task MarkVariantsOrderedAsync_ShouldReturnTrueImmediately_WhenEmptyList()
+    {
+        // Arrange
+        var mockHandler = new Mock<HttpMessageHandler>();
+        var httpClient = new HttpClient(mockHandler.Object) { BaseAddress = new Uri("http://localhost:8002/") };
+        var client = new CatalogClient(httpClient, NullLogger<CatalogClient>.Instance);
+
+        // Act
+        var result = await client.MarkVariantsOrderedAsync(Array.Empty<Guid>());
+
+        // Assert
+        result.Should().BeTrue();
+        mockHandler.Protected().Verify("SendAsync", Times.Never(), ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task MarkVariantsOrderedAsync_ShouldReturnFalse_WhenCatalogReturns500()
+    {
+        // Arrange
+        var (client, _) = CreateClientWithMockHandler(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("Server Error", System.Text.Encoding.UTF8, "text/plain")
+        });
+
+        // Act
+        var result = await client.MarkVariantsOrderedAsync(new[] { Guid.NewGuid() });
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task MarkVariantsOrderedAsync_ShouldReturnFalse_WhenNetworkExceptionThrown()
+    {
+        // Arrange
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new HttpRequestException("Connection timeout"));
+
+        var httpClient = new HttpClient(mockHandler.Object) { BaseAddress = new Uri("http://localhost:8002/") };
+        var client = new CatalogClient(httpClient, NullLogger<CatalogClient>.Instance);
+
+        // Act
+        var result = await client.MarkVariantsOrderedAsync(new[] { Guid.NewGuid() });
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ValidateVariantSwitchAsync_ShouldCallStandardizedRoute_AndParsePackagingDimensions()
+    {
+        // Arrange
+        var currentSku = Guid.NewGuid();
+        var newSku = Guid.NewGuid();
+        string? capturedPath = null;
+
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((req, _) =>
+            {
+                capturedPath = req.RequestUri!.PathAndQuery;
+            })
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    isValid = true,
+                    productId = Guid.NewGuid(),
+                    sellerId = Guid.NewGuid(),
+                    newSkuId = newSku,
+                    newSkuName = "Red Helmet - XL",
+                    newUnitPrice = 8500000m,
+                    isPurchasable = true,
+                    weightGrams = 1350,
+                    lengthCm = 35,
+                    widthCm = 28,
+                    heightCm = 26
+                }), System.Text.Encoding.UTF8, "application/json")
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object) { BaseAddress = new Uri("http://localhost:8002/") };
+        var client = new CatalogClient(httpClient, NullLogger<CatalogClient>.Instance);
+
+        // Act
+        var result = await client.ValidateVariantSwitchAsync(currentSku, newSku);
+
+        // Assert
+        capturedPath.Should().Be("/api/v1/internal/variants/validate-switch");
+        result.IsValid.Should().BeTrue();
+        result.WeightGrams.Should().Be(1350);
+        result.LengthCm.Should().Be(35);
+        result.WidthCm.Should().Be(28);
+        result.HeightCm.Should().Be(26);
+    }
 }
