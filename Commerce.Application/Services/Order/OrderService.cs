@@ -95,6 +95,89 @@ public sealed class OrderService : IOrderService
         return 0.0m;
     }
 
+    private async Task<(ShippingAddressInput Address, string ContactPhone)> ResolveShippingAddressAsync(
+        Guid buyerId,
+        Guid? addressId,
+        ShippingAddressInput? rawAddress,
+        string? contactPhone,
+        CancellationToken ct)
+    {
+        if (addressId.HasValue && addressId.Value != Guid.Empty)
+        {
+            var address = await _userClient.GetBuyerAddressAsync(buyerId, addressId.Value, ct);
+            if (address == null)
+            {
+                throw new CommerceDomainException("ADDRESS_NOT_FOUND", "Shipping address not found in address book.", 404);
+            }
+
+            if (address.GhnDistrictId <= 0 || string.IsNullOrWhiteSpace(address.GhnWardCode))
+            {
+                throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
+            }
+
+            var phone = !string.IsNullOrWhiteSpace(contactPhone) ? contactPhone : address.Phone;
+            var resolved = new ShippingAddressInput(
+                ReceiverName: address.RecipientName,
+                ContactPhone: phone,
+                Street: address.Street,
+                Ward: address.Ward,
+                District: address.District,
+                Province: address.Province,
+                GhnDistrictId: address.GhnDistrictId,
+                GhnWardCode: address.GhnWardCode
+            );
+            return (resolved, phone);
+        }
+
+        if (rawAddress != null)
+        {
+            if (string.IsNullOrWhiteSpace(rawAddress.ReceiverName) ||
+                string.IsNullOrWhiteSpace(rawAddress.Street) ||
+                string.IsNullOrWhiteSpace(rawAddress.Province) ||
+                string.IsNullOrWhiteSpace(rawAddress.Ward))
+            {
+                throw new CommerceDomainException("VAL_INVALID_INPUT", "Shipping address fields cannot be empty.", 400);
+            }
+
+            var phone = !string.IsNullOrWhiteSpace(contactPhone) ? contactPhone : rawAddress.ContactPhone;
+            if (string.IsNullOrWhiteSpace(phone))
+            {
+                throw new CommerceDomainException("VAL_INVALID_INPUT", "Contact phone cannot be empty.", 400);
+            }
+
+            if (!rawAddress.GhnDistrictId.HasValue || rawAddress.GhnDistrictId.Value <= 0 || string.IsNullOrWhiteSpace(rawAddress.GhnWardCode))
+            {
+                throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
+            }
+
+            return (rawAddress with { ContactPhone = phone }, phone);
+        }
+
+        var defaultAddr = await _userClient.GetBuyerDefaultAddressAsync(buyerId, ct);
+        if (defaultAddr == null)
+        {
+            throw new CommerceDomainException("ADDRESS_REQUIRED", "No shipping address provided and buyer has no default address.", 400);
+        }
+
+        if (defaultAddr.GhnDistrictId <= 0 || string.IsNullOrWhiteSpace(defaultAddr.GhnWardCode))
+        {
+            throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
+        }
+
+        var defaultPhone = !string.IsNullOrWhiteSpace(contactPhone) ? contactPhone : defaultAddr.Phone;
+        var defaultResolved = new ShippingAddressInput(
+            ReceiverName: defaultAddr.RecipientName,
+            ContactPhone: defaultPhone,
+            Street: defaultAddr.Street,
+            Ward: defaultAddr.Ward,
+            District: defaultAddr.District,
+            Province: defaultAddr.Province,
+            GhnDistrictId: defaultAddr.GhnDistrictId,
+            GhnWardCode: defaultAddr.GhnWardCode
+        );
+        return (defaultResolved, defaultPhone);
+    }
+
     public async Task<CheckoutQuoteResponse> QuoteCheckoutAsync(Guid buyerId, CheckoutQuoteRequest request, CancellationToken ct = default)
     {
         if (request.CartItemIds == null || request.CartItemIds.Count == 0)
@@ -102,22 +185,7 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("CART_EMPTY", "No valid items selected for checkout.");
         }
 
-        if (request.ShippingAddress == null ||
-            string.IsNullOrWhiteSpace(request.ShippingAddress.ReceiverName) ||
-            string.IsNullOrWhiteSpace(request.ContactPhone) ||
-            string.IsNullOrWhiteSpace(request.ShippingAddress.Street) ||
-            string.IsNullOrWhiteSpace(request.ShippingAddress.Province) ||
-            string.IsNullOrWhiteSpace(request.ShippingAddress.Ward))
-        {
-            throw new CommerceDomainException("VAL_INVALID_INPUT", "Shipping address fields cannot be empty.");
-        }
-
-        if (!request.ShippingAddress.GhnDistrictId.HasValue ||
-            request.ShippingAddress.GhnDistrictId.Value <= 0 ||
-            string.IsNullOrWhiteSpace(request.ShippingAddress.GhnWardCode))
-        {
-            throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
-        }
+        var (resolvedAddress, resolvedPhone) = await ResolveShippingAddressAsync(buyerId, request.AddressId, request.ShippingAddress, request.ContactPhone, ct);
 
         var cart = await _dbContext.Carts
             .Include(c => c.Items)
@@ -164,8 +232,8 @@ public sealed class OrderService : IOrderService
                 Math.Max(100, i.Quantity * 200)
             )).ToList();
 
-            var ghnDistrictId = request.ShippingAddress.GhnDistrictId.Value;
-            var ghnWardCode = request.ShippingAddress.GhnWardCode;
+            var ghnDistrictId = resolvedAddress.GhnDistrictId!.Value;
+            var ghnWardCode = resolvedAddress.GhnWardCode!;
 
             try
             {
@@ -291,11 +359,17 @@ public sealed class OrderService : IOrderService
 
         // Lưu vào Distributed Cache (Redis / Memory) với TTL 15 phút (ISSUE-01)
         var quoteKey = $"checkout_quote:{quoteId}";
+        var effectiveRequest = request with
+        {
+            ShippingAddress = resolvedAddress,
+            ContactPhone = resolvedPhone
+        };
+
         var quotePayload = JsonSerializer.Serialize(new CachedQuote
         {
             QuoteId = quoteId,
             BuyerId = buyerId,
-            Request = request,
+            Request = effectiveRequest,
             Response = quoteResponse,
             ExpiredAt = expiredAt
         });
@@ -306,6 +380,196 @@ public sealed class OrderService : IOrderService
         }, ct);
 
         return quoteResponse;
+    }
+
+    public async Task<CheckoutQuoteResponse> RecalculateQuoteAsync(Guid buyerId, Guid quoteId, RecalculateQuoteRequest request, CancellationToken ct = default)
+    {
+        var quoteKey = $"checkout_quote:{quoteId}";
+        var quoteJson = await _cache.GetStringAsync(quoteKey, ct);
+        if (string.IsNullOrWhiteSpace(quoteJson))
+        {
+            throw new CommerceDomainException("QUOTE_NOT_FOUND", "Checkout quote not found or expired.", 404);
+        }
+
+        var cachedQuote = JsonSerializer.Deserialize<CachedQuote>(quoteJson);
+        if (cachedQuote == null || cachedQuote.ExpiredAt < DateTimeOffset.UtcNow)
+        {
+            throw new CommerceDomainException("QUOTE_NOT_FOUND", "Checkout quote not found or expired.", 404);
+        }
+
+        if (cachedQuote.BuyerId != buyerId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to access this checkout quote.", 403);
+        }
+
+        var (resolvedAddress, resolvedPhone) = await ResolveShippingAddressAsync(buyerId, request.AddressId, request.ShippingAddress, request.ContactPhone, ct);
+
+        var updatedShops = new List<ShopOrderQuote>();
+        foreach (var shop in cachedQuote.Response.Shops)
+        {
+            var quoteItems = shop.Items.Select(i => new ShippingQuoteItem(
+                i.SkuId,
+                i.Quantity,
+                Math.Max(100, i.Quantity * 200)
+            )).ToList();
+
+            decimal shippingFeeAmount = 30000m;
+            try
+            {
+                var shippingQuoteRequest = new ShopShippingQuoteRequest(
+                    shop.SellerId,
+                    resolvedAddress.GhnDistrictId!.Value,
+                    resolvedAddress.GhnWardCode!,
+                    quoteItems);
+                shippingFeeAmount = await _fulfillmentClient.CalculateShopShippingFeeAsync(shippingQuoteRequest, ct);
+            }
+            catch (CommerceDomainException ex) when (ex.StatusCode == 400)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to recalculate carrier shipping fee for Shop '{SellerId}'. Falling back to default rate.", shop.SellerId);
+                shippingFeeAmount = 30000m;
+            }
+
+            decimal netSeller = Math.Max(0m, shop.ItemsAmount - shop.ProductDiscountAmount - shop.ShopDiscountAmount);
+            decimal totalAmount = Math.Max(0m, netSeller - shop.SystemDiscountAmount) + shippingFeeAmount;
+
+            updatedShops.Add(new ShopOrderQuote(
+                shop.SellerId,
+                shop.ShopName,
+                shop.Items,
+                shop.ItemsAmount,
+                shop.ProductDiscountAmount,
+                shop.ShopDiscountAmount,
+                shop.SystemDiscountAmount,
+                shop.DiscountAmount,
+                shippingFeeAmount,
+                totalAmount
+            ));
+        }
+
+        decimal grandTotal = updatedShops.Sum(s => s.TotalAmount);
+        decimal walletBalance = cachedQuote.Response.WalletBalance;
+        try
+        {
+            walletBalance = await _walletClient.GetWalletBalanceAsync(buyerId, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to refresh wallet balance for Buyer '{BuyerId}'.", buyerId);
+        }
+
+        var updatedResponse = new CheckoutQuoteResponse(
+            quoteId,
+            grandTotal,
+            walletBalance,
+            updatedShops,
+            cachedQuote.Response.AppliedVouchers,
+            cachedQuote.Response.Warnings,
+            cachedQuote.ExpiredAt
+        );
+
+        var effectiveRequest = cachedQuote.Request with
+        {
+            ShippingAddress = resolvedAddress,
+            ContactPhone = resolvedPhone,
+            AddressId = request.AddressId ?? cachedQuote.Request.AddressId
+        };
+
+        var updatedCachedQuote = new CachedQuote
+        {
+            QuoteId = quoteId,
+            BuyerId = buyerId,
+            Request = effectiveRequest,
+            Response = updatedResponse,
+            ExpiredAt = cachedQuote.ExpiredAt
+        };
+
+        await _cache.SetStringAsync(quoteKey, JsonSerializer.Serialize(updatedCachedQuote), new DistributedCacheEntryOptions
+        {
+            AbsoluteExpiration = cachedQuote.ExpiredAt
+        }, ct);
+
+        return updatedResponse;
+    }
+
+    public async Task<DisputeEligibilityDto?> GetDisputeEligibilityAsync(Guid orderOrSubOrderId, Guid reporterId, Guid reportedUserId, CancellationToken ct = default)
+    {
+        var subOrder = await _dbContext.SubOrders
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == orderOrSubOrderId, ct);
+        if (subOrder != null)
+        {
+            bool matchesDirect = subOrder.BuyerId == reporterId && subOrder.SellerId == reportedUserId;
+            bool matchesReverse = subOrder.SellerId == reporterId && subOrder.BuyerId == reportedUserId;
+            if (!matchesDirect && !matchesReverse)
+            {
+                return null;
+            }
+
+            bool isEligible = subOrder.Status == SubOrderStatus.Delivered || subOrder.Status == SubOrderStatus.Completed;
+            return new DisputeEligibilityDto(
+                IsEligible: isEligible,
+                OrderType: "SubOrder",
+                BuyerId: subOrder.BuyerId,
+                SellerId: subOrder.SellerId,
+                Status: subOrder.Status.ToString(),
+                DeliveredAt: subOrder.DeliveredAt
+            );
+        }
+
+        var order = await _dbContext.Orders
+            .AsNoTracking()
+            .Include(o => o.SubOrders)
+            .FirstOrDefaultAsync(o => o.Id == orderOrSubOrderId, ct);
+        if (order != null)
+        {
+            var matchingSubOrder = order.SubOrders.FirstOrDefault(s =>
+                (s.BuyerId == reporterId && s.SellerId == reportedUserId) ||
+                (s.SellerId == reporterId && s.BuyerId == reportedUserId));
+
+            if (matchingSubOrder == null)
+            {
+                return null;
+            }
+
+            bool isEligible = matchingSubOrder.Status == SubOrderStatus.Delivered || matchingSubOrder.Status == SubOrderStatus.Completed;
+            return new DisputeEligibilityDto(
+                IsEligible: isEligible,
+                OrderType: "Order",
+                BuyerId: matchingSubOrder.BuyerId,
+                SellerId: matchingSubOrder.SellerId,
+                Status: matchingSubOrder.Status.ToString(),
+                DeliveredAt: matchingSubOrder.DeliveredAt
+            );
+        }
+
+        var auctionOrder = await _dbContext.AuctionOrders
+            .AsNoTracking()
+            .FirstOrDefaultAsync(a => a.Id == orderOrSubOrderId, ct);
+        if (auctionOrder != null)
+        {
+            bool matchesDirect = auctionOrder.BuyerId == reporterId && auctionOrder.SellerId == reportedUserId;
+            bool matchesReverse = auctionOrder.SellerId == reporterId && auctionOrder.BuyerId == reportedUserId;
+            if (!matchesDirect && !matchesReverse)
+            {
+                return null;
+            }
+
+            bool isEligible = auctionOrder.Status == SubOrderStatus.Delivered || auctionOrder.Status == SubOrderStatus.Completed;
+            return new DisputeEligibilityDto(
+                IsEligible: isEligible,
+                OrderType: "AuctionOrder",
+                BuyerId: auctionOrder.BuyerId,
+                SellerId: auctionOrder.SellerId,
+                Status: auctionOrder.Status.ToString(),
+                DeliveredAt: auctionOrder.DeliveredAt
+            );
+        }
+
+        return null;
     }
 
     public async Task<CreateOrderResponse> CreateOrderAsync(Guid buyerId, CreateOrderRequest request, CancellationToken ct = default)
@@ -487,19 +751,19 @@ public sealed class OrderService : IOrderService
             subOrderIds.Add(subOrderId);
             var subOrderNo = $"SUB-{DateTime.UtcNow:yyyyMMdd}-{subOrderId.ToString()[..6].ToUpperInvariant()}";
 
-            var effectiveFullAddress = !string.IsNullOrWhiteSpace(cachedQuote.Request.ShippingAddress.FullAddressText)
+            var effectiveFullAddress = !string.IsNullOrWhiteSpace(cachedQuote.Request.ShippingAddress?.FullAddressText)
                 ? cachedQuote.Request.ShippingAddress.FullAddressText
                 : request.ShippingAddress;
 
             var addressSnapshot = new ShippingAddressSnapshot(
-                cachedQuote.Request.ShippingAddress.ReceiverName,
-                cachedQuote.Request.ContactPhone,
-                cachedQuote.Request.ShippingAddress.Street,
-                cachedQuote.Request.ShippingAddress.Ward,
-                cachedQuote.Request.ShippingAddress.District ?? string.Empty,
-                cachedQuote.Request.ShippingAddress.Province,
-                cachedQuote.Request.ShippingAddress.GhnDistrictId ?? 0,
-                cachedQuote.Request.ShippingAddress.GhnWardCode ?? "",
+                cachedQuote.Request.ShippingAddress?.ReceiverName ?? string.Empty,
+                cachedQuote.Request.ContactPhone ?? request.ContactPhone,
+                cachedQuote.Request.ShippingAddress?.Street ?? string.Empty,
+                cachedQuote.Request.ShippingAddress?.Ward ?? string.Empty,
+                cachedQuote.Request.ShippingAddress?.District ?? string.Empty,
+                cachedQuote.Request.ShippingAddress?.Province ?? string.Empty,
+                cachedQuote.Request.ShippingAddress?.GhnDistrictId ?? 0,
+                cachedQuote.Request.ShippingAddress?.GhnWardCode ?? "",
                 effectiveFullAddress
             );
 

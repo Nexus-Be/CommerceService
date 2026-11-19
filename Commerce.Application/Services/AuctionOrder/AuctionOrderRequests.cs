@@ -35,8 +35,9 @@ public sealed record AuctionSettlementRequest(
 );
 
 public sealed record SubmitAuctionShippingRequest(
-    [Required] ShippingAddressDto ShippingAddress,
-    [Required] string ContactPhone
+    ShippingAddressDto? ShippingAddress = null,
+    string? ContactPhone = null,
+    Guid? AddressId = null
 );
 
 public sealed record SellerAcceptAuctionOrderRequest(

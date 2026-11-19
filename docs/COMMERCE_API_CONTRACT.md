@@ -319,6 +319,28 @@ Commerce Service áp dụng **Quy trình Thanh toán 2 Bước (Two-Phase Checko
 
 ---
 
+### `CHK-01B`: Tính Lại Phí Vận Chuyển GHN Khi Đổi Địa Chỉ (Recalculate Checkout Quote)
+* **Endpoint:** `POST /api/v1/checkouts/quote/{quoteId}/recalculate`
+* **Vai trò:** `buyer`, `admin`, `staff`
+* **Header:** `Authorization: Bearer <token>`
+* **Request Body:**
+  ```json
+  {
+    "addressId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "shippingAddress": null,
+    "contactPhone": null
+  }
+  ```
+* **Response (HTTP 200 OK):**
+  Trả về `CheckoutQuoteResponse` mới với cước phí GHN đã cập nhật theo địa chỉ mới, bảo lưu voucher và giỏ hàng.
+* **Lỗi (HTTP 404 Not Found):**
+  - `QUOTE_NOT_FOUND`: Báo giá không tồn tại hoặc đã quá hạn 15 phút.
+  - `ADDRESS_NOT_FOUND`: Địa chỉ theo `addressId` không tồn tại trong sổ địa chỉ.
+* **Lỗi (HTTP 403 Forbidden):**
+  - `FORBIDDEN`: Người dùng không phải chủ sở hữu báo giá.
+
+---
+
 ### `CHK-02 / R76`: Tạo Đơn Hàng Chính Thức (Place Order)
 * **Endpoint:** `POST /api/v1/orders`
 * **Vai trò:** `buyer`, `admin`, `staff`
@@ -762,6 +784,31 @@ Commerce Service áp dụng **Quy trình Thanh toán 2 Bước (Two-Phase Checko
     "message": "The order was not found."
   }
   ```
+
+---
+
+### `INTERNAL-02`: Xác Minh Đơn Hàng Hợp Lệ Cho Khiếu Nại/Tố Cáo (Dispute Eligibility)
+* **Endpoint:** `GET /api/v1/internal/orders/dispute-eligibility?orderOrSubOrderId={UUID}&reporterId={UUID}&reportedUserId={UUID}`
+* **Bảo mật:** `X-Internal-Service-Key` (UserService gọi để kiểm tra điều kiện mở Dispute/Report).
+* **Quy chuẩn:**
+  - Hỗ trợ tra cứu theo `SubOrder`, `Order` (gốc), hoặc `AuctionOrder`.
+  - Kiểm tra quan hệ 2 chiều giữa `reporterId` và `reportedUserId` (Buyer-Seller hoặc Seller-Buyer).
+  - Đơn hàng phải ở trạng thái `Delivered` hoặc `Completed` mới đủ điều kiện (`isEligible: true`).
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "isEligible": true,
+    "orderType": "SubOrder",
+    "buyerId": "user1111-1111-1111-1111-000000000001",
+    "sellerId": "shop1111-1111-1111-1111-000000000001",
+    "status": "Delivered",
+    "deliveredAt": "2026-11-19T00:10:00Z"
+  }
+  ```
+* **Lỗi:**
+  - `401 Unauthorized` (`INTERNAL_KEY_INVALID`): Thiếu hoặc sai header `X-Internal-Service-Key`.
+  - `404 Not Found` (`ORDER_NOT_FOUND`): Không tìm thấy đơn hàng hoặc cặp người dùng không khớp đơn hàng.
+  - `400 Bad Request` (`VAL_INVALID_INPUT`): Thiếu tham số bắt buộc.
 
 ---
 

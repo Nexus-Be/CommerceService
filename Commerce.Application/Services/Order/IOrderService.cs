@@ -11,6 +11,12 @@ public interface IOrderService
     /// <summary>R75: Tạo phiên báo giá thanh toán xem trước (tính tiền ship GHN, voucher, 15m TTL).</summary>
     Task<CheckoutQuoteResponse> QuoteCheckoutAsync(Guid buyerId, CheckoutQuoteRequest request, CancellationToken ct = default);
 
+    /// <summary>Tính lại phí vận chuyển GHN và tổng thanh toán khi đổi địa chỉ ở màn Checkout.</summary>
+    Task<CheckoutQuoteResponse> RecalculateQuoteAsync(Guid buyerId, Guid quoteId, RecalculateQuoteRequest request, CancellationToken ct = default);
+
+    /// <summary>Xác minh đơn hàng hợp lệ phục vụ chức năng Khiếu nại/Tố cáo đối tác cho UserService.</summary>
+    Task<DisputeEligibilityDto?> GetDisputeEligibilityAsync(Guid orderOrSubOrderId, Guid reporterId, Guid reportedUserId, CancellationToken ct = default);
+
     /// <summary>R76: Tạo đơn hàng chính thức từ mã báo giá quoteId.</summary>
     Task<CreateOrderResponse> CreateOrderAsync(Guid buyerId, CreateOrderRequest request, CancellationToken ct = default);
 

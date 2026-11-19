@@ -9,6 +9,9 @@ using Commerce.Application.Services.Order;
 using Commerce.Domain.Enums;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Configuration;
+using Commerce.Api.Security;
 
 [ApiController]
 [Route("api/v1/orders")]
@@ -33,6 +36,60 @@ public class OrdersController : ControllerBase
 
         var response = await _orderService.QuoteCheckoutAsync(buyerId, request, ct);
         return Ok(response);
+    }
+
+    /// <summary>Tính lại phí vận chuyển GHN và tổng thanh toán khi đổi địa chỉ ở màn Checkout.</summary>
+    [HttpPost("/api/v1/checkouts/quote/{quoteId:guid}/recalculate")]
+    public async Task<IActionResult> RecalculateQuote(
+        [FromRoute] Guid quoteId,
+        [FromBody] RecalculateQuoteRequest request,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var buyerId, out var authError))
+        {
+            return authError;
+        }
+
+        var response = await _orderService.RecalculateQuoteAsync(buyerId, quoteId, request, ct);
+        return Ok(response);
+    }
+
+    /// <summary>Xác minh đơn hàng hợp lệ phục vụ chức năng Khiếu nại/Tố cáo đối tác cho UserService.</summary>
+    [HttpGet("/api/v1/internal/orders/dispute-eligibility")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetDisputeEligibility(
+        [FromQuery] Guid orderOrSubOrderId,
+        [FromQuery] Guid reporterId,
+        [FromQuery] Guid reportedUserId,
+        [FromServices] IConfiguration configuration,
+        CancellationToken ct)
+    {
+        var authError = InternalServiceKeyGuard.Check(Request, configuration);
+        if (authError != null)
+        {
+            return authError;
+        }
+
+        if (orderOrSubOrderId == Guid.Empty || reporterId == Guid.Empty || reportedUserId == Guid.Empty)
+        {
+            return BadRequest(new
+            {
+                errorCode = "VAL_INVALID_INPUT",
+                message = "Order/SubOrder ID, reporter ID, and reported user ID are required."
+            });
+        }
+
+        var eligibility = await _orderService.GetDisputeEligibilityAsync(orderOrSubOrderId, reporterId, reportedUserId, ct);
+        if (eligibility == null)
+        {
+            return NotFound(new
+            {
+                errorCode = "ORDER_NOT_FOUND",
+                message = "Order or sub-order was not found or users do not match."
+            });
+        }
+
+        return Ok(eligibility);
     }
 
     /// <summary>R76: Tạo đơn hàng chính thức từ mã báo giá quoteId.</summary>

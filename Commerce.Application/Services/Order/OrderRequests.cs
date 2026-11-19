@@ -19,11 +19,17 @@ public sealed record ShippingAddressInput(
 
 public sealed record CheckoutQuoteRequest(
     List<Guid> CartItemIds,
-    ShippingAddressInput ShippingAddress,
-    string ContactPhone,
+    ShippingAddressInput? ShippingAddress = null,
+    string? ContactPhone = null,
     PaymentMethod PaymentMethod = PaymentMethod.Wallet,
     string? CarrierCode = null,
-    List<string>? VoucherCodes = null);
+    List<string>? VoucherCodes = null,
+    Guid? AddressId = null);
+
+public sealed record RecalculateQuoteRequest(
+    Guid? AddressId = null,
+    ShippingAddressInput? ShippingAddress = null,
+    string? ContactPhone = null);
 
 public sealed record CreateOrderRequest(
     Guid QuoteId,

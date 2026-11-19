@@ -163,4 +163,83 @@ public sealed class UserClient : IUserClient
             return null;
         }
     }
+
+    public async Task<BuyerAddressDto?> GetBuyerAddressAsync(Guid buyerId, Guid addressId, CancellationToken ct = default)
+    {
+        try
+        {
+            var url = $"api/v1/internal/users/{buyerId}/addresses/{addressId}";
+            using var response = await _httpClient.GetAsync(url, ct);
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("[REST UserClient] GetBuyerAddress returned status {StatusCode} for buyer '{BuyerId}', address '{AddressId}'.",
+                    response.StatusCode, buyerId, addressId);
+                throw new CommerceDomainException("USER_SERVICE_UNAVAILABLE", "User service is temporarily unavailable. Please try again later.", 503);
+            }
+
+            return await ParseAddressDtoAsync(response, ct);
+        }
+        catch (CommerceDomainException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[REST UserClient] Error connecting to UserService during address retrieval for buyer '{BuyerId}'.", buyerId);
+            throw new CommerceDomainException("USER_SERVICE_UNAVAILABLE", "User service is temporarily unavailable. Please try again later.", 503);
+        }
+    }
+
+    public async Task<BuyerAddressDto?> GetBuyerDefaultAddressAsync(Guid buyerId, CancellationToken ct = default)
+    {
+        try
+        {
+            var url = $"api/v1/internal/users/{buyerId}/addresses/default";
+            using var response = await _httpClient.GetAsync(url, ct);
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("[REST UserClient] GetBuyerDefaultAddress returned status {StatusCode} for buyer '{BuyerId}'.",
+                    response.StatusCode, buyerId);
+                throw new CommerceDomainException("USER_SERVICE_UNAVAILABLE", "User service is temporarily unavailable. Please try again later.", 503);
+            }
+
+            return await ParseAddressDtoAsync(response, ct);
+        }
+        catch (CommerceDomainException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[REST UserClient] Error connecting to UserService during default address retrieval for buyer '{BuyerId}'.", buyerId);
+            throw new CommerceDomainException("USER_SERVICE_UNAVAILABLE", "User service is temporarily unavailable. Please try again later.", 503);
+        }
+    }
+
+    private static async Task<BuyerAddressDto?> ParseAddressDtoAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        var rawBody = await response.Content.ReadAsStringAsync(ct);
+        if (string.IsNullOrWhiteSpace(rawBody)) return null;
+
+        using var doc = JsonDocument.Parse(rawBody);
+        var root = doc.RootElement;
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+        {
+            return JsonSerializer.Deserialize<BuyerAddressDto>(data.GetRawText(), JsonOptions);
+        }
+
+        return JsonSerializer.Deserialize<BuyerAddressDto>(rawBody, JsonOptions);
+    }
 }

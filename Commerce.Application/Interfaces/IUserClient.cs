@@ -24,4 +24,14 @@ public interface IUserClient
     Task<UserPenaltyResponse?> CreatePenaltyAsync(
         UserPenaltyRequest request,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Retrieves a specific buyer address from UserService by addressId. Returns null if 404.
+    /// </summary>
+    Task<BuyerAddressDto?> GetBuyerAddressAsync(Guid buyerId, Guid addressId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Retrieves the default shipping address for a buyer from UserService. Returns null if none found or 404.
+    /// </summary>
+    Task<BuyerAddressDto?> GetBuyerDefaultAddressAsync(Guid buyerId, CancellationToken ct = default);
 }

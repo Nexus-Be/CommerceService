@@ -225,10 +225,87 @@ public class AuctionOrderService : IAuctionOrderService
 
         auctionOrder.WeightGramsSnapshot = sku.WeightGrams;
 
+        ShippingAddressDto resolvedShippingAddress;
+        string resolvedPhone;
+
+        if (request.AddressId.HasValue && request.AddressId.Value != Guid.Empty)
+        {
+            var address = await _userClient.GetBuyerAddressAsync(currentUserId, request.AddressId.Value, cancellationToken);
+            if (address == null)
+            {
+                throw new CommerceDomainException("ADDRESS_NOT_FOUND", "Shipping address not found in address book.", 404);
+            }
+
+            if (address.GhnDistrictId <= 0 || string.IsNullOrWhiteSpace(address.GhnWardCode))
+            {
+                throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
+            }
+
+            resolvedPhone = !string.IsNullOrWhiteSpace(request.ContactPhone) ? request.ContactPhone : address.Phone;
+            resolvedShippingAddress = new ShippingAddressDto(
+                FullName: address.RecipientName,
+                PhoneNumber: resolvedPhone,
+                AddressLine: address.Street,
+                ProvinceName: address.Province,
+                DistrictName: address.District,
+                WardName: address.Ward,
+                GhnDistrictId: address.GhnDistrictId,
+                GhnWardCode: address.GhnWardCode
+            );
+        }
+        else if (request.ShippingAddress != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.ShippingAddress.FullName) ||
+                string.IsNullOrWhiteSpace(request.ShippingAddress.AddressLine) ||
+                string.IsNullOrWhiteSpace(request.ShippingAddress.ProvinceName) ||
+                string.IsNullOrWhiteSpace(request.ShippingAddress.WardName))
+            {
+                throw new CommerceDomainException("VAL_INVALID_INPUT", "Shipping address fields cannot be empty.", 400);
+            }
+
+            resolvedPhone = !string.IsNullOrWhiteSpace(request.ContactPhone) ? request.ContactPhone : request.ShippingAddress.PhoneNumber;
+            if (string.IsNullOrWhiteSpace(resolvedPhone))
+            {
+                throw new CommerceDomainException("VAL_INVALID_INPUT", "Contact phone cannot be empty.", 400);
+            }
+
+            if (request.ShippingAddress.GhnDistrictId <= 0 || string.IsNullOrWhiteSpace(request.ShippingAddress.GhnWardCode))
+            {
+                throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
+            }
+
+            resolvedShippingAddress = request.ShippingAddress with { PhoneNumber = resolvedPhone };
+        }
+        else
+        {
+            var defaultAddr = await _userClient.GetBuyerDefaultAddressAsync(currentUserId, cancellationToken);
+            if (defaultAddr == null)
+            {
+                throw new CommerceDomainException("ADDRESS_REQUIRED", "No shipping address provided and buyer has no default address.", 400);
+            }
+
+            if (defaultAddr.GhnDistrictId <= 0 || string.IsNullOrWhiteSpace(defaultAddr.GhnWardCode))
+            {
+                throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
+            }
+
+            resolvedPhone = !string.IsNullOrWhiteSpace(request.ContactPhone) ? request.ContactPhone : defaultAddr.Phone;
+            resolvedShippingAddress = new ShippingAddressDto(
+                FullName: defaultAddr.RecipientName,
+                PhoneNumber: resolvedPhone,
+                AddressLine: defaultAddr.Street,
+                ProvinceName: defaultAddr.Province,
+                DistrictName: defaultAddr.District,
+                WardName: defaultAddr.Ward,
+                GhnDistrictId: defaultAddr.GhnDistrictId,
+                GhnWardCode: defaultAddr.GhnWardCode
+            );
+        }
+
         var quoteRequest = new ShopShippingQuoteRequest(
             SellerId: auctionOrder.SellerId,
-            GhnDistrictId: request.ShippingAddress.GhnDistrictId,
-            GhnWardCode: request.ShippingAddress.GhnWardCode,
+            GhnDistrictId: resolvedShippingAddress.GhnDistrictId,
+            GhnWardCode: resolvedShippingAddress.GhnWardCode,
             Items: new List<ShippingQuoteItem>
             {
                 new(
@@ -241,8 +318,8 @@ public class AuctionOrderService : IAuctionOrderService
 
         var shippingFee = await _fulfillmentClient.CalculateShopShippingFeeAsync(quoteRequest, cancellationToken);
 
-        auctionOrder.ShippingAddress = JsonSerializer.Serialize(request.ShippingAddress, JsonOptions);
-        auctionOrder.ContactPhone = request.ContactPhone;
+        auctionOrder.ShippingAddress = JsonSerializer.Serialize(resolvedShippingAddress, JsonOptions);
+        auctionOrder.ContactPhone = resolvedPhone;
         auctionOrder.ShippingFeeAmount = shippingFee;
         auctionOrder.TotalAmount = auctionOrder.RemainingAmount + shippingFee;
 

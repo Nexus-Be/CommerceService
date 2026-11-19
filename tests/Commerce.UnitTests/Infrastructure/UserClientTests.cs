@@ -177,4 +177,136 @@ public class UserClientTests
         result.AppliedDelta.Should().Be(-5);
         result.NewScore.Should().Be(61);
     }
+
+    [Fact]
+    public async Task GetBuyerAddressAsync_ShouldReturnAddressDto_WhenResponseIs200()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var addressId = Guid.NewGuid();
+        var responseBody = JsonSerializer.Serialize(new
+        {
+            data = new
+            {
+                id = addressId,
+                recipientName = "Nguyen Van A",
+                phone = "0901234567",
+                street = "123 Le Loi",
+                ward = "Ben Nghe",
+                district = "Quan 1",
+                province = "TP.HCM",
+                ghnDistrictId = 1442,
+                ghnWardCode = "20101",
+                fullAddressText = "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
+                isDefault = false
+            }
+        });
+
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseBody, System.Text.Encoding.UTF8, "application/json")
+        };
+        var (client, _) = CreateClientWithMockHandler(response);
+
+        // Act
+        var result = await client.GetBuyerAddressAsync(buyerId, addressId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(addressId);
+        result.RecipientName.Should().Be("Nguyen Van A");
+        result.Phone.Should().Be("0901234567");
+        result.GhnDistrictId.Should().Be(1442);
+        result.GhnWardCode.Should().Be("20101");
+        result.IsDefault.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetBuyerAddressAsync_ShouldReturnNull_WhenResponseIs404()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var addressId = Guid.NewGuid();
+        var response = new HttpResponseMessage(HttpStatusCode.NotFound);
+        var (client, _) = CreateClientWithMockHandler(response);
+
+        // Act
+        var result = await client.GetBuyerAddressAsync(buyerId, addressId);
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetBuyerDefaultAddressAsync_ShouldReturnDefaultAddress_WhenResponseIs200()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var addressId = Guid.NewGuid();
+        var responseBody = JsonSerializer.Serialize(new
+        {
+            data = new
+            {
+                id = addressId,
+                recipientName = "Tran Thi B",
+                phone = "0912345678",
+                street = "456 Nguyen Hue",
+                ward = "Ben Nghe",
+                district = "Quan 1",
+                province = "TP.HCM",
+                ghnDistrictId = 1442,
+                ghnWardCode = "20102",
+                fullAddressText = "456 Nguyen Hue, Ben Nghe, Quan 1, TP.HCM",
+                isDefault = true
+            }
+        });
+
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseBody, System.Text.Encoding.UTF8, "application/json")
+        };
+        var (client, _) = CreateClientWithMockHandler(response);
+
+        // Act
+        var result = await client.GetBuyerDefaultAddressAsync(buyerId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(addressId);
+        result.RecipientName.Should().Be("Tran Thi B");
+        result.IsDefault.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetBuyerDefaultAddressAsync_ShouldReturnNull_WhenResponseIs404()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var response = new HttpResponseMessage(HttpStatusCode.NotFound);
+        var (client, _) = CreateClientWithMockHandler(response);
+
+        // Act
+        var result = await client.GetBuyerDefaultAddressAsync(buyerId);
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetBuyerAddressAsync_ShouldThrowUserServiceUnavailable_WhenResponseIs500()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var addressId = Guid.NewGuid();
+        var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
+        var (client, _) = CreateClientWithMockHandler(response);
+
+        // Act
+        var act = () => client.GetBuyerAddressAsync(buyerId, addressId);
+
+        // Assert
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Which.ErrorCode.Should().Be("USER_SERVICE_UNAVAILABLE");
+        ex.Which.StatusCode.Should().Be(503);
+    }
 }
