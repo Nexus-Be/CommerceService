@@ -131,3 +131,20 @@ public sealed record AuctionOrderNotificationSnapshot(
     Guid BuyerId,
     Guid SellerId,
     string Status);
+
+public sealed record CancelAuctionOrderResponse(
+    Guid AuctionOrderId,
+    string OrderNo,
+    string Status,
+    decimal RefundedAmount,
+    DateTimeOffset CancelledAt
+);
+
+public sealed record RetryAuctionShipmentResponse(
+    Guid AuctionOrderId,
+    string OrderNo,
+    string TrackingCode,
+    string CarrierCode,
+    string? LabelPrintUrl,
+    DateTimeOffset RetriedAt
+);

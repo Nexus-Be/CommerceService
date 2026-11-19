@@ -1678,3 +1678,41 @@ export interface ReviewEligibilityDto {
   completedAt?: string | null;
 }
 ```
+
+---
+
+## Phần 9: Bounded Context 8 — Post-Order Lifecycle, Address Modification & Refund Governance (SPEC-032)
+
+### 9.1 Đổi địa chỉ nhận hàng sau khi đặt hàng
+- `PATCH /api/v1/sub-orders/{subOrderId}/shipping-address`
+  - **Mô tả:** Đổi địa chỉ nhận hàng cho đơn hàng con khi đơn chưa xuất kho (`PendingPayment`, `Paid`, `Confirmed` và chưa có `TrackingCode`).
+  - **Bảo vệ cước phí:** Nếu đơn đã thanh toán (`Paid`), chỉ cho phép đổi khi cước mới $\le$ cước cũ. Nếu cước tăng, từ chối với HTTP 400 `SHIPPING_FEE_INCREASED`.
+- `PATCH /api/v1/orders/{orderId}/shipping-address`
+  - **Mô tả:** Đổi địa chỉ nhận hàng cho toàn bộ đơn hàng cha (tất cả đơn con phải thỏa mãn điều kiện).
+- `PATCH /api/v1/auction-orders/{auctionOrderId}/shipping-address`
+  - **Mô tả:** Đổi địa chỉ nhận hàng cho đơn đấu giá trước khi xuất kho.
+
+### 9.2 Quản trị Hoàn tiền (`RefundsController`)
+- `GET /api/v1/refunds`
+  - **Mô tả:** Tra cứu danh sách yêu cầu hoàn tiền phân trang database và lọc theo `status`, `subOrderId`. Role Buyer xem đơn của mình, Seller xem đơn shop mình, Admin/Staff xem toàn bộ.
+- `GET /api/v1/refunds/{id}`
+  - **Mô tả:** Xem chi tiết yêu cầu hoàn tiền.
+- `POST /api/v1/refunds/{id}/approve`
+  - **Mô tả:** Seller hoặc Admin duyệt hoàn tiền. Hoàn tiền vào ví Buyer qua `WalletClient`, chuyển `SubOrder` sang `Refunded`.
+- `POST /api/v1/refunds/{id}/reject`
+  - **Mô tả:** Seller hoặc Admin từ chối hoàn tiền, bắt buộc nhập `reason`.
+
+### 9.3 Mở rộng vòng đời Đơn hàng Đấu giá
+- `GET /api/v1/auction-orders/{id}/shipments/timeline`
+  - **Mô tả:** Xem dòng thời gian vận chuyển đơn hàng đấu giá.
+- `POST /api/v1/auction-orders/{id}/cancel`
+  - **Mô tả:** Hủy đơn đấu giá trước khi người bán bấm chấp nhận. Nếu đơn đã `Paid`, tự động hoàn tiền vào ví Buyer và gửi callback sang `AuctionService`.
+- `POST /api/v1/auction-orders/{id}/shipments/retry`
+  - **Mô tả:** Thử lại tạo vận đơn GHN khi đơn đã `Confirmed` nhưng chưa có mã vận đơn do nghẽn mạng.
+
+### 9.4 Quản trị Đơn hàng Tập trung cho Admin & Staff
+- `GET /api/v1/admin/orders`
+  - **Mô tả:** Tra cứu danh sách đơn cha toàn sàn (`[RequireRole("admin", "staff")]`), hỗ trợ lọc theo `buyerId`, `sellerId`, `status`, `fromDate`, `toDate`, phân trang database.
+- `GET /api/v1/admin/sub-orders`
+  - **Mô tả:** Tra cứu danh sách đơn con toàn sàn (`[RequireRole("admin", "staff")]`), hỗ trợ lọc theo `sellerId`, `buyerId`, `status`, `trackingCode`, `fromDate`, `toDate`, phân trang database.
+

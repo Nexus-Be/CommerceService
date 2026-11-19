@@ -69,3 +69,34 @@ public sealed record UpdateDeliveryStatusRequest(
 public sealed record CancelSubOrderRequest(
     CancellationReasonCode ReasonCode = CancellationReasonCode.BuyerChangedMind,
     string? ReasonNote = null);
+
+public sealed record ChangeShippingAddressRequest(
+    Guid? AddressId = null,
+    ShippingAddressInput? ShippingAddress = null,
+    string? ContactPhone = null);
+
+public sealed record ApproveRefundRequest(
+    string? Note = null);
+
+public sealed record RejectRefundRequest(
+    string Reason,
+    string? Note = null);
+
+public sealed record AdminOrderFilterRequest(
+    Guid? BuyerId = null,
+    Guid? SellerId = null,
+    OrderStatus? Status = null,
+    DateTimeOffset? FromDate = null,
+    DateTimeOffset? ToDate = null,
+    int Page = 1,
+    int PageSize = 20);
+
+public sealed record AdminSubOrderFilterRequest(
+    Guid? SellerId = null,
+    Guid? BuyerId = null,
+    SubOrderStatus? Status = null,
+    string? TrackingCode = null,
+    DateTimeOffset? FromDate = null,
+    DateTimeOffset? ToDate = null,
+    int Page = 1,
+    int PageSize = 20);

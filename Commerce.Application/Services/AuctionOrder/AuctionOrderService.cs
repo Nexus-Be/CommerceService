@@ -1,9 +1,11 @@
 namespace Commerce.Application.Services.AuctionOrder;
 
 using Commerce.Application.Common.Models;
+using Commerce.Application.Services.Order;
 using Commerce.Application.Services.Shipment;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,6 +15,7 @@ using Commerce.Application.Interfaces;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
 using Commerce.Domain.Exceptions;
+using Commerce.Domain.ValueObjects;
 
 public class AuctionOrderService : IAuctionOrderService
 {
@@ -905,4 +908,449 @@ public class AuctionOrderService : IAuctionOrderService
             items,
             PaginationMetadata.Create(pageIndex, pageSize, totalCount));
     }
+
+    public async Task<ChangeShippingAddressResponse> ChangeAuctionShippingAddressAsync(
+        Guid currentUserId,
+        Guid auctionOrderId,
+        ChangeShippingAddressRequest request,
+        bool isAdminOrStaff = false,
+        CancellationToken cancellationToken = default)
+    {
+        var auctionOrder = await _dbContext.AuctionOrders
+            .FirstOrDefaultAsync(a => a.Id == auctionOrderId && !a.IsDeleted, cancellationToken)
+            ?? throw new EntityNotFoundException("AUCTION_ORDER_NOT_FOUND", "AuctionOrder", auctionOrderId);
+
+        if (!isAdminOrStaff && auctionOrder.BuyerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to modify this auction order.", 403);
+        }
+
+        if (auctionOrder.Status is SubOrderStatus.Shipping or SubOrderStatus.Delivered or SubOrderStatus.Completed or SubOrderStatus.Cancelled or SubOrderStatus.Refunded ||
+            !string.IsNullOrWhiteSpace(auctionOrder.TrackingCode))
+        {
+            throw new CommerceDomainException("CANNOT_CHANGE_ADDRESS_AFTER_SHIPPING", "Shipping address cannot be changed after the order has been shipped or completed.", 400);
+        }
+
+        var (resolvedAddress, resolvedPhone) = await ResolveAuctionShippingAddressAsync(auctionOrder.BuyerId, request.AddressId, request.ShippingAddress, request.ContactPhone, cancellationToken);
+
+        var skuId = auctionOrder.SkuId is { } sku && sku != Guid.Empty ? sku : auctionOrder.ProductId;
+        var weight = auctionOrder.WeightGramsSnapshot > 0 ? auctionOrder.WeightGramsSnapshot : 500;
+
+        var quoteRequest = new ShopShippingQuoteRequest(
+            SellerId: auctionOrder.SellerId,
+            GhnDistrictId: resolvedAddress.GhnDistrictId,
+            GhnWardCode: resolvedAddress.GhnWardCode,
+            Items: new List<ShippingQuoteItem>
+            {
+                new(SkuId: skuId, Quantity: 1, WeightGrams: weight)
+            }
+        );
+
+        var newShippingFee = await _fulfillmentClient.CalculateShopShippingFeeAsync(quoteRequest, cancellationToken);
+        var oldShippingFee = auctionOrder.ShippingFeeAmount ?? 0m;
+
+        if (auctionOrder.Status is SubOrderStatus.Paid or SubOrderStatus.Confirmed)
+        {
+            if (newShippingFee > oldShippingFee)
+            {
+                throw new CommerceDomainException("SHIPPING_FEE_INCREASED", "Shipping fee to new address exceeds prepaid amount. Please cancel and reorder.", 400);
+            }
+        }
+        else if (auctionOrder.Status == SubOrderStatus.PendingPayment)
+        {
+            auctionOrder.ShippingFeeAmount = newShippingFee;
+            auctionOrder.TotalAmount = auctionOrder.RemainingAmount + newShippingFee;
+        }
+
+        var fullAddressText = $"{resolvedAddress.FullName}, {resolvedAddress.AddressLine}, {resolvedAddress.WardName}, {resolvedAddress.DistrictName}, {resolvedAddress.ProvinceName}";
+        auctionOrder.ShippingAddress = JsonSerializer.Serialize(resolvedAddress, JsonOptions);
+        auctionOrder.ContactPhone = resolvedPhone;
+
+        var now = DateTimeOffset.UtcNow;
+        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            AuctionOrderId = auctionOrder.Id,
+            FromStatus = auctionOrder.Status,
+            ToStatus = auctionOrder.Status,
+            ChangedBy = currentUserId,
+            ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Buyer,
+            Reason = $"Shipping address updated to: {fullAddressText}",
+            CreatedAt = now
+        });
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return new ChangeShippingAddressResponse(
+            TargetId: auctionOrder.Id,
+            TargetType: "AuctionOrder",
+            NewAddressText: fullAddressText,
+            OldShippingFee: oldShippingFee,
+            NewShippingFee: newShippingFee,
+            TotalAmount: auctionOrder.TotalAmount ?? auctionOrder.RemainingAmount,
+            UpdatedAt: now
+        );
+    }
+
+    public async Task<ShipmentTimelineResponse> GetAuctionShipmentTimelineAsync(
+        Guid currentUserId,
+        Guid auctionOrderId,
+        bool isAdminOrStaff = false,
+        CancellationToken cancellationToken = default)
+    {
+        var ao = await _dbContext.AuctionOrders
+            .AsNoTracking()
+            .Include(a => a.StatusHistories)
+            .FirstOrDefaultAsync(a => a.Id == auctionOrderId && !a.IsDeleted, cancellationToken)
+            ?? throw new EntityNotFoundException("AUCTION_ORDER_NOT_FOUND", "AuctionOrder", auctionOrderId);
+
+        if (!isAdminOrStaff && ao.BuyerId != currentUserId && ao.SellerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to view shipment timeline for this auction order.", 403);
+        }
+
+        var timelineEvents = MapHistoriesToTimeline(ao.StatusHistories, ao.Status, ao.CreatedAt);
+        ShippingAddressSnapshot addressSnapshot;
+        if (!string.IsNullOrWhiteSpace(ao.ShippingAddress))
+        {
+            try
+            {
+                addressSnapshot = JsonSerializer.Deserialize<ShippingAddressSnapshot>(ao.ShippingAddress, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    ?? new ShippingAddressSnapshot
+                    {
+                        ReceiverName = "Auction Winner",
+                        ContactPhone = ao.ContactPhone ?? ""
+                    };
+            }
+            catch
+            {
+                addressSnapshot = new ShippingAddressSnapshot
+                {
+                    ReceiverName = "Auction Winner",
+                    ContactPhone = ao.ContactPhone ?? "",
+                    Street = ao.ShippingAddress
+                };
+            }
+        }
+        else
+        {
+            addressSnapshot = new ShippingAddressSnapshot
+            {
+                ReceiverName = "Auction Winner",
+                ContactPhone = ao.ContactPhone ?? ""
+            };
+        }
+
+        return new ShipmentTimelineResponse(
+            ao.Id,
+            ao.OrderNo,
+            ao.Id,
+            ao.CarrierCode ?? "GHN",
+            FormatCarrierName(ao.CarrierCode),
+            ao.TrackingCode,
+            ao.LabelPrintUrl,
+            ao.Status.ToString(),
+            ao.EstimatedDeliveryAt,
+            addressSnapshot,
+            timelineEvents
+        );
+    }
+
+    public async Task<CancelAuctionOrderResponse> CancelAuctionOrderAsync(
+        Guid currentUserId,
+        Guid auctionOrderId,
+        CancelAuctionOrderRequest request,
+        bool isAdminOrStaff = false,
+        CancellationToken cancellationToken = default)
+    {
+        var auctionOrder = await _dbContext.AuctionOrders
+            .FirstOrDefaultAsync(a => a.Id == auctionOrderId && !a.IsDeleted, cancellationToken)
+            ?? throw new EntityNotFoundException("AUCTION_ORDER_NOT_FOUND", "AuctionOrder", auctionOrderId);
+
+        if (!isAdminOrStaff && auctionOrder.BuyerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to cancel this auction order.", 403);
+        }
+
+        if ((auctionOrder.Status != SubOrderStatus.PendingPayment && auctionOrder.Status != SubOrderStatus.Paid) ||
+            auctionOrder.SellerAcceptedAt != null)
+        {
+            throw new CommerceDomainException("AUCTION_CANNOT_BE_CANCELLED", "Auction order cannot be cancelled in its current status.", 400);
+        }
+
+        decimal refundedAmount = 0m;
+        var now = DateTimeOffset.UtcNow;
+        var cancellation = new OrderCancellation
+        {
+            Id = Guid.NewGuid(),
+            AuctionOrderId = auctionOrder.Id,
+            ReasonCode = CancellationReasonCode.BuyerChangedMind,
+            ReasonNote = request.Reason ?? "Cancelled by buyer before seller acceptance",
+            WasPaid = auctionOrder.Status == SubOrderStatus.Paid,
+            ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Buyer,
+            CancelledBy = currentUserId
+        };
+        _dbContext.OrderCancellations.Add(cancellation);
+
+        if (auctionOrder.Status == SubOrderStatus.Paid)
+        {
+            refundedAmount = auctionOrder.TotalAmount ?? auctionOrder.RemainingAmount;
+            var refundSuccess = await _walletClient.RefundOrderPaymentAsync(
+                auctionOrder.Id,
+                auctionOrder.BuyerId.ToString(),
+                refundedAmount,
+                request.Reason ?? "Auction order cancelled prior to seller acceptance.",
+                null,
+                cancellationToken);
+
+            if (!refundSuccess)
+            {
+                throw new CommerceDomainException("WALLET_REFUND_FAILED", "Failed to process refund payment via wallet service.", 400);
+            }
+
+            _dbContext.OrderRefunds.Add(new OrderRefund
+            {
+                Id = Guid.NewGuid(),
+                AuctionOrderId = auctionOrder.Id,
+                CancellationId = cancellation.Id,
+                RefundType = RefundType.Full,
+                Amount = refundedAmount,
+                Status = RefundStatus.Completed,
+                ReasonCode = "BUYER_CANCELLED",
+                ReasonNote = request.Reason ?? "Auction order cancelled prior to seller acceptance.",
+                ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Buyer,
+                RequestedBy = currentUserId,
+                RequestedAt = now,
+                CompletedAt = now
+            });
+
+            try
+            {
+                var callbackReq = new AuctionPaymentStatusCallbackRequest(
+                    OrderId: auctionOrder.Id,
+                    WinnerId: auctionOrder.BuyerId,
+                    Status: "Cancelled",
+                    Amount: auctionOrder.TotalAmount ?? auctionOrder.RemainingAmount,
+                    OccurredAt: now,
+                    OrderNo: auctionOrder.OrderNo
+                );
+                await _auctionClient.NotifyPaymentStatusAsync(auctionOrder.AuctionId, callbackReq, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[AuctionOrder] Non-fatal callback error notifying AuctionService of cancellation for AuctionOrder '{OrderId}'.", auctionOrder.Id);
+            }
+        }
+
+        var fromStatus = auctionOrder.Status;
+        auctionOrder.Status = SubOrderStatus.Cancelled;
+        auctionOrder.CancelledAt = now;
+
+        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            AuctionOrderId = auctionOrder.Id,
+            FromStatus = fromStatus,
+            ToStatus = SubOrderStatus.Cancelled,
+            ChangedBy = currentUserId,
+            ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Buyer,
+            Reason = $"Auction order cancelled. Reason: {request.Reason ?? "Cancelled by buyer"}",
+            CreatedAt = now
+        });
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return new CancelAuctionOrderResponse(
+            AuctionOrderId: auctionOrder.Id,
+            OrderNo: auctionOrder.OrderNo,
+            Status: auctionOrder.Status.ToString(),
+            RefundedAmount: refundedAmount,
+            CancelledAt: now
+        );
+    }
+
+    public async Task<RetryAuctionShipmentResponse> RetryAuctionShipmentAsync(
+        Guid currentUserId,
+        Guid auctionOrderId,
+        bool isAdminOrStaff = false,
+        CancellationToken cancellationToken = default)
+    {
+        var auctionOrder = await _dbContext.AuctionOrders
+            .FirstOrDefaultAsync(a => a.Id == auctionOrderId && !a.IsDeleted, cancellationToken)
+            ?? throw new EntityNotFoundException("AUCTION_ORDER_NOT_FOUND", "AuctionOrder", auctionOrderId);
+
+        if (!isAdminOrStaff && auctionOrder.SellerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to retry shipment creation for this auction order.", 403);
+        }
+
+        if (auctionOrder.Status != SubOrderStatus.Confirmed)
+        {
+            throw new CommerceDomainException("INVALID_STATUS", "Only confirmed auction orders can have carrier shipments created.", 400);
+        }
+
+        if (!string.IsNullOrWhiteSpace(auctionOrder.TrackingCode))
+        {
+            throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this auction order.", 400);
+        }
+
+        var shipmentRequest = ShipmentRequestFactory.ForAuctionOrder(auctionOrder);
+        var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(shipmentRequest, cancellationToken);
+
+        if (shipmentResult == null || string.IsNullOrWhiteSpace(shipmentResult.TrackingCode))
+        {
+            throw new CommerceDomainException("SHIPMENT_CREATION_FAILED", "Failed to create shipment with carrier.", 500);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        auctionOrder.TrackingCode = shipmentResult.TrackingCode;
+        auctionOrder.CarrierCode = shipmentResult.CarrierCode ?? "GHN";
+        auctionOrder.LabelPrintUrl = shipmentResult.LabelPrintUrl;
+        auctionOrder.Status = SubOrderStatus.Shipping;
+        auctionOrder.ShippedAt = now;
+
+        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            AuctionOrderId = auctionOrder.Id,
+            FromStatus = SubOrderStatus.Confirmed,
+            ToStatus = SubOrderStatus.Shipping,
+            ChangedBy = currentUserId,
+            ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Seller,
+            Reason = $"Shipment retried and created successfully. TrackingCode: {shipmentResult.TrackingCode}",
+            CreatedAt = now
+        });
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return new RetryAuctionShipmentResponse(
+            AuctionOrderId: auctionOrder.Id,
+            OrderNo: auctionOrder.OrderNo,
+            TrackingCode: shipmentResult.TrackingCode,
+            CarrierCode: auctionOrder.CarrierCode,
+            LabelPrintUrl: shipmentResult.LabelPrintUrl,
+            RetriedAt: now
+        );
+    }
+
+    private async Task<(ShippingAddressDto Address, string ContactPhone)> ResolveAuctionShippingAddressAsync(
+        Guid buyerId,
+        Guid? addressId,
+        ShippingAddressInput? rawAddress,
+        string? contactPhone,
+        CancellationToken cancellationToken)
+    {
+        if (addressId.HasValue && addressId.Value != Guid.Empty)
+        {
+            var address = await _userClient.GetBuyerAddressAsync(buyerId, addressId.Value, cancellationToken);
+            if (address == null)
+            {
+                throw new CommerceDomainException("ADDRESS_NOT_FOUND", "Shipping address not found in address book.", 404);
+            }
+
+            if (address.GhnDistrictId <= 0 || string.IsNullOrWhiteSpace(address.GhnWardCode))
+            {
+                throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
+            }
+
+            var phone = !string.IsNullOrWhiteSpace(contactPhone) ? contactPhone : address.Phone;
+            var resolved = new ShippingAddressDto(
+                FullName: address.RecipientName,
+                PhoneNumber: phone,
+                AddressLine: address.Street,
+                ProvinceName: address.Province,
+                DistrictName: address.District,
+                WardName: address.Ward,
+                GhnDistrictId: address.GhnDistrictId,
+                GhnWardCode: address.GhnWardCode
+            );
+            return (resolved, phone);
+        }
+
+        if (rawAddress != null)
+        {
+            if (string.IsNullOrWhiteSpace(rawAddress.ReceiverName) ||
+                string.IsNullOrWhiteSpace(rawAddress.Street) ||
+                string.IsNullOrWhiteSpace(rawAddress.Province) ||
+                string.IsNullOrWhiteSpace(rawAddress.Ward))
+            {
+                throw new CommerceDomainException("VAL_INVALID_INPUT", "Shipping address fields cannot be empty.", 400);
+            }
+
+            var phone = !string.IsNullOrWhiteSpace(contactPhone) ? contactPhone : rawAddress.ContactPhone;
+            if (string.IsNullOrWhiteSpace(phone))
+            {
+                throw new CommerceDomainException("VAL_INVALID_INPUT", "Contact phone cannot be empty.", 400);
+            }
+
+            if (!rawAddress.GhnDistrictId.HasValue || rawAddress.GhnDistrictId.Value <= 0 || string.IsNullOrWhiteSpace(rawAddress.GhnWardCode))
+            {
+                throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
+            }
+
+            var resolved = new ShippingAddressDto(
+                FullName: rawAddress.ReceiverName,
+                PhoneNumber: phone,
+                AddressLine: rawAddress.Street,
+                ProvinceName: rawAddress.Province,
+                DistrictName: rawAddress.District,
+                WardName: rawAddress.Ward,
+                GhnDistrictId: rawAddress.GhnDistrictId.Value,
+                GhnWardCode: rawAddress.GhnWardCode
+            );
+            return (resolved, phone);
+        }
+
+        var defaultAddr = await _userClient.GetBuyerDefaultAddressAsync(buyerId, cancellationToken);
+        if (defaultAddr == null)
+        {
+            throw new CommerceDomainException("ADDRESS_REQUIRED", "No shipping address provided and buyer has no default address.", 400);
+        }
+
+        if (defaultAddr.GhnDistrictId <= 0 || string.IsNullOrWhiteSpace(defaultAddr.GhnWardCode))
+        {
+            throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
+        }
+
+        var defaultPhone = !string.IsNullOrWhiteSpace(contactPhone) ? contactPhone : defaultAddr.Phone;
+        var defaultResolved = new ShippingAddressDto(
+            FullName: defaultAddr.RecipientName,
+            PhoneNumber: defaultPhone,
+            AddressLine: defaultAddr.Street,
+            ProvinceName: defaultAddr.Province,
+            DistrictName: defaultAddr.District,
+            WardName: defaultAddr.Ward,
+            GhnDistrictId: defaultAddr.GhnDistrictId,
+            GhnWardCode: defaultAddr.GhnWardCode
+        );
+        return (defaultResolved, defaultPhone);
+    }
+
+    private static List<TimelineEventDto> MapHistoriesToTimeline(ICollection<OrderStatusHistory> histories, SubOrderStatus currentStatus, DateTimeOffset createdAt)
+    {
+        var events = new List<TimelineEventDto>
+        {
+            new("OrderPlaced", "Order Created", "Auction order created successfully.", createdAt)
+        };
+
+        foreach (var h in histories.OrderBy(h => h.CreatedAt))
+        {
+            events.Add(new TimelineEventDto(
+                h.ToStatus.ToString(),
+                h.ToStatus.ToString(),
+                h.Reason ?? $"Status changed to {h.ToStatus}",
+                h.CreatedAt
+            ));
+        }
+
+        return events;
+    }
+
+    private static string FormatCarrierName(string? carrierCode) => carrierCode?.ToUpperInvariant() switch
+    {
+        "GHN" => "Giao Hàng Nhanh (GHN)",
+        "GHTK" => "Giao Hàng Tiết Kiệm (GHTK)",
+        "VTPOST" => "Viettel Post",
+        _ => carrierCode ?? "Standard Delivery"
+    };
 }

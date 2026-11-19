@@ -450,4 +450,62 @@ public class OrdersController : ControllerBase
         var orders = await _orderService.ListByBuyerIdAsync(buyerId, page, pageSize, ct);
         return Ok(orders);
     }
+
+    /// <summary>Đổi địa chỉ nhận hàng của đơn hàng con sau khi đặt hàng.</summary>
+    [HttpPatch("/api/v1/sub-orders/{subOrderId:guid}/shipping-address")]
+    [RequireRole("buyer", "admin", "staff")]
+    public async Task<IActionResult> ChangeSubOrderShippingAddress(
+        [FromRoute] Guid subOrderId,
+        [FromBody] ChangeShippingAddressRequest request,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var currentUserId, out var authError))
+        {
+            return authError;
+        }
+
+        var isAdminOrStaff = this.IsAdmin() || this.HasRole("staff");
+        var response = await _orderService.ChangeSubOrderShippingAddressAsync(currentUserId, subOrderId, request, isAdminOrStaff, ct);
+        return Ok(response);
+    }
+
+    /// <summary>Đổi địa chỉ nhận hàng của toàn bộ đơn hàng cha sau khi đặt hàng.</summary>
+    [HttpPatch("{orderId:guid}/shipping-address")]
+    [RequireRole("buyer", "admin", "staff")]
+    public async Task<IActionResult> ChangeOrderShippingAddress(
+        [FromRoute] Guid orderId,
+        [FromBody] ChangeShippingAddressRequest request,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var currentUserId, out var authError))
+        {
+            return authError;
+        }
+
+        var isAdminOrStaff = this.IsAdmin() || this.HasRole("staff");
+        var response = await _orderService.ChangeOrderShippingAddressAsync(currentUserId, orderId, request, isAdminOrStaff, ct);
+        return Ok(response);
+    }
+
+    /// <summary>Admin/Staff: Tra cứu danh sách đơn hàng cha toàn sàn.</summary>
+    [HttpGet("/api/v1/admin/orders")]
+    [RequireRole("admin", "staff")]
+    public async Task<IActionResult> ListAdminOrders(
+        [FromQuery] AdminOrderFilterRequest filter,
+        CancellationToken ct)
+    {
+        var response = await _orderService.ListAdminOrdersAsync(filter, ct);
+        return Ok(response);
+    }
+
+    /// <summary>Admin/Staff: Tra cứu danh sách đơn hàng con toàn sàn.</summary>
+    [HttpGet("/api/v1/admin/sub-orders")]
+    [RequireRole("admin", "staff")]
+    public async Task<IActionResult> ListAdminSubOrders(
+        [FromQuery] AdminSubOrderFilterRequest filter,
+        CancellationToken ct)
+    {
+        var response = await _orderService.ListAdminSubOrdersAsync(filter, ct);
+        return Ok(response);
+    }
 }

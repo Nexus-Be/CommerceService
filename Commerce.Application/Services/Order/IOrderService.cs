@@ -95,4 +95,28 @@ public interface IOrderService
 
     /// <summary>Tương thích ngược: Danh sách theo buyerId.</summary>
     Task<PagedData<OrderDto>> ListByBuyerIdAsync(Guid buyerId, int page, int pageSize, CancellationToken cancellationToken = default);
+
+    /// <summary>Đổi địa chỉ nhận hàng của đơn hàng con sau khi đặt hàng.</summary>
+    Task<ChangeShippingAddressResponse> ChangeSubOrderShippingAddressAsync(Guid currentUserId, Guid subOrderId, ChangeShippingAddressRequest request, bool isAdminOrStaff = false, CancellationToken ct = default);
+
+    /// <summary>Đổi địa chỉ nhận hàng của toàn bộ đơn hàng cha sau khi đặt hàng.</summary>
+    Task<ChangeShippingAddressResponse> ChangeOrderShippingAddressAsync(Guid currentUserId, Guid orderId, ChangeShippingAddressRequest request, bool isAdminOrStaff = false, CancellationToken ct = default);
+
+    /// <summary>Tra cứu danh sách yêu cầu hoàn tiền có phân trang database.</summary>
+    Task<PagedData<RefundDetailResponse>> ListRefundsAsync(Guid currentUserId, int page, int pageSize, RefundStatus? status = null, Guid? subOrderId = null, bool isAdminOrStaff = false, CancellationToken ct = default);
+
+    /// <summary>Tra cứu chi tiết yêu cầu hoàn tiền theo ID.</summary>
+    Task<RefundDetailResponse> GetRefundDetailAsync(Guid currentUserId, Guid refundId, bool isAdminOrStaff = false, CancellationToken ct = default);
+
+    /// <summary>Duyệt yêu cầu hoàn tiền và hoàn tiền ví cho người mua.</summary>
+    Task<RefundDetailResponse> ApproveRefundAsync(Guid currentUserId, Guid refundId, ApproveRefundRequest request, bool isAdminOrStaff = false, CancellationToken ct = default);
+
+    /// <summary>Từ chối yêu cầu hoàn tiền kèm lý do.</summary>
+    Task<RefundDetailResponse> RejectRefundAsync(Guid currentUserId, Guid refundId, RejectRefundRequest request, bool isAdminOrStaff = false, CancellationToken ct = default);
+
+    /// <summary>Admin/Staff: Tra cứu danh sách đơn hàng cha toàn sàn.</summary>
+    Task<PagedData<OrderSummaryResponse>> ListAdminOrdersAsync(AdminOrderFilterRequest filter, CancellationToken ct = default);
+
+    /// <summary>Admin/Staff: Tra cứu danh sách đơn hàng con toàn sàn.</summary>
+    Task<PagedData<SubOrderSummaryResponse>> ListAdminSubOrdersAsync(AdminSubOrderFilterRequest filter, CancellationToken ct = default);
 }

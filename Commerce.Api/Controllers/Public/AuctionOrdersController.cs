@@ -9,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Commerce.Api.Extensions;
 using Commerce.Api.Filters;
 using Commerce.Application.Services.AuctionOrder;
+using Commerce.Application.Services.Order;
 using Commerce.Domain.Enums;
 
 [ApiController]
@@ -207,6 +208,76 @@ public class AuctionOrdersController : ControllerBase
         if (pageSize < 1 || pageSize > 100) pageSize = 20;
 
         var response = await _auctionOrderService.ListSellerOrdersAsync(sellerId, page, pageSize, ct);
+        return Ok(response);
+    }
+
+    /// <summary>Đổi địa chỉ nhận hàng của đơn đấu giá sau khi chốt giá.</summary>
+    [HttpPatch("{auctionOrderId:guid}/shipping-address")]
+    [RequireRole("buyer", "admin", "staff")]
+    public async Task<IActionResult> ChangeAuctionShippingAddress(
+        [FromRoute] Guid auctionOrderId,
+        [FromBody] ChangeShippingAddressRequest request,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var currentUserId, out var authError))
+        {
+            return authError;
+        }
+
+        var isAdminOrStaff = this.IsAdmin() || this.HasRole("staff");
+        var response = await _auctionOrderService.ChangeAuctionShippingAddressAsync(currentUserId, auctionOrderId, request, isAdminOrStaff, ct);
+        return Ok(response);
+    }
+
+    /// <summary>Theo dõi dòng thời gian hành trình giao hàng cho đơn đấu giá.</summary>
+    [HttpGet("{id:guid}/shipments/timeline")]
+    [RequireRole("buyer", "seller", "admin", "staff")]
+    public async Task<IActionResult> GetAuctionShipmentTimeline(
+        [FromRoute] Guid id,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var currentUserId, out var authError))
+        {
+            return authError;
+        }
+
+        var isAdminOrStaff = this.IsAdmin() || this.HasRole("staff");
+        var response = await _auctionOrderService.GetAuctionShipmentTimelineAsync(currentUserId, id, isAdminOrStaff, ct);
+        return Ok(response);
+    }
+
+    /// <summary>Hủy đơn đấu giá trước khi người bán chấp nhận (hoàn tiền ví nếu đã thanh toán).</summary>
+    [HttpPost("{id:guid}/cancel")]
+    [RequireRole("buyer", "admin", "staff")]
+    public async Task<IActionResult> CancelAuctionOrder(
+        [FromRoute] Guid id,
+        [FromBody] CancelAuctionOrderRequest request,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var currentUserId, out var authError))
+        {
+            return authError;
+        }
+
+        var isAdminOrStaff = this.IsAdmin() || this.HasRole("staff");
+        var response = await _auctionOrderService.CancelAuctionOrderAsync(currentUserId, id, request, isAdminOrStaff, ct);
+        return Ok(response);
+    }
+
+    /// <summary>Tạo lại vận đơn GHN cho đơn đấu giá khi gặp sự cố mạng tạm thời.</summary>
+    [HttpPost("{id:guid}/shipments/retry")]
+    [RequireRole("seller", "admin", "staff")]
+    public async Task<IActionResult> RetryAuctionShipment(
+        [FromRoute] Guid id,
+        CancellationToken ct)
+    {
+        if (!this.TryGetUserId(out var currentUserId, out var authError))
+        {
+            return authError;
+        }
+
+        var isAdminOrStaff = this.IsAdmin() || this.HasRole("staff");
+        var response = await _auctionOrderService.RetryAuctionShipmentAsync(currentUserId, id, isAdminOrStaff, ct);
         return Ok(response);
     }
 }

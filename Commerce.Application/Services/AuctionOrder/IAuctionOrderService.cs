@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using Commerce.Application.Common.Models;
 using Commerce.Domain.Enums;
 
+using Commerce.Application.Services.Order;
+
 public sealed record AuctionSettlementResult(
     AuctionSettlementResponse Response,
     bool IsNewlyCreated
@@ -13,6 +15,32 @@ public sealed record AuctionSettlementResult(
 
 public interface IAuctionOrderService
 {
+    Task<ChangeShippingAddressResponse> ChangeAuctionShippingAddressAsync(
+        Guid currentUserId,
+        Guid auctionOrderId,
+        ChangeShippingAddressRequest request,
+        bool isAdminOrStaff = false,
+        CancellationToken cancellationToken = default);
+
+    Task<ShipmentTimelineResponse> GetAuctionShipmentTimelineAsync(
+        Guid currentUserId,
+        Guid auctionOrderId,
+        bool isAdminOrStaff = false,
+        CancellationToken cancellationToken = default);
+
+    Task<CancelAuctionOrderResponse> CancelAuctionOrderAsync(
+        Guid currentUserId,
+        Guid auctionOrderId,
+        CancelAuctionOrderRequest request,
+        bool isAdminOrStaff = false,
+        CancellationToken cancellationToken = default);
+
+    Task<RetryAuctionShipmentResponse> RetryAuctionShipmentAsync(
+        Guid currentUserId,
+        Guid auctionOrderId,
+        bool isAdminOrStaff = false,
+        CancellationToken cancellationToken = default);
+
     Task<AuctionSettlementResult> ReceiveSettlementAsync(
         AuctionSettlementRequest request,
         CancellationToken cancellationToken = default);

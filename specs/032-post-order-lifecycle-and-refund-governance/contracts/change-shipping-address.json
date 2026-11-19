@@ -1,0 +1,91 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Post-Order Change Shipping Address API",
+    "version": "v1"
+  },
+  "paths": {
+    "/api/v1/sub-orders/{subOrderId}/shipping-address": {
+      "patch": {
+        "tags": ["Orders"],
+        "summary": "Đổi địa chỉ nhận hàng của đơn hàng con sau khi đặt hàng",
+        "parameters": [
+          {
+            "name": "subOrderId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeShippingAddressRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Đổi địa chỉ thành công",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeShippingAddressResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Lỗi cước vận chuyển tăng hoặc trạng thái đơn hàng không hợp lệ (CANNOT_CHANGE_ADDRESS_AFTER_SHIPPING, SHIPPING_FEE_INCREASED)"
+          },
+          "403": {
+            "description": "Không có quyền sở hữu đơn hàng (FORBIDDEN)"
+          },
+          "404": {
+            "description": "Không tìm thấy đơn hàng hoặc địa chỉ (SUB_ORDER_NOT_FOUND, ADDRESS_NOT_FOUND)"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ChangeShippingAddressRequest": {
+        "type": "object",
+        "properties": {
+          "addressId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "shippingAddress": {
+            "type": "object",
+            "nullable": true
+          },
+          "contactPhone": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "ChangeShippingAddressResponse": {
+        "type": "object",
+        "properties": {
+          "targetId": { "type": "string", "format": "uuid" },
+          "targetType": { "type": "string" },
+          "newAddressText": { "type": "string" },
+          "oldShippingFee": { "type": "number", "format": "decimal" },
+          "newShippingFee": { "type": "number", "format": "decimal" },
+          "totalAmount": { "type": "number", "format": "decimal" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

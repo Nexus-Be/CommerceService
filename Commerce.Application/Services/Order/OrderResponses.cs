@@ -233,3 +233,28 @@ public sealed record SubOrderFinancialBreakdownResponse(
     string PaymentMethod,
     DateTimeOffset? CompletedAt
 );
+
+public sealed record ChangeShippingAddressResponse(
+    Guid TargetId,
+    string TargetType,
+    string NewAddressText,
+    decimal OldShippingFee,
+    decimal NewShippingFee,
+    decimal TotalAmount,
+    DateTimeOffset UpdatedAt
+);
+
+public sealed record RefundDetailResponse(
+    Guid Id,
+    Guid SubOrderId,
+    string SubOrderNo,
+    Guid BuyerId,
+    Guid SellerId,
+    decimal Amount,
+    string Reason,
+    string Status,
+    string? SellerNote,
+    string? RejectReason,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset? CompletedAt
+);

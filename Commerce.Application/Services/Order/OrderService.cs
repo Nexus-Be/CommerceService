@@ -2431,6 +2431,19 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("FORBIDDEN", "You do not have permission to request a refund for this sub-order.", 403);
         }
 
+        if (so.Status != SubOrderStatus.Delivered && so.Status != SubOrderStatus.Completed)
+        {
+            throw new CommerceDomainException("INVALID_REFUND_STATUS", "Sub-order status is not eligible for refund request.", 400);
+        }
+
+        var hasPending = await _dbContext.OrderRefunds.AnyAsync(
+            r => r.SubOrderId == subOrderId && r.Status == RefundStatus.Requested && !r.IsDeleted,
+            ct);
+        if (hasPending)
+        {
+            throw new CommerceDomainException("REFUND_REQUEST_ALREADY_EXISTS", "A pending refund request already exists for this sub-order.", 409);
+        }
+
         var refund = new OrderRefund
         {
             Id = Guid.NewGuid(),
@@ -3277,5 +3290,613 @@ public sealed class OrderService : IOrderService
             so.Status.ToString(),
             so.PaymentMethod.ToString(),
             so.CompletedAt);
+    }
+
+    public async Task<ChangeShippingAddressResponse> ChangeSubOrderShippingAddressAsync(
+        Guid currentUserId,
+        Guid subOrderId,
+        ChangeShippingAddressRequest request,
+        bool isAdminOrStaff = false,
+        CancellationToken ct = default)
+    {
+        var subOrder = await _dbContext.SubOrders
+            .Include(s => s.Items)
+            .Include(s => s.Order)
+            .FirstOrDefaultAsync(s => s.Id == subOrderId && !s.IsDeleted, ct)
+            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
+
+        if (!isAdminOrStaff && subOrder.BuyerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to modify this sub-order.", 403);
+        }
+
+        if (subOrder.Status is SubOrderStatus.Shipping or SubOrderStatus.Delivered or SubOrderStatus.Completed or SubOrderStatus.Cancelled or SubOrderStatus.Refunded ||
+            !string.IsNullOrWhiteSpace(subOrder.TrackingCode))
+        {
+            throw new CommerceDomainException("CANNOT_CHANGE_ADDRESS_AFTER_SHIPPING", "Shipping address cannot be changed after the order has been shipped or completed.", 400);
+        }
+
+        var (resolvedAddress, resolvedPhone) = await ResolveShippingAddressAsync(subOrder.BuyerId, request.AddressId, request.ShippingAddress, request.ContactPhone, ct);
+
+        var quoteItems = subOrder.Items
+            .Where(i => !i.IsDeleted)
+            .Select(i => new ShippingQuoteItem(
+                i.SkuId,
+                i.Quantity,
+                Math.Max(100, i.Quantity * 200)
+            )).ToList();
+
+        var quoteRequest = new ShopShippingQuoteRequest(
+            SellerId: subOrder.SellerId,
+            GhnDistrictId: resolvedAddress.GhnDistrictId!.Value,
+            GhnWardCode: resolvedAddress.GhnWardCode!,
+            Items: quoteItems
+        );
+
+        var newShippingFee = await _fulfillmentClient.CalculateShopShippingFeeAsync(quoteRequest, ct);
+        var oldShippingFee = subOrder.ShippingFeeAmount;
+
+        if (subOrder.Status is SubOrderStatus.Paid or SubOrderStatus.Confirmed)
+        {
+            if (newShippingFee > oldShippingFee)
+            {
+                throw new CommerceDomainException("SHIPPING_FEE_INCREASED", "Shipping fee to new address exceeds prepaid amount. Please cancel and reorder.", 400);
+            }
+        }
+        else if (subOrder.Status == SubOrderStatus.PendingPayment)
+        {
+            var feeDifference = newShippingFee - oldShippingFee;
+            subOrder.ShippingFeeAmount = newShippingFee;
+            subOrder.TotalAmount += feeDifference;
+
+            if (subOrder.Order != null)
+            {
+                subOrder.Order.TotalAmount += feeDifference;
+            }
+        }
+
+        var fullAddressText = $"{resolvedAddress.ReceiverName}, {resolvedAddress.Street}, {resolvedAddress.Ward}, {resolvedAddress.District}, {resolvedAddress.Province}";
+        subOrder.ShippingAddress = new ShippingAddressSnapshot
+        {
+            ReceiverName = resolvedAddress.ReceiverName,
+            ContactPhone = resolvedPhone,
+            Street = resolvedAddress.Street,
+            Ward = resolvedAddress.Ward,
+            District = resolvedAddress.District,
+            Province = resolvedAddress.Province,
+            GhnDistrictId = resolvedAddress.GhnDistrictId ?? 0,
+            GhnWardCode = resolvedAddress.GhnWardCode,
+            FullAddressText = fullAddressText
+        };
+        subOrder.ContactPhone = resolvedPhone;
+
+        var now = DateTimeOffset.UtcNow;
+        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            FromStatus = subOrder.Status,
+            ToStatus = subOrder.Status,
+            ChangedBy = currentUserId,
+            ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Buyer,
+            Reason = $"Shipping address updated to: {fullAddressText}",
+            CreatedAt = now
+        });
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        return new ChangeShippingAddressResponse(
+            TargetId: subOrder.Id,
+            TargetType: "SubOrder",
+            NewAddressText: fullAddressText,
+            OldShippingFee: oldShippingFee,
+            NewShippingFee: newShippingFee,
+            TotalAmount: subOrder.TotalAmount,
+            UpdatedAt: now
+        );
+    }
+
+    public async Task<ChangeShippingAddressResponse> ChangeOrderShippingAddressAsync(
+        Guid currentUserId,
+        Guid orderId,
+        ChangeShippingAddressRequest request,
+        bool isAdminOrStaff = false,
+        CancellationToken ct = default)
+    {
+        var order = await _dbContext.Orders
+            .Include(o => o.SubOrders)
+                .ThenInclude(s => s.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId && !o.IsDeleted, ct)
+            ?? throw new EntityNotFoundException("ORDER_NOT_FOUND", "Order", orderId);
+
+        if (!isAdminOrStaff && order.BuyerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to modify this order.", 403);
+        }
+
+        var activeSubOrders = order.SubOrders.Where(s => !s.IsDeleted).ToList();
+        if (activeSubOrders.Count == 0)
+        {
+            throw new CommerceDomainException("ORDER_EMPTY", "Order contains no active sub-orders.", 400);
+        }
+
+        foreach (var so in activeSubOrders)
+        {
+            if (so.Status is SubOrderStatus.Shipping or SubOrderStatus.Delivered or SubOrderStatus.Completed or SubOrderStatus.Cancelled or SubOrderStatus.Refunded ||
+                !string.IsNullOrWhiteSpace(so.TrackingCode))
+            {
+                throw new CommerceDomainException("CANNOT_CHANGE_ADDRESS_AFTER_SHIPPING", "Shipping address cannot be changed after the order has been shipped or completed.", 400);
+            }
+        }
+
+        var (resolvedAddress, resolvedPhone) = await ResolveShippingAddressAsync(order.BuyerId, request.AddressId, request.ShippingAddress, request.ContactPhone, ct);
+
+        decimal totalOldFee = 0m;
+        decimal totalNewFee = 0m;
+        var subOrderCalculations = new List<(SubOrder SubOrder, decimal OldFee, decimal NewFee)>();
+
+        foreach (var so in activeSubOrders)
+        {
+            var quoteItems = so.Items
+                .Where(i => !i.IsDeleted)
+                .Select(i => new ShippingQuoteItem(
+                    i.SkuId,
+                    i.Quantity,
+                    Math.Max(100, i.Quantity * 200)
+                )).ToList();
+
+            var quoteRequest = new ShopShippingQuoteRequest(
+                SellerId: so.SellerId,
+                GhnDistrictId: resolvedAddress.GhnDistrictId!.Value,
+                GhnWardCode: resolvedAddress.GhnWardCode!,
+                Items: quoteItems
+            );
+
+            var newFee = await _fulfillmentClient.CalculateShopShippingFeeAsync(quoteRequest, ct);
+            var oldFee = so.ShippingFeeAmount;
+
+            if (so.Status is SubOrderStatus.Paid or SubOrderStatus.Confirmed && newFee > oldFee)
+            {
+                throw new CommerceDomainException("SHIPPING_FEE_INCREASED", "Shipping fee to new address exceeds prepaid amount. Please cancel and reorder.", 400);
+            }
+
+            totalOldFee += oldFee;
+            totalNewFee += newFee;
+            subOrderCalculations.Add((so, oldFee, newFee));
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var fullAddressText = $"{resolvedAddress.ReceiverName}, {resolvedAddress.Street}, {resolvedAddress.Ward}, {resolvedAddress.District}, {resolvedAddress.Province}";
+
+        foreach (var (so, oldFee, newFee) in subOrderCalculations)
+        {
+            if (so.Status == SubOrderStatus.PendingPayment)
+            {
+                var feeDifference = newFee - oldFee;
+                so.ShippingFeeAmount = newFee;
+                so.TotalAmount += feeDifference;
+                order.TotalAmount += feeDifference;
+            }
+
+            so.ShippingAddress = new ShippingAddressSnapshot
+            {
+                ReceiverName = resolvedAddress.ReceiverName,
+                ContactPhone = resolvedPhone,
+                Street = resolvedAddress.Street,
+                Ward = resolvedAddress.Ward,
+                District = resolvedAddress.District,
+                Province = resolvedAddress.Province,
+                GhnDistrictId = resolvedAddress.GhnDistrictId ?? 0,
+                GhnWardCode = resolvedAddress.GhnWardCode,
+                FullAddressText = fullAddressText
+            };
+            so.ContactPhone = resolvedPhone;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = so.Status,
+                ToStatus = so.Status,
+                ChangedBy = currentUserId,
+                ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Buyer,
+                Reason = $"Shipping address updated to: {fullAddressText}",
+                CreatedAt = now
+            });
+        }
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        return new ChangeShippingAddressResponse(
+            TargetId: order.Id,
+            TargetType: "Order",
+            NewAddressText: fullAddressText,
+            OldShippingFee: totalOldFee,
+            NewShippingFee: totalNewFee,
+            TotalAmount: order.TotalAmount,
+            UpdatedAt: now
+        );
+    }
+
+    public async Task<PagedData<RefundDetailResponse>> ListRefundsAsync(
+        Guid currentUserId,
+        int page,
+        int pageSize,
+        RefundStatus? status = null,
+        Guid? subOrderId = null,
+        bool isAdminOrStaff = false,
+        CancellationToken ct = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var query = _dbContext.OrderRefunds
+            .AsNoTracking()
+            .Include(r => r.SubOrder)
+            .Where(r => !r.IsDeleted);
+
+        if (!isAdminOrStaff)
+        {
+            query = query.Where(r => r.RequestedBy == currentUserId ||
+                                     (r.SubOrder != null && (r.SubOrder.BuyerId == currentUserId || r.SubOrder.SellerId == currentUserId)));
+        }
+
+        if (status.HasValue)
+        {
+            query = query.Where(r => r.Status == status.Value);
+        }
+
+        if (subOrderId.HasValue && subOrderId.Value != Guid.Empty)
+        {
+            query = query.Where(r => r.SubOrderId == subOrderId.Value);
+        }
+
+        var totalCount = await query.CountAsync(ct);
+
+        var refunds = await query
+            .OrderByDescending(r => r.RequestedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        var items = refunds.Select(r => new RefundDetailResponse(
+            Id: r.Id,
+            SubOrderId: r.SubOrderId ?? Guid.Empty,
+            SubOrderNo: r.SubOrder?.SubOrderNo ?? string.Empty,
+            BuyerId: r.SubOrder?.BuyerId ?? r.RequestedBy ?? Guid.Empty,
+            SellerId: r.SubOrder?.SellerId ?? Guid.Empty,
+            Amount: r.Amount,
+            Reason: r.ReasonNote ?? r.ReasonCode,
+            Status: r.Status.ToString(),
+            SellerNote: r.ReasonNote,
+            RejectReason: r.FailureCode,
+            RequestedAt: r.RequestedAt,
+            CompletedAt: r.CompletedAt
+        )).ToList();
+
+        return new PagedData<RefundDetailResponse>(items, PaginationMetadata.Create(page, pageSize, totalCount));
+    }
+
+    public async Task<RefundDetailResponse> GetRefundDetailAsync(
+        Guid currentUserId,
+        Guid refundId,
+        bool isAdminOrStaff = false,
+        CancellationToken ct = default)
+    {
+        var refund = await _dbContext.OrderRefunds
+            .AsNoTracking()
+            .Include(r => r.SubOrder)
+            .FirstOrDefaultAsync(r => r.Id == refundId && !r.IsDeleted, ct)
+            ?? throw new EntityNotFoundException("REFUND_NOT_FOUND", "OrderRefund", refundId);
+
+        if (!isAdminOrStaff &&
+            refund.RequestedBy != currentUserId &&
+            refund.SubOrder?.BuyerId != currentUserId &&
+            refund.SubOrder?.SellerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to view this refund request.", 403);
+        }
+
+        return new RefundDetailResponse(
+            Id: refund.Id,
+            SubOrderId: refund.SubOrderId ?? Guid.Empty,
+            SubOrderNo: refund.SubOrder?.SubOrderNo ?? string.Empty,
+            BuyerId: refund.SubOrder?.BuyerId ?? refund.RequestedBy ?? Guid.Empty,
+            SellerId: refund.SubOrder?.SellerId ?? Guid.Empty,
+            Amount: refund.Amount,
+            Reason: refund.ReasonNote ?? refund.ReasonCode,
+            Status: refund.Status.ToString(),
+            SellerNote: refund.ReasonNote,
+            RejectReason: refund.FailureCode,
+            RequestedAt: refund.RequestedAt,
+            CompletedAt: refund.CompletedAt
+        );
+    }
+
+    public async Task<RefundDetailResponse> ApproveRefundAsync(
+        Guid currentUserId,
+        Guid refundId,
+        ApproveRefundRequest request,
+        bool isAdminOrStaff = false,
+        CancellationToken ct = default)
+    {
+        var refund = await _dbContext.OrderRefunds
+            .Include(r => r.SubOrder)
+            .FirstOrDefaultAsync(r => r.Id == refundId && !r.IsDeleted, ct)
+            ?? throw new EntityNotFoundException("REFUND_NOT_FOUND", "OrderRefund", refundId);
+
+        if (!isAdminOrStaff && refund.SubOrder?.SellerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to approve this refund request.", 403);
+        }
+
+        if (refund.Status != RefundStatus.Requested)
+        {
+            throw new CommerceDomainException("INVALID_REFUND_STATUS", "Only pending refund requests can be approved.", 400);
+        }
+
+        var subOrder = refund.SubOrder
+            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", refund.SubOrderId ?? Guid.Empty);
+
+        var walletSuccess = await _walletClient.RefundSubOrderPaymentAsync(
+            subOrder.Id,
+            subOrder.BuyerId.ToString(),
+            refund.Amount,
+            request.Note ?? "Refund approved by seller",
+            null,
+            ct);
+
+        if (!walletSuccess)
+        {
+            throw new CommerceDomainException("WALLET_REFUND_FAILED", "Failed to process refund payment via wallet service.", 400);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        refund.Status = RefundStatus.Completed;
+        refund.CompletedAt = now;
+        if (!string.IsNullOrWhiteSpace(request.Note))
+        {
+            refund.ReasonNote = string.IsNullOrWhiteSpace(refund.ReasonNote)
+                ? $"Note: {request.Note}"
+                : $"{refund.ReasonNote} | Note: {request.Note}";
+        }
+
+        var fromStatus = subOrder.Status;
+        subOrder.Status = SubOrderStatus.Refunded;
+        subOrder.CompletedAt = now;
+
+        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            FromStatus = fromStatus,
+            ToStatus = SubOrderStatus.Refunded,
+            ChangedBy = currentUserId,
+            ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Seller,
+            Reason = $"Refund approved. Note: {request.Note}",
+            CreatedAt = now
+        });
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        return new RefundDetailResponse(
+            Id: refund.Id,
+            SubOrderId: subOrder.Id,
+            SubOrderNo: subOrder.SubOrderNo,
+            BuyerId: subOrder.BuyerId,
+            SellerId: subOrder.SellerId,
+            Amount: refund.Amount,
+            Reason: refund.ReasonNote ?? refund.ReasonCode,
+            Status: refund.Status.ToString(),
+            SellerNote: request.Note,
+            RejectReason: null,
+            RequestedAt: refund.RequestedAt,
+            CompletedAt: refund.CompletedAt
+        );
+    }
+
+    public async Task<RefundDetailResponse> RejectRefundAsync(
+        Guid currentUserId,
+        Guid refundId,
+        RejectRefundRequest request,
+        bool isAdminOrStaff = false,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            throw new CommerceDomainException("VAL_INVALID_INPUT", "Rejection reason cannot be empty.", 400);
+        }
+
+        var refund = await _dbContext.OrderRefunds
+            .Include(r => r.SubOrder)
+            .FirstOrDefaultAsync(r => r.Id == refundId && !r.IsDeleted, ct)
+            ?? throw new EntityNotFoundException("REFUND_NOT_FOUND", "OrderRefund", refundId);
+
+        if (!isAdminOrStaff && refund.SubOrder?.SellerId != currentUserId)
+        {
+            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to reject this refund request.", 403);
+        }
+
+        if (refund.Status != RefundStatus.Requested)
+        {
+            throw new CommerceDomainException("INVALID_REFUND_STATUS", "Only pending refund requests can be rejected.", 400);
+        }
+
+        var subOrder = refund.SubOrder
+            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", refund.SubOrderId ?? Guid.Empty);
+
+        var now = DateTimeOffset.UtcNow;
+        refund.Status = RefundStatus.Rejected;
+        refund.CompletedAt = now;
+        refund.FailureCode = request.Reason;
+        if (!string.IsNullOrWhiteSpace(request.Note))
+        {
+            refund.ReasonNote = string.IsNullOrWhiteSpace(refund.ReasonNote)
+                ? $"Note: {request.Note}"
+                : $"{refund.ReasonNote} | Note: {request.Note}";
+        }
+
+        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            FromStatus = subOrder.Status,
+            ToStatus = subOrder.Status,
+            ChangedBy = currentUserId,
+            ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Seller,
+            Reason = $"Refund rejected. Reason: {request.Reason}",
+            CreatedAt = now
+        });
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        return new RefundDetailResponse(
+            Id: refund.Id,
+            SubOrderId: subOrder.Id,
+            SubOrderNo: subOrder.SubOrderNo,
+            BuyerId: subOrder.BuyerId,
+            SellerId: subOrder.SellerId,
+            Amount: refund.Amount,
+            Reason: refund.ReasonNote ?? refund.ReasonCode,
+            Status: refund.Status.ToString(),
+            SellerNote: request.Note,
+            RejectReason: request.Reason,
+            RequestedAt: refund.RequestedAt,
+            CompletedAt: refund.CompletedAt
+        );
+    }
+
+    public async Task<PagedData<OrderSummaryResponse>> ListAdminOrdersAsync(AdminOrderFilterRequest filter, CancellationToken ct = default)
+    {
+        var page = Math.Max(1, filter.Page);
+        var pageSize = Math.Clamp(filter.PageSize, 1, 100);
+
+        var query = _dbContext.Orders
+            .AsNoTracking()
+            .Where(o => !o.IsDeleted);
+
+        if (filter.BuyerId.HasValue && filter.BuyerId.Value != Guid.Empty)
+        {
+            query = query.Where(o => o.BuyerId == filter.BuyerId.Value);
+        }
+
+        if (filter.SellerId.HasValue && filter.SellerId.Value != Guid.Empty)
+        {
+            query = query.Where(o => o.SubOrders.Any(s => s.SellerId == filter.SellerId.Value && !s.IsDeleted));
+        }
+
+        if (filter.Status.HasValue)
+        {
+            query = query.Where(o => o.Status == filter.Status.Value);
+        }
+
+        if (filter.FromDate.HasValue)
+        {
+            query = query.Where(o => o.CreatedAt >= filter.FromDate.Value);
+        }
+
+        if (filter.ToDate.HasValue)
+        {
+            query = query.Where(o => o.CreatedAt <= filter.ToDate.Value);
+        }
+
+        var totalCount = await query.CountAsync(ct);
+
+        var rawItems = await query
+            .OrderByDescending(o => o.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(o => new
+            {
+                o.Id,
+                o.TotalAmount,
+                Status = o.Status.ToString(),
+                o.PaymentDeadlineAt,
+                SubOrderCount = o.SubOrders.Count(s => !s.IsDeleted),
+                o.CreatedAt
+            })
+            .ToListAsync(ct);
+
+        var items = rawItems.Select(o => new OrderSummaryResponse(
+            o.Id,
+            $"ORD-{o.Id.ToString()[..8].ToUpperInvariant()}",
+            o.TotalAmount,
+            o.Status,
+            o.PaymentDeadlineAt,
+            o.SubOrderCount,
+            o.CreatedAt
+        )).ToList();
+
+        return new PagedData<OrderSummaryResponse>(items, PaginationMetadata.Create(page, pageSize, totalCount));
+    }
+
+    public async Task<PagedData<SubOrderSummaryResponse>> ListAdminSubOrdersAsync(AdminSubOrderFilterRequest filter, CancellationToken ct = default)
+    {
+        var page = Math.Max(1, filter.Page);
+        var pageSize = Math.Clamp(filter.PageSize, 1, 100);
+
+        var query = _dbContext.SubOrders
+            .AsNoTracking()
+            .Where(s => !s.IsDeleted);
+
+        if (filter.BuyerId.HasValue && filter.BuyerId.Value != Guid.Empty)
+        {
+            query = query.Where(s => s.BuyerId == filter.BuyerId.Value);
+        }
+
+        if (filter.SellerId.HasValue && filter.SellerId.Value != Guid.Empty)
+        {
+            query = query.Where(s => s.SellerId == filter.SellerId.Value);
+        }
+
+        if (filter.Status.HasValue)
+        {
+            query = query.Where(s => s.Status == filter.Status.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filter.TrackingCode))
+        {
+            query = query.Where(s => s.TrackingCode == filter.TrackingCode);
+        }
+
+        if (filter.FromDate.HasValue)
+        {
+            query = query.Where(s => s.CreatedAt >= filter.FromDate.Value);
+        }
+
+        if (filter.ToDate.HasValue)
+        {
+            query = query.Where(s => s.CreatedAt <= filter.ToDate.Value);
+        }
+
+        var totalCount = await query.CountAsync(ct);
+
+        var items = await query
+            .OrderByDescending(s => s.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(s => new SubOrderSummaryResponse(
+                s.Id,
+                s.SubOrderNo,
+                s.OrderId,
+                s.BuyerId,
+                s.SellerId,
+                s.Status.ToString(),
+                s.PaymentMethod.ToString(),
+                s.ItemsAmount,
+                s.ShippingFeeAmount,
+                s.TotalAmount,
+                s.SellerReceiveAmount,
+                s.Items.Count(i => !i.IsDeleted),
+                s.CreatedAt,
+                s.SellerAcceptedAt,
+                s.ShippedAt,
+                s.DeliveredAt,
+                s.CompletedAt,
+                s.CancelledAt
+            ))
+            .ToListAsync(ct);
+
+        return new PagedData<SubOrderSummaryResponse>(items, PaginationMetadata.Create(page, pageSize, totalCount));
     }
 }

@@ -48,3 +48,7 @@ public sealed record SellerRejectAuctionOrderRequest(
     [Required] string ReasonNote,
     string? ReasonCode = "SellerRejected"
 );
+
+public sealed record CancelAuctionOrderRequest(
+    string? Reason = null
+);
