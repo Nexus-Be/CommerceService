@@ -1,4 +1,4 @@
-namespace Commerce.Application.Services.Order;
+﻿namespace Commerce.Application.Services.Order;
 
 using Commerce.Application.Services.Shipment;
 using System;
@@ -2539,6 +2539,106 @@ public sealed class OrderService : IOrderService
     public Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, string status, DateTimeOffset? deliveredAt, CancellationToken ct = default)
     {
         return UpdateSubOrderDeliveryStatusAsync(subOrderId, new UpdateDeliveryStatusRequest(status, deliveredAt), ct);
+    }
+
+    public async Task<DisputeRefundResponse> RefundSubOrderForDisputeAsync(Guid subOrderId, Guid reportId, string? note, CancellationToken ct = default)
+    {
+        if (reportId == Guid.Empty)
+        {
+            throw new CommerceDomainException("VAL_INVALID_INPUT", "Report ID is required.", 400);
+        }
+
+        var so = await _dbContext.SubOrders.FirstOrDefaultAsync(s => s.Id == subOrderId, ct)
+            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
+
+        var refunds = await _dbContext.OrderRefunds
+            .Where(r => r.SubOrderId == subOrderId || (r.OrderId == so.OrderId && r.SubOrderId == null))
+            .ToListAsync(ct);
+
+        // Same report again: return what happened the first time, and retry only if the money did not move.
+        var existing = refunds.FirstOrDefault(r => r.SubOrderId == subOrderId && r.RequestEventId == reportId);
+        if (existing is { Status: RefundStatus.Completed })
+        {
+            return new DisputeRefundResponse("AlreadyRefunded", existing.Amount, existing.Id, "This dispute was already refunded.");
+        }
+
+        if (so.Status is not (SubOrderStatus.Delivered or SubOrderStatus.Completed))
+        {
+            throw new CommerceDomainException("REFUND_NOT_ALLOWED", "Only a delivered sub-order can be refunded because of a dispute.", 409);
+        }
+
+        if (!so.PaidAt.HasValue || so.PaymentMethod != PaymentMethod.Wallet)
+        {
+            return new DisputeRefundResponse("ManualProcessingRequired", 0m, null, "The sub-order was not paid from the wallet, so no wallet refund can be made automatically.");
+        }
+
+        // The money already went to the seller: refunding it needs a source of funds that does not exist yet (T30), so a person decides.
+        if (so.IsEscrowSettled)
+        {
+            return new DisputeRefundResponse("ManualProcessingRequired", 0m, null, "The seller was already paid for this sub-order; the refund must be handled manually.");
+        }
+
+        // The wallet accepts one refund credit per reference, and the parent order and the sub-order are different references.
+        if (refunds.Any(r => r.SubOrderId == null && r.Status == RefundStatus.Completed))
+        {
+            return new DisputeRefundResponse("ManualProcessingRequired", 0m, null, "The parent order was already refunded; the amount must be checked manually.");
+        }
+
+        var alreadyRefunded = refunds.Where(r => r.SubOrderId == subOrderId && r.Status == RefundStatus.Completed).Sum(r => r.Amount);
+        var amount = so.TotalAmount - alreadyRefunded;
+        if (amount <= 0)
+        {
+            return new DisputeRefundResponse("AlreadyRefunded", alreadyRefunded, null, "The sub-order is already fully refunded.");
+        }
+
+        var reason = string.IsNullOrWhiteSpace(note) ? "Dispute decided in favour of the buyer." : note.Trim();
+        var refund = existing;
+        if (refund == null)
+        {
+            refund = new OrderRefund
+            {
+                Id = Guid.NewGuid(),
+                OrderId = so.OrderId,
+                SubOrderId = so.Id,
+                RefundType = alreadyRefunded > 0 ? RefundType.Partial : RefundType.Full,
+                Amount = amount,
+                Status = RefundStatus.Requested,
+                ReasonCode = "DISPUTE_RESOLVED",
+                ReasonNote = reason,
+                ActorRole = OrderActorRole.System,
+                RequestedBy = null,
+                RequestEventId = reportId,
+                RequestedAt = DateTimeOffset.UtcNow
+            };
+            _dbContext.OrderRefunds.Add(refund);
+            await _dbContext.SaveChangesAsync(ct);
+        }
+
+        bool succeeded;
+        try
+        {
+            // One stable key per report and sub-order: a retry cannot move the money twice.
+            succeeded = await _walletClient.RefundSubOrderPaymentAsync(
+                so.Id, so.BuyerId.ToString(), refund.Amount, reason, idempotencyKey: $"refund-dispute-{reportId}-{so.Id}", cancellationToken: ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Dispute refund for SubOrder '{SubOrderId}' (report '{ReportId}') could not reach the wallet.", so.Id, reportId);
+            succeeded = false;
+        }
+
+        if (!succeeded)
+        {
+            refund.FailureCode = "WALLET_REFUND_FAILED";
+            await _dbContext.SaveChangesAsync(ct);
+            return new DisputeRefundResponse("Failed", refund.Amount, refund.Id, "The wallet did not confirm the refund. Nothing was recorded as refunded; try again.");
+        }
+
+        refund.Status = RefundStatus.Completed;
+        refund.CompletedAt = DateTimeOffset.UtcNow;
+        refund.FailureCode = null;
+        await _dbContext.SaveChangesAsync(ct);
+        return new DisputeRefundResponse("Refunded", refund.Amount, refund.Id, null);
     }
 
     public async Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, UpdateDeliveryStatusRequest request, CancellationToken ct = default)

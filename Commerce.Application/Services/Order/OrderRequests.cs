@@ -1,4 +1,4 @@
-namespace Commerce.Application.Services.Order;
+﻿namespace Commerce.Application.Services.Order;
 
 using System;
 using System.Collections.Generic;
@@ -74,6 +74,11 @@ public sealed record ChangeShippingAddressRequest(
     Guid? AddressId = null,
     ShippingAddressInput? ShippingAddress = null,
     string? ContactPhone = null);
+
+/// <summary>Asks Commerce to refund a sub-order because a dispute was decided for the buyer. The amount is never sent: Commerce works it out.</summary>
+public sealed record DisputeRefundRequest(
+    Guid ReportId,
+    string? Note = null);
 
 public sealed record ApproveRefundRequest(
     string? Note = null);

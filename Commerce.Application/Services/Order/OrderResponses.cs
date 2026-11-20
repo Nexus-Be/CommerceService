@@ -1,4 +1,4 @@
-namespace Commerce.Application.Services.Order;
+﻿namespace Commerce.Application.Services.Order;
 
 using System;
 using System.Collections.Generic;
@@ -243,6 +243,13 @@ public sealed record ChangeShippingAddressResponse(
     decimal TotalAmount,
     DateTimeOffset UpdatedAt
 );
+
+/// <summary>Outcome of a dispute refund. Status is Refunded, AlreadyRefunded, ManualProcessingRequired or Failed (nothing moved, safe to retry).</summary>
+public sealed record DisputeRefundResponse(
+    string Status,
+    decimal Amount,
+    Guid? RefundId,
+    string? Message);
 
 public sealed record RefundDetailResponse(
     Guid Id,
