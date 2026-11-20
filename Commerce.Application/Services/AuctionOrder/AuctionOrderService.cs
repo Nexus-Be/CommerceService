@@ -66,6 +66,11 @@ public class AuctionOrderService : IAuctionOrderService
             _ => AuctionOrderSource.Winner
         };
 
+        if (source != AuctionOrderSource.BuyNow && (!request.WinningBidId.HasValue || request.WinningBidId == Guid.Empty))
+        {
+            throw new CommerceDomainException("VAL_INVALID_SETTLEMENT", "Winning bid ID is required for winner and second-chance settlements.", 400);
+        }
+
         if (request.WinningAmount <= 0 || depositAmount < 0)
         {
             throw new CommerceDomainException("INVALID_AMOUNT", "Winning amount must be greater than zero and deposit amount cannot be negative.", 422);

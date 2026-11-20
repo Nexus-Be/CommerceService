@@ -9,7 +9,7 @@ public class AuctionOrder : BaseEntity<Guid>
     public required Guid AuctionId { get; set; }
     public required Guid BuyerId { get; set; }
     public required Guid SellerId { get; set; }
-    public required Guid WinningBidId { get; set; }
+    public Guid? WinningBidId { get; set; }
     public required Guid ProductId { get; set; }
     public Guid? SkuId { get; set; }
     public required string ProductNameSnapshot { get; set; }

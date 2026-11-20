@@ -119,4 +119,7 @@ public interface IOrderService
 
     /// <summary>Admin/Staff: Tra cứu danh sách đơn hàng con toàn sàn.</summary>
     Task<PagedData<SubOrderSummaryResponse>> ListAdminSubOrdersAsync(AdminSubOrderFilterRequest filter, CancellationToken ct = default);
+
+    /// <summary>Thực hiện giải ngân hoàn tiền ví và chuyển trạng thái SubOrder sang Refunded khi xử lý khiếu nại thành công (Internal S2S cho UserService).</summary>
+    Task<DisputeRefundResponse> DisputeRefundSubOrderAsync(Guid subOrderId, DisputeRefundRequest request, CancellationToken ct = default);
 }

@@ -48,7 +48,7 @@ public sealed class RequireRoleAllowAnonymousTests
             .ToList();
 
         Assert.Equal(
-            new[] { nameof(OrdersController.GetDisputeEligibility), nameof(OrdersController.GetReviewEligibility), nameof(OrdersController.UpdateDeliveryStatus) },
+            new[] { nameof(OrdersController.DisputeRefundSubOrder), nameof(OrdersController.GetDisputeEligibility), nameof(OrdersController.GetReviewEligibility), nameof(OrdersController.UpdateDeliveryStatus) },
             anonymousActions);
     }
 

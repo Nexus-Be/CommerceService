@@ -845,6 +845,43 @@ Commerce Service áp dụng **Quy trình Thanh toán 2 Bước (Two-Phase Checko
 
 ---
 
+### `INTERNAL-03`: Giải Ngân Hoàn Tiền Khiếu Nại (Dispute Resolution Refund)
+* **Endpoint:** `POST /api/v1/internal/sub-orders/{subOrderId}/dispute-refund`
+* **Bảo mật:** `X-Internal-Service-Key` (UserService gọi khi Admin phân xử khiếu nại thành công cho Người mua).
+* **Quy chuẩn:**
+  - `SubOrder` phải ở trạng thái `Delivered` hoặc `Completed`. Nếu không thỏa mãn, trả về `400 Bad Request` (`INVALID_REFUND_STATUS`).
+  - Thực hiện gọi `IWalletClient.RefundSubOrderPaymentAsync` để hoàn tiền trực tiếp vào ví Buyer qua Wallet Service với idempotency key `dispute-refund-{disputeId}`.
+  - Chuyển trạng thái `SubOrder` sang `Refunded`, cập nhật `CompletedAt`.
+  - Ghi nhận `OrderStatusHistory` với `ToStatus = Refunded`, `ActorRole = System`, `Reason = $"Dispute refund: {reason}"`.
+  - Hoàn tất hoặc tạo mới bản ghi `OrderRefund` với `Status = Completed`, `ReasonCode = "DISPUTE_RESOLUTION"`.
+* **Request Body:**
+  ```json
+  {
+    "disputeId": "a1000000-0000-0000-0000-000000000001",
+    "refundAmount": 850000.0,
+    "reason": "Damaged goods in transit confirmed by support",
+    "note": "Resolved in favor of buyer under Dispute #DISP-20261121-001"
+  }
+  ```
+* **Response (HTTP 200 OK):**
+  ```json
+  {
+    "subOrderId": "02000000-0000-0000-0000-000000000001",
+    "refundId": "r1000000-0000-0000-0000-000000000001",
+    "amount": 850000.0,
+    "status": "Completed",
+    "completedAt": "2026-11-21T01:15:00Z"
+  }
+  ```
+* **Lỗi:**
+  - `401 Unauthorized` (`INTERNAL_KEY_INVALID`): Thiếu hoặc sai header `X-Internal-Service-Key`.
+  - `404 Not Found` (`SUB_ORDER_NOT_FOUND`): Không tìm thấy đơn hàng con.
+  - `400 Bad Request` (`INVALID_REFUND_STATUS`): Trạng thái đơn không hợp lệ để hoàn tiền khiếu nại.
+  - `400 Bad Request` (`WALLET_REFUND_FAILED`): Lỗi xử lý hoàn tiền từ phía Wallet Service.
+  - `503 Service Unavailable` (`INTERNAL_CONFIGURATION_ERROR`): Khóa bảo mật nội bộ chưa được cấu hình.
+
+---
+
 # PHẦN 9: WEBHOOK TIẾP NHẬN TRẠNG THÁI GIAO VẬN
 
 ### Endpoint: `POST /api/v1/sub-orders/{subOrderId}/delivery-status`
@@ -1606,7 +1643,7 @@ export interface AuctionSettlementRequest {
   auctionId: string;
   winnerId: string;
   sellerId: string;
-  winningBidId: string;
+  winningBidId?: string | null;
   productId: string;
   skuId?: string | null;
   productName: string;
@@ -1615,9 +1652,24 @@ export interface AuctionSettlementRequest {
   winningAmount: number;
   paymentDeadlineAt: string;
   depositAmount?: number | null;
-  source?: "WINNER" | "SECOND_CHANCE" | null;
+  source?: "WINNER" | "SECOND_CHANCE" | "BUY_NOW" | null;
   shippingAddress?: ShippingAddressInput | null;
   contactPhone?: string | null;
+}
+
+export interface DisputeRefundRequest {
+  disputeId: string;
+  refundAmount: number;
+  reason: string;
+  note?: string | null;
+}
+
+export interface DisputeRefundResponse {
+  subOrderId: string;
+  refundId: string;
+  amount: number;
+  status: string;
+  completedAt: string;
 }
 
 export interface AuctionSettlementResponse {

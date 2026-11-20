@@ -2,6 +2,7 @@ namespace Commerce.Application.Services.Order;
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using Commerce.Domain.Enums;
 
 public sealed record ShippingAddressInput(
@@ -100,3 +101,9 @@ public sealed record AdminSubOrderFilterRequest(
     DateTimeOffset? ToDate = null,
     int Page = 1,
     int PageSize = 20);
+
+public sealed record DisputeRefundRequest(
+    [Required] Guid DisputeId,
+    [Range(0.01, double.MaxValue)] decimal RefundAmount,
+    [Required, StringLength(255, MinimumLength = 1)] string Reason,
+    string? Note = null);

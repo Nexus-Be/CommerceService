@@ -11,5 +11,6 @@ public enum SubOrderStatus
     Delivered = 4,
     Completed = 5,
     Cancelled = 6,
-    Refunded = 7
+    Refunded = 7,
+    Returning = 8
 }

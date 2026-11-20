@@ -258,3 +258,11 @@ public sealed record RefundDetailResponse(
     DateTimeOffset RequestedAt,
     DateTimeOffset? CompletedAt
 );
+
+public sealed record DisputeRefundResponse(
+    Guid SubOrderId,
+    Guid RefundId,
+    decimal Amount,
+    string Status,
+    DateTimeOffset CompletedAt
+);

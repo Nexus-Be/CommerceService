@@ -2664,7 +2664,8 @@ public sealed class OrderService : IOrderService
                 }
             }
         }
-        else if (string.Equals(status, "DeliveryAttemptFailed", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(status, "DeliveryAttemptFailed", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "DeliveryFailed", StringComparison.OrdinalIgnoreCase))
         {
             // T024 [US4]: Retain Shipped status, log history with reason/location
             so.UpdatedAt = timestamp;
@@ -2675,6 +2676,23 @@ public sealed class OrderService : IOrderService
                 SubOrderId = so.Id,
                 FromStatus = previousStatus,
                 ToStatus = SubOrderStatus.Shipped,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
+        }
+        else if (string.Equals(status, "Returning", StringComparison.OrdinalIgnoreCase))
+        {
+            // SPEC-036 [US3]: In-flight package return transition
+            so.Status = SubOrderStatus.Returning;
+            so.UpdatedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Returning,
                 ActorRole = OrderActorRole.System,
                 Reason = formattedReason,
                 CreatedAt = timestamp
@@ -2711,6 +2729,29 @@ public sealed class OrderService : IOrderService
                 InventoryReleased = true
             };
             _dbContext.OrderCancellations.Add(cancellation);
+
+            // SPEC-036 [US4]: Penalize Buyer for delivery failure return (bom hàng)
+            if (_userClient != null)
+            {
+                try
+                {
+                    await _userClient.AdjustReputationAsync(new ReputationAdjustRequest(
+                        UserId: so.BuyerId,
+                        TargetRole: "Buyer",
+                        PartnerUserId: so.SellerId,
+                        ScoreDelta: -5,
+                        Reason: "PackageReturnedDeliveryFailed",
+                        ReferenceType: "Order",
+                        ReferenceId: so.SubOrderNo,
+                        Note: "Automated penalty for uncollected package returned to seller."
+                    ), ct);
+                    _logger.LogInformation("Buyer '{BuyerId}' penalized -5 reputation points for returned sub-order '{SubOrderNo}'.", so.BuyerId, so.SubOrderNo);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to adjust reputation for buyer '{BuyerId}' on returned sub-order '{SubOrderId}'.", so.BuyerId, so.Id);
+                }
+            }
 
             if (so.PaidAt.HasValue && so.PaymentMethod == PaymentMethod.Wallet)
             {
@@ -2926,7 +2967,8 @@ public sealed class OrderService : IOrderService
                 CreatedAt = timestamp
             });
         }
-        else if (string.Equals(status, "DeliveryAttemptFailed", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(status, "DeliveryAttemptFailed", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "DeliveryFailed", StringComparison.OrdinalIgnoreCase))
         {
             _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
             {
@@ -2939,8 +2981,23 @@ public sealed class OrderService : IOrderService
                 CreatedAt = timestamp
             });
         }
+        else if (string.Equals(status, "Returning", StringComparison.OrdinalIgnoreCase))
+        {
+            auctionOrder.Status = SubOrderStatus.Returning;
+            auctionOrder.UpdatedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                AuctionOrderId = auctionOrder.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Returning,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
+        }
         else if (string.Equals(status, "Cancelled", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(status, "DeliveryFailed", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase))
         {
             var isReturned = string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase);
@@ -3950,5 +4007,94 @@ public sealed class OrderService : IOrderService
             .ToListAsync(ct);
 
         return new PagedData<SubOrderSummaryResponse>(items, PaginationMetadata.Create(page, pageSize, totalCount));
+    }
+
+    public async Task<DisputeRefundResponse> DisputeRefundSubOrderAsync(Guid subOrderId, DisputeRefundRequest request, CancellationToken ct = default)
+    {
+        var subOrder = await _dbContext.SubOrders
+            .Include(s => s.Refunds)
+            .FirstOrDefaultAsync(s => s.Id == subOrderId && !s.IsDeleted, ct)
+            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
+
+        if (subOrder.Status != SubOrderStatus.Delivered && subOrder.Status != SubOrderStatus.Completed)
+        {
+            throw new CommerceDomainException("INVALID_REFUND_STATUS", "Sub-order status is not eligible for dispute refund.", 400);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+
+        var refund = subOrder.Refunds.FirstOrDefault(r => r.Status == RefundStatus.Requested && !r.IsDeleted);
+        if (refund != null)
+        {
+            refund.Status = RefundStatus.Completed;
+            refund.Amount = request.RefundAmount;
+            refund.ReasonCode = "DISPUTE_RESOLUTION";
+            refund.ReasonNote = string.IsNullOrWhiteSpace(request.Note)
+                ? request.Reason
+                : $"{request.Reason} | Note: {request.Note}";
+            refund.CompletedAt = now;
+            refund.UpdatedAt = now;
+        }
+        else
+        {
+            refund = new OrderRefund
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = subOrder.Id,
+                OrderId = subOrder.OrderId,
+                RefundType = RefundType.Full,
+                Amount = request.RefundAmount,
+                Status = RefundStatus.Completed,
+                ReasonCode = "DISPUTE_RESOLUTION",
+                ReasonNote = string.IsNullOrWhiteSpace(request.Note)
+                    ? request.Reason
+                    : $"{request.Reason} | Note: {request.Note}",
+                ActorRole = OrderActorRole.System,
+                RequestedBy = subOrder.BuyerId,
+                RequestedAt = now,
+                CompletedAt = now
+            };
+            _dbContext.OrderRefunds.Add(refund);
+        }
+
+        var idempotencyKey = $"dispute-refund-{request.DisputeId}";
+        var walletSuccess = await _walletClient.RefundSubOrderPaymentAsync(
+            subOrder.Id,
+            subOrder.BuyerId.ToString(),
+            request.RefundAmount,
+            request.Reason,
+            idempotencyKey,
+            ct);
+
+        if (!walletSuccess)
+        {
+            throw new CommerceDomainException("WALLET_REFUND_FAILED", "Failed to process refund payment via wallet service.", 400);
+        }
+
+        var fromStatus = subOrder.Status;
+        subOrder.Status = SubOrderStatus.Refunded;
+        subOrder.UpdatedAt = now;
+        subOrder.CompletedAt = now;
+
+        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            FromStatus = fromStatus,
+            ToStatus = SubOrderStatus.Refunded,
+            ChangedBy = null,
+            ActorRole = OrderActorRole.System,
+            Reason = $"Dispute refund: {request.Reason}",
+            CreatedAt = now
+        });
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        return new DisputeRefundResponse(
+            SubOrderId: subOrder.Id,
+            RefundId: refund.Id,
+            Amount: refund.Amount,
+            Status: refund.Status.ToString(),
+            CompletedAt: now);
     }
 }

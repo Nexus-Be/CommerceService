@@ -34,8 +34,19 @@ public sealed class FulfillmentClient : IFulfillmentClient
         var failOpenSetting = configuration?["StockPolicy:FailOpen"]
             ?? Environment.GetEnvironmentVariable("STOCK_FAIL_OPEN");
 
-        // Mặc định FailOpen = true trong môi trường Dev/Local nếu không cấu hình
-        _failOpen = string.IsNullOrEmpty(failOpenSetting) || (bool.TryParse(failOpenSetting, out var val) && val);
+        var environment = configuration?["ASPNETCORE_ENVIRONMENT"]
+            ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+        var isDevelopment = string.Equals(environment, "Development", StringComparison.OrdinalIgnoreCase);
+
+        // Fail-closed governance: FailOpen defaults to false in staging/production unless explicitly configured
+        if (!string.IsNullOrEmpty(failOpenSetting))
+        {
+            _failOpen = bool.TryParse(failOpenSetting, out var val) && val;
+        }
+        else
+        {
+            _failOpen = isDevelopment;
+        }
     }
 
     public async Task<bool> CheckStockAvailabilityAsync(Guid skuId, int quantity, CancellationToken ct = default)
@@ -166,7 +177,7 @@ public sealed class FulfillmentClient : IFulfillmentClient
             }
 
             var errorBody = await response.Content.ReadAsStringAsync(ct);
-            _logger.LogWarning("[REST Fulfillment Client] Stock reservation failed for Order '{OrderId}'. Status: {StatusCode}, Details: {Details}",
+            _logger.LogError("[REST Fulfillment Client] Stock reservation failed for Order '{OrderId}'. Status: {StatusCode}, Details: {Details}",
                 orderId, response.StatusCode, errorBody);
 
             if (!_failOpen)
@@ -176,7 +187,7 @@ public sealed class FulfillmentClient : IFulfillmentClient
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[REST Fulfillment Client] Connection error reserving stock for Order '{OrderId}'.", orderId);
+            _logger.LogError(ex, "[REST Fulfillment Client] Connection error reserving stock for Order '{OrderId}'.", orderId);
             if (!_failOpen)
             {
                 throw new CommerceDomainException("STOCK_RESERVATION_FAILED", "Warehouse inventory service is temporarily unreachable.", 503);
