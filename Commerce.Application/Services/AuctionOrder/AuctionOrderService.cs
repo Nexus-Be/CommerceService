@@ -592,6 +592,13 @@ public class AuctionOrderService : IAuctionOrderService
             throw new CommerceDomainException("INVALID_STATUS", "Auction order cannot be rejected in its current status.", 400);
         }
 
+        // Before the buyer has paid there is nothing to reject: the auction side only accepts a seller decision for a paid order, so
+        // cancelling here would leave the buyer's locked money and the auction unchanged while the order shows as cancelled.
+        if (auctionOrder.Status == SubOrderStatus.PendingPayment)
+        {
+            throw new CommerceDomainException("ORDER_NOT_PAID", "The buyer has not paid this auction order yet, so it cannot be rejected.", 400);
+        }
+
         var now = DateTimeOffset.UtcNow;
         var previousStatus = auctionOrder.Status;
         auctionOrder.Status = SubOrderStatus.Cancelled;
