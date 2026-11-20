@@ -1,4 +1,4 @@
-namespace Commerce.Application.Services.Order;
+﻿namespace Commerce.Application.Services.Order;
 
 using Commerce.Application.Services.Shipment;
 using System;
@@ -2848,6 +2848,23 @@ public sealed class OrderService : IOrderService
                 _logger.LogInformation("Delivery-failed SubOrder '{SubOrderId}' has COD payment method. Skipping refund request.", so.Id);
             }
         }
+        else if (string.Equals(status, "Returning", StringComparison.OrdinalIgnoreCase))
+        {
+            // The parcel is on its way back to the seller. Record the milestone only: cancelling the order, refunding and restocking
+            // happen when the carrier reports "Returned", never while the goods are still in transit.
+            so.UpdatedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = previousStatus,
+                ToStatus = previousStatus,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
+        }
         else
         {
             throw new CommerceDomainException("INVALID_DELIVERY_STATUS", "The provided delivery status is not supported.", 400);
@@ -2988,6 +3005,21 @@ public sealed class OrderService : IOrderService
                 AuctionOrderId = auctionOrder.Id,
                 FromStatus = previousStatus,
                 ToStatus = SubOrderStatus.Cancelled,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
+        }
+        else if (string.Equals(status, "Returning", StringComparison.OrdinalIgnoreCase))
+        {
+            // The parcel is on its way back to the seller. Record the milestone only: cancelling the order, refunding and restocking
+            // happen when the carrier reports "Returned", never while the goods are still in transit.
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                AuctionOrderId = auctionOrder.Id,
+                FromStatus = previousStatus,
+                ToStatus = previousStatus,
                 ActorRole = OrderActorRole.System,
                 Reason = formattedReason,
                 CreatedAt = timestamp
