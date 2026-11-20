@@ -1354,6 +1354,9 @@ public class OrderServiceTests
         {
             Id = subOrderId,
             SubOrderNo = "SUB-TEST-00003",
+            CarrierCode = "GHN",
+            TrackingCode = "GHN-TRACK-3",
+            ShipmentPendingCreation = false,
             OrderId = orderId,
             BuyerId = buyerId,
             SellerId = sellerId,
@@ -1385,6 +1388,9 @@ public class OrderServiceTests
         result.Should().NotBeNull();
         result.SubOrderId.Should().Be(subOrderId);
         result.BuyerId.Should().Be(buyerId);
+        result.CarrierCode.Should().Be("GHN");
+        result.TrackingCode.Should().Be("GHN-TRACK-3");
+        result.ShipmentPendingCreation.Should().BeFalse();
     }
 
     [Fact]

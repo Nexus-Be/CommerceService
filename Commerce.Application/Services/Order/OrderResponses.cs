@@ -81,7 +81,10 @@ public sealed record SubOrderDetailResponse(
     decimal ShippingFeeAmount,
     decimal TotalAmount,
     DateTimeOffset CreatedAt,
-    List<SubOrderItemResponse> Items);
+    List<SubOrderItemResponse> Items,
+    string? CarrierCode = null,
+    string? TrackingCode = null,
+    bool ShipmentPendingCreation = false);
 
 public sealed record SubOrderShipmentInfo(
     Guid SubOrderId,

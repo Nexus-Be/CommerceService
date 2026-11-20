@@ -1182,7 +1182,10 @@ public sealed class OrderService : IOrderService
                 i.Quantity,
                 i.UnitPrice,
                 i.LineTotal
-            )).ToList()
+            )).ToList(),
+            so.CarrierCode,
+            so.TrackingCode,
+            so.ShipmentPendingCreation
         )).ToList();
 
         var orderNo = $"ORD-{order.Id.ToString()[..8].ToUpperInvariant()}";
@@ -1297,7 +1300,10 @@ public sealed class OrderService : IOrderService
                 i.Quantity,
                 i.UnitPrice,
                 i.LineTotal
-            )).ToList()
+            )).ToList(),
+            so.CarrierCode,
+            so.TrackingCode,
+            so.ShipmentPendingCreation
         );
     }
 
