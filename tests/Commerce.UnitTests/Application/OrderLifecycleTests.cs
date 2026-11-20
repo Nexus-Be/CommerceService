@@ -1,4 +1,4 @@
-namespace Commerce.UnitTests.Application;
+﻿namespace Commerce.UnitTests.Application;
 
 using System;
 using System.Collections.Generic;
@@ -981,6 +981,30 @@ public class OrderLifecycleTests : IDisposable
     // =========================================================================
     // US2: MILESTONE DELIVERY WEBHOOK & TIMELINE TESTS (T013, T014)
     // =========================================================================
+
+    [Fact]
+    public async Task UpdateDeliveryStatus_Returning_RecordsAMilestoneWithoutCancellingRefundingOrRestocking()
+    {
+        // Arrange: a paid wallet order whose parcel is with the carrier
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (_, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Shipped);
+        var service = CreateOrderService();
+
+        // Act
+        await service.UpdateSubOrderDeliveryStatusAsync(
+            subOrder.Id,
+            new UpdateDeliveryStatusRequest("Returning", DateTimeOffset.UtcNow, "GHN", "GHN-123", "Parcel is on its way back"),
+            CancellationToken.None);
+
+        // Assert: accepted (no 400), recorded in the history, and nothing financial happened
+        var updated = await _dbContext.SubOrders.Include(s => s.StatusHistories).FirstAsync(s => s.Id == subOrder.Id);
+        updated.Status.Should().Be(SubOrderStatus.Shipped);
+        updated.CancelledAt.Should().BeNull();
+        updated.StatusHistories.Should().ContainSingle(h => h.Reason != null && h.Reason.StartsWith("[Returning]"));
+        (await _dbContext.OrderRefunds.CountAsync()).Should().Be(0);
+        (await _dbContext.OrderCancellations.CountAsync()).Should().Be(0);
+    }
 
     [Fact]
     public async Task UpdateDeliveryStatus_ShouldAppendOrderStatusHistoryForMilestones()

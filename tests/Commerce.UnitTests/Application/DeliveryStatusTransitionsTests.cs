@@ -1,4 +1,4 @@
-namespace Commerce.UnitTests.Application;
+﻿namespace Commerce.UnitTests.Application;
 
 using Commerce.Application.Services.Order;
 using Commerce.Domain.Enums;
@@ -16,6 +16,12 @@ public sealed class DeliveryStatusTransitionsTests
     [InlineData(SubOrderStatus.Shipped, "Returned", true)]
     [InlineData(SubOrderStatus.Delivered, "Returned", true)]
     [InlineData(SubOrderStatus.Paid, "Picking", true)]
+    // "Returning" is only a milestone while the parcel is still with the carrier
+    [InlineData(SubOrderStatus.Shipped, "Returning", true)]
+    [InlineData(SubOrderStatus.Confirmed, "Returning", true)]
+    [InlineData(SubOrderStatus.Cancelled, "Returning", false)]
+    [InlineData(SubOrderStatus.Refunded, "Returning", false)]
+    [InlineData(SubOrderStatus.Completed, "Returning", false)]
     // a late or replayed event must never undo progress
     [InlineData(SubOrderStatus.Completed, "InTransit", false)]
     [InlineData(SubOrderStatus.Delivered, "InTransit", false)]

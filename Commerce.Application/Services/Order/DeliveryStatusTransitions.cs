@@ -1,4 +1,4 @@
-namespace Commerce.Application.Services.Order;
+﻿namespace Commerce.Application.Services.Order;
 
 using System;
 using System.Linq;
@@ -22,6 +22,10 @@ public static class DeliveryStatusTransitions
             return current is SubOrderStatus.Confirmed or SubOrderStatus.Shipped;
 
         if (Is("Delivered"))
+            return current is SubOrderStatus.Confirmed or SubOrderStatus.Shipped;
+
+        // "Returning" is only a milestone (the parcel is on its way back); it never changes money or stock, so it needs an order that is still in the carrier's hands.
+        if (Is("Returning"))
             return current is SubOrderStatus.Confirmed or SubOrderStatus.Shipped;
 
         if (Is("Cancelled", "DeliveryFailed", "Returned"))
