@@ -1716,3 +1716,22 @@ export interface ReviewEligibilityDto {
 - `GET /api/v1/admin/sub-orders`
   - **Mô tả:** Tra cứu danh sách đơn con toàn sàn (`[RequireRole("admin", "staff")]`), hỗ trợ lọc theo `sellerId`, `buyerId`, `status`, `trackingCode`, `fromDate`, `toDate`, phân trang database.
 
+
+---
+
+## Bổ sung: kho của seller khi báo phí, đặt đơn và tạo vận đơn (SP-05)
+
+Mỗi shop giao từ kho riêng của mình. Khi kho thiếu, `POST /api/v1/checkouts/quote` và `POST /api/v1/checkouts` (đặt đơn) trả lỗi 422 chuyển tiếp từ Fulfillment, **không trừ tiền**:
+
+| Mã lỗi | HTTP | Ý nghĩa |
+|---|---|---|
+| `SELLER_WAREHOUSE_MISSING` | 422 | Seller của một sản phẩm trong giỏ chưa có kho đang hoạt động |
+| `SELLER_WAREHOUSE_INCOMPLETE` | 422 | Kho có nhưng thiếu quận hoặc phường lấy hàng |
+
+`POST /api/v1/sub-orders/{subOrderId}/shipments/retry` (seller) cũng trả hai mã trên khi kho chưa dùng được, ngoài `SHIPMENT_ALREADY_EXISTS` (400), `INVALID_STATUS` (400) và `FULFILLMENT_SERVICE_UNAVAILABLE` (503).
+
+Với bước đặt đơn, câu trả lời bị mất (mạng, 5xx không có mã) là **kết quả chưa rõ**: báo giá đã bị dùng và có thể đã có đơn hoặc khoản thu; client phải cho người mua kiểm tra đơn hàng và ví trước khi đặt lại. Với bước báo giá, mọi lỗi đều an toàn để thử lại.
+
+## Bổ sung: mã vận đơn trong chi tiết đơn con (B1)
+
+`GET /api/v1/sub-orders/{subOrderId}` và các đơn con trong `GET /api/v1/orders/{id}` có thêm `carrierCode`, `trackingCode` và `shipmentPendingCreation`. Đơn đã chấp nhận mà `trackingCode` rỗng nghĩa là vận đơn chưa tạo được: seller dùng nút tạo lại vận đơn.
