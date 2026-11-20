@@ -1,4 +1,4 @@
-namespace Commerce.Infrastructure.Services.Fulfillment;
+﻿namespace Commerce.Infrastructure.Services.Fulfillment;
 
 using System;
 using System.Collections.Generic;
@@ -34,8 +34,8 @@ public sealed class FulfillmentClient : IFulfillmentClient
         var failOpenSetting = configuration?["StockPolicy:FailOpen"]
             ?? Environment.GetEnvironmentVariable("STOCK_FAIL_OPEN");
 
-        // Mặc định FailOpen = true trong môi trường Dev/Local nếu không cấu hình
-        _failOpen = string.IsNullOrEmpty(failOpenSetting) || (bool.TryParse(failOpenSetting, out var val) && val);
+        // Fail closed unless it is switched on explicitly (isolated QA only): an order must never be accepted without a stock reservation.
+        _failOpen = bool.TryParse(failOpenSetting, out var val) && val;
     }
 
     public async Task<bool> CheckStockAvailabilityAsync(Guid skuId, int quantity, CancellationToken ct = default)
@@ -169,21 +169,34 @@ public sealed class FulfillmentClient : IFulfillmentClient
             _logger.LogWarning("[REST Fulfillment Client] Stock reservation failed for Order '{OrderId}'. Status: {StatusCode}, Details: {Details}",
                 orderId, response.StatusCode, errorBody);
 
-            if (!_failOpen)
+            // A 4xx answer is a business refusal (not enough stock, unknown SKU): always reject, never fail open.
+            if ((int)response.StatusCode is >= 400 and < 500)
             {
                 return false;
             }
+
+            // Anything else (5xx) means the warehouse could not do its job; only an explicit QA switch lets the order through.
+            if (_failOpen)
+            {
+                return true;
+            }
+
+            throw new CommerceDomainException("FULFILLMENT_UNAVAILABLE", "Warehouse inventory service could not reserve stock right now.", 503);
+        }
+        catch (CommerceDomainException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[REST Fulfillment Client] Connection error reserving stock for Order '{OrderId}'.", orderId);
-            if (!_failOpen)
+            if (_failOpen)
             {
-                throw new CommerceDomainException("STOCK_RESERVATION_FAILED", "Warehouse inventory service is temporarily unreachable.", 503);
+                return true;
             }
-        }
 
-        return _failOpen;
+            throw new CommerceDomainException("FULFILLMENT_UNAVAILABLE", "Warehouse inventory service is temporarily unreachable.", 503);
+        }
     }
 
     public async Task<bool> CommitStockAsync(Guid orderId, CancellationToken ct = default)
