@@ -1,0 +1,364 @@
+openapi: 3.0.3
+info:
+  title: WalletService Integration Contract for CommerceService
+  description: OpenAPI 3.0 specification of WalletService REST endpoints consumed by CommerceService.
+  version: 2026-11-10
+servers:
+  - url: http://localhost:8008
+    description: Local / Docker container WalletService endpoint
+
+paths:
+  /api/v1/wallets/orders/{orderId}/payment:
+    post:
+      summary: Debit buyer wallet for order payment
+      description: Debits buyer wallet balance. Idempotent on orderId.
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: x-user-id
+          in: header
+          required: true
+          description: Authenticated buyer UUID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: number
+                  format: decimal
+                  minimum: 0.01
+                  example: 100000.00
+      responses:
+        '200':
+          description: Payment transaction succeeded or idempotent replay
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletOrderTransactionResponse'
+        '400':
+          description: Insufficient balance or invalid input
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Missing or invalid x-user-id header
+        '404':
+          description: Buyer wallet not found
+        '409':
+          description: Payment order conflict
+
+  /api/v1/wallets/sub-orders/{subOrderId}/settle:
+    post:
+      summary: Settle escrow funds to seller wallet
+      description: S2S call without identity headers. Credits seller wallet with EscrowRelease.
+      parameters:
+        - name: subOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sellerId, amount]
+              properties:
+                sellerId:
+                  type: string
+                  format: uuid
+                amount:
+                  type: number
+                  format: decimal
+                  minimum: 0.01
+      responses:
+        '200':
+          description: Settlement succeeded or idempotent replay
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletOrderTransactionResponse'
+        '409':
+          description: Settlement conflict (replayed with different amount/seller)
+
+  /api/v1/wallets/orders/{orderId}/refund:
+    post:
+      summary: Refund master order to buyer
+      description: S2S call without identity headers. Refunds up to previously debited amount.
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, amount]
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+                amount:
+                  type: number
+                  format: decimal
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: Refund succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletOrderTransactionResponse'
+        '409':
+          description: Refund exceeds payment or conflicting parameters
+
+  /api/v1/wallets/sub-orders/{subOrderId}/refund:
+    post:
+      summary: Refund sub-order to buyer
+      description: S2S call without identity headers. Skips master payment lookup.
+      parameters:
+        - name: subOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, amount]
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+                amount:
+                  type: number
+                  format: decimal
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: Sub-order refund succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletOrderTransactionResponse'
+
+  /api/v1/wallets/checkout/direct:
+    post:
+      summary: Initiate direct gateway (VNPay) checkout session
+      description: Returns genuine signed VNPay payment URL for the order.
+      parameters:
+        - name: x-user-id
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId, amount]
+              properties:
+                orderId:
+                  type: string
+                  format: uuid
+                amount:
+                  type: number
+                  format: decimal
+                returnUrl:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: Gateway session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DirectCheckoutResponse'
+
+  /api/v1/wallets/checkout/direct/{orderId}:
+    get:
+      summary: Poll settled VNPay checkout status
+      description: Polling endpoint for CommerceService to query payment settlement status.
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: x-user-id
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DirectCheckoutStatusResponse'
+
+  /api/v1/wallets/me:
+    get:
+      summary: Get own wallet balance
+      parameters:
+        - name: x-user-id
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Wallet balance retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  userId:
+                    type: string
+                    format: uuid
+                  balance:
+                    type: number
+                    format: decimal
+                  currency:
+                    type: string
+                    example: Vnd
+                  status:
+                    type: string
+                    example: Active
+
+components:
+  schemas:
+    WalletOrderTransactionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        walletId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          example: PurchaseDebit
+        amount:
+          type: number
+          format: decimal
+        currency:
+          type: string
+          example: Vnd
+        balanceAfter:
+          type: number
+          format: decimal
+        status:
+          type: string
+          example: Success
+        note:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    DirectCheckoutResponse:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          format: decimal
+        paymentUrl:
+          type: string
+          format: uri
+        status:
+          type: string
+          example: Pending
+        createdAt:
+          type: string
+          format: date-time
+
+    DirectCheckoutStatusResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        transactionId:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          type: string
+          enum: [Pending, Success, Failed]
+        amount:
+          type: number
+          format: decimal
+        paidAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+          example: INSUFFICIENT_BALANCE
+        detail:
+          type: string
+          example: Insufficient wallet balance for this purchase.
+        traceId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time

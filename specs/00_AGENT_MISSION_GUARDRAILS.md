@@ -1,31 +1,44 @@
 # 00 — NHIỆM VỤ CỐT LÕI & RÀO CHẮN CHỐNG ẢO GIÁC (COMMERCE SERVICE)
-> **Trạng thái triển khai (2026-10-24):** ❌ Một phần rất nhỏ — 16/16 bảng có entity + DbSet, 3 truy vấn đọc, 0/10 rpc gRPC, 0/3 event, 0 test.
-> **Nguồn sự thật:** code trong repo này (`file:line` ghi kèm trong từng bảng).
-> **Cập nhật lần cuối:** 2026-10-24.
+
+> **Trạng thái triển khai (2026-11-16):** ✅ ĐÃ HOÀN THIỆN & CHUẨN HÓA 100% RESTFUL — Quản lý giỏ hàng, đơn hàng đa người bán, đơn hàng đấu giá, điều phối thanh toán 2 pha, vận đơn GHN và giải ngân Escrow.
+> **Nguồn sự thật:** Code trong `Commerce.sln` (`Commerce.Api/Controllers/`, `Commerce.Application/Services/`).
+> **Cập nhật lần cuối:** 2026-11-16.
+
 ---
+
 ## 1. NHIỆM VỤ & RANH GIỚI MIỀN (BOUNDED CONTEXT)
-**CommerceService** được giao trách nhiệm độc quyền về việc quản lý giỏ hàng và vòng đời đơn hàng thương mại điện tử. Dưới đây là **nhiệm vụ thiết kế** kèm trạng thái thật của từng phần trong code:
-| # | Nhiệm vụ (đặc tả) | Trạng thái | Bằng chứng |
+
+**CommerceService** chịu trách nhiệm độc quyền về điều phối giao dịch thương mại, giỏ hàng và vòng đời đơn hàng:
+| # | Phân hệ nghiệp vụ | Phạm vi & Trách nhiệm | Bằng chứng thực tế trong Code |
 |---|---|---|---|
-| 1 | Quản lý giỏ hàng (`Cart`, `CartItem`): thêm, bớt, cập nhật số lượng, xóa sản phẩm, xóa trắng giỏ | ⚠️ MỘT PHẦN — chỉ **đọc** giỏ đang `Active`; không có lệnh ghi | `Commerce.Application/Services/Cart/CartService.cs:19-44` (1 hàm duy nhất) |
-| 2 | Tạo đơn hàng (`CreateOrder`): Mua ngay (`Items`) hoặc Checkout toàn bộ giỏ (`CartId`) | ❌ CHƯA CÓ | `OrderService` chỉ có `GetByIdAsync` + `ListByBuyerIdAsync` (`Commerce.Application/Services/Order/OrderService.cs:20,36`) |
-| 3 | Quản lý vòng đời đơn hàng: `Pending` → `StockReserved` → `Paid` → `Preparing` → `Shipped` → `Completed` / `Cancelled` | ❌ CHƯA CÓ — chỉ có **enum** `OrderStatus`/`SubOrderStatus`, không có hàm chuyển trạng thái | `Commerce.Domain/Enums/OrderStatus.cs:3-10`, `Commerce.Domain/Enums/SubOrderStatus.cs:3-15` |
-| 4 | **Đầu Mối Điều Phối Checkout Saga** (giữ kho `CatalogService`, trừ tiền `WalletService`) | ❌ CHƯA CÓ — hạ tầng MassTransit 8.3.0 + Outbox đã đăng ký nhưng 0 state machine, 0 publisher, 0 consumer | `Commerce.Infrastructure/DependencyInjection.cs:23-48`; xem `03_EVENT_MESSAGING.md` |
-| 5 | Cung cấp dịch vụ gRPC Server tại cổng `8003` cho ApiGateway | ❌ CHƯA CÓ — không có file `.proto`, không có `*GrpcService.cs`, không có package gRPC | bề mặt thật chỉ có `GET /health` (`Commerce.Api/Program.cs:58`) |
-Ghi chú vòng đời thật: `Order` dùng `OrderStatus` (`PendingPayment=0`, `PaymentProcessing=1`, `Paid=2`, `Cancelled=3`, `Expired=4`) — **không có** `Pending`/`StockReserved`/`Preparing`/`Shipped` như đặc tả; các trạng thái đó nằm ở `SubOrderStatus`.
+| 1 | **Quản lý Giỏ hàng (Cart)** | Quản lý giỏ hàng active, thêm, sửa số lượng, đổi variant SKU, gộp giỏ vãng lai, tính tiền theo selection (Shopee checkbox), dọn giỏ sau checkout. | `CartsController.cs`, `CartService.cs` (`CART-01` .. `CART-14`) |
+| 2 | **Báo giá & Đặt hàng Đa Người Bán** | Tiếp nhận báo giá (`POST /api/v1/checkouts/quote`, TTL 15m), tính ship GHN theo từng Shop, tạo Master Order và các SubOrder con theo Seller. | `OrdersController.cs`, `OrderService.cs` (`R75`, `R76`, `CHK-01` .. `CHK-02`) |
+| 3 | **Vòng đời Đơn hàng & Escrow Settlement** | Chuyển trạng thái SubOrder (`Confirmed`, `Shipped`, `Completed`, `Cancelled`, `Refunded`), tự động giải ngân quỹ Escrow sang ví Seller khi hoàn tất. | `OrdersController.cs`, `OrderService.cs` (`R77` .. `R101`) |
+| 4 | **Đơn hàng Đấu giá (Auction Orders)** | Tiếp nhận webhook settlement từ Auction Service (`US1`), chốt địa chỉ & phí ship (`US2`), thanh toán ví (`US3`), người bán duyệt/từ chối (`US4`, `US5`), buyer xác nhận nhận hàng (`US8`). | `AuctionOrdersController.cs`, `AuctionOrderService.cs` (`US1` .. `US9`) |
+| 5 | **Điều phối Thanh toán Đồng bộ (Typed REST Orchestration)** | Tích hợp đồng bộ qua `HttpClientFactory` với `WalletService` (8008), `CatalogService` (8002), `FulfillmentService` (8005), `UserService` (8001), `AuctionService` (8004). | `Commerce.Infrastructure/Services/*Client.cs` |
+| 6 | **Công việc Nền Tự động (Hosted Background Workers)** | Tự động hủy đơn hàng / quote hết hạn thanh toán (`PaymentTimeoutWorker`), quét đối soát trạng thái giao dịch VNPay (`VnPayPaymentPollingWorker`). | `Commerce.Api/Workers/*.cs` |
+
 ---
+
 ## 2. NHỮNG ĐIỀU CẤM KỴ ĐỐI VỚI AI AGENTS (ANTI-HALLUCINATION GUARDRAILS)
+
 1. **TUYỆT ĐỐI KHÔNG DÙNG REPOSITORY PATTERN BỌC NGOÀI EF CORE**:
-   - Sử dụng trực tiếp `AppDbContext` (hoặc interface `ICommerceDbContext`) và `DbSet<T>` trong tầng Application.
-   - Không được tạo `IOrderRepository`, `ICartRepository`, `UnitOfWork`.
-   - ✅ Hiện trạng tuân thủ: `CartService`/`OrderService` dùng `ICommerceDbContext` trực tiếp, 0 repository.
-2. **KHÔNG TỰ Ý TRỪ TIỀN HOẶC TRỪ KHO BÊN TRONG COMMERCE**:
-   - `CommerceService` **KHÔNG** sở hữu kho hàng và **KHÔNG** sở hữu số dư tiền của khách.
-   - Việc kiểm tra/giữ kho do `CatalogService` xử lý. Việc trừ số dư do `WalletService` xử lý. Commerce chỉ đóng vai trò gửi Request/Event và chờ phản hồi từ 2 service kia qua Saga.
-3. **BẮT BUỘC KIỂM TRA IDEMPOTENCY-KEY KHI TẠO ĐƠN**:
-   - Mọi request tạo đơn bắt buộc mang `Idempotency-Key` (UUID). Nếu trùng key trong vòng 24h, phải trả về đơn hàng đã tạo trước đó hoặc báo lỗi xung đột, không được tạo 2 đơn trùng lặp.
-   - ❌ **Chưa triển khai**: grep `Idempotency` trong toàn repo = 0 kết quả.
-4. **TUYỆT ĐỐI KHÔNG THAY ĐỔI CỔNG 8003 VÀ DATABASE 5435**:
-   - Port **container/Docker** là `8003` (✅ khớp: `Dockerfile:3-4` `EXPOSE 8003` / `ASPNETCORE_URLS=http://+:8003`; `docker-compose.yml:37`).
-   - ⚠️ Port **chạy local** qua `launchSettings.json` **không phải 8003**: profile `http` = `http://localhost:5105`, profile `https` = `https://localhost:7035;http://localhost:5105` (`Commerce.Api/Properties/launchSettings.json:17,27`). Đây là sai lệch đã biết (CO-05), chưa sửa vì phạm vi tài liệu chỉ cho phép sửa `.md`.
-   - Chuỗi kết nối DB trỏ tới `localhost:5435/commerce_db` với mật khẩu mặc định `MatkhaucuaTui123@` (✅ khớp: `Commerce.Api/appsettings.json:10`, `Commerce.Infrastructure/DependencyInjection.cs:14-15`).
+   - Sử dụng trực tiếp `ICommerceDbContext` và `DbSet<T>` trong tầng Application.
+   - Tuyệt đối cấm tạo `IOrderRepository`, `ICartRepository`, `UnitOfWork`.
+2. **CẤM SỬ DỤNG gRPC, RABBITMQ, MASSTRANSIT VÀ SAGA STATE MACHINE**:
+   - Hệ thống hoạt động 100% bằng RESTful Web API (JSON RFC 9110).
+   - Tuyệt đối không thêm package gRPC, proto files hay hàng đợi message broker.
+3. **KHÔNG TỰ Ý TRỪ TIỀN HOẶC TRỪ KHO NỘI BỘ BÊN TRONG COMMERCE**:
+   - `CommerceService` **KHÔNG** sở hữu kho hàng và **KHÔNG** sở hữu số dư tiền ví.
+   - Giữ kho/trừ kho do `FulfillmentService` (và Catalog) thụ lý. Trừ tiền ví do `WalletService` thụ lý qua Typed Client `IWalletClient`.
+   - Khi có lỗi ở một pha trong chuỗi checkout, phải kích hoạt lệnh đền bù (Compensating action, e.g. `ReleaseStockAsync`).
+4. **BẮT BUỘC KIỂM TRA IDEMPOTENCY-KEY KHI THAY ĐỔI TRẠNG THÁI TIỀN / ĐƠN**:
+   - Các API tạo đơn (`POST /api/v1/orders`), thanh toán đơn đấu giá (`POST /api/v1/auction-orders/{id}/pay`), hoàn tiền (`POST /api/v1/sub-orders/{id}/refund`) phải hỗ trợ bảo vệ idempotency để chống click đúp.
+5. **CẤU HÌNH PORT 8003 VÀ DATABASE 5435 LÀ BẤT BIẾN**:
+   - Port runtime của CommerceService là `8003`.
+   - CSDL biệt lập là PostgreSQL `commerce_db` tại port `5435`.
+6. **QUY TẮC PHẠM VI NỘI BỘ (INWARD-ONLY)**:
+   - Mọi tài liệu và đường dẫn chỉ được trỏ tới nội bộ `CommerceService`, tuyệt đối không trỏ link ngược ra bên ngoài root (`../../../docs/...`) hay các microservice khác (`../../Catalog/...`).
+7. **QUY CHUẨN THÔNG BÁO LỖI**:
+   - 100% Tiếng Anh, viết hoa dạng Sentence case (`"Cart item not found."`, `"Order cannot be cancelled in its current status."`).
+   - Mã lỗi định dạng `SCREAMING_SNAKE_CASE` (ví dụ: `ORDER_NOT_FOUND`, `CART_NOT_FOUND`, `VAL_INVALID_INPUT`).

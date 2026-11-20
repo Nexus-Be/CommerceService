@@ -1,0 +1,117 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Auction Orders Buyer API",
+    "version": "v1"
+  },
+  "paths": {
+    "/api/v1/auction-orders/me": {
+      "get": {
+        "tags": ["AuctionOrders"],
+        "summary": "Người mua thắng đấu giá lấy danh sách đơn hàng đấu giá của mình",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PendingPayment",
+                "Paid",
+                "Confirmed",
+                "Shipping",
+                "Delivered",
+                "Completed",
+                "Cancelled"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lấy danh sách đơn đấu giá thành công",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/AuctionOrderSummaryResponse"
+                          }
+                        },
+                        "pagination": {
+                          "$ref": "#/components/schemas/PaginationMetadata"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Chưa đăng nhập hoặc thiếu Bearer Token"
+          },
+          "403": {
+            "description": "Không có quyền truy cập (yêu cầu vai trò buyer, admin hoặc staff)"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AuctionOrderSummaryResponse": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "orderNo": { "type": "string" },
+          "auctionId": { "type": "string", "format": "uuid" },
+          "winningBidId": { "type": "string", "format": "uuid" },
+          "orderSource": { "type": "string", "example": "WINNER" },
+          "status": { "type": "string", "example": "PendingPayment" },
+          "sellerId": { "type": "string", "format": "uuid" },
+          "winningAmount": { "type": "number", "format": "decimal", "example": 1500000.0 },
+          "depositAmount": { "type": "number", "format": "decimal", "example": 200000.0 },
+          "shippingFeeAmount": { "type": "number", "format": "decimal", "nullable": true, "example": 30000.0 },
+          "totalAmount": { "type": "number", "format": "decimal", "nullable": true, "example": 1330000.0 },
+          "paymentDeadlineAt": { "type": "string", "format": "date-time", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PaginationMetadata": {
+        "type": "object",
+        "properties": {
+          "pageIndex": { "type": "integer", "example": 1 },
+          "pageSize": { "type": "integer", "example": 20 },
+          "totalCount": { "type": "integer", "example": 1 },
+          "totalPages": { "type": "integer", "example": 1 },
+          "hasPreviousPage": { "type": "boolean", "example": false },
+          "hasNextPage": { "type": "boolean", "example": false }
+        }
+      }
+    }
+  }
+}

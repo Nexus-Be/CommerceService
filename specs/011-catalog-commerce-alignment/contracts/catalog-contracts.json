@@ -1,0 +1,198 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "CatalogService - Consumer Contract for CommerceService",
+    "description": "OpenAPI contracts exposed by CatalogService (Port 8002) consumed by CommerceService (Port 8003)",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/internal/variants": {
+      "post": {
+        "summary": "Batch gets variant details for cart and checkout validation",
+        "operationId": "BatchGetVariants",
+        "parameters": [
+          {
+            "name": "X-Internal-Service-Key",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchGetVariantsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Variants retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchVariantResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDetails" }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - Invalid internal service key",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDetails" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/internal/catalog/skus/validate-variant-switch": {
+      "post": {
+        "summary": "Validates switching variant in cart",
+        "operationId": "ValidateVariantSwitch",
+        "parameters": [
+          {
+            "name": "X-Internal-Service-Key",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateVariantSwitchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Switch validation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateVariantSwitchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Variant mismatch (different parent product or seller)",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDetails" }
+              }
+            }
+          },
+          "404": {
+            "description": "SKU not found",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDetails" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BatchGetVariantsRequest": {
+        "type": "object",
+        "required": ["variantIds"],
+        "properties": {
+          "variantIds": {
+            "type": "array",
+            "items": { "type": "string", "format": "uuid" },
+            "maxItems": 100
+          }
+        }
+      },
+      "BatchVariantItemDto": {
+        "type": "object",
+        "required": [
+          "variantId",
+          "productId",
+          "sellerId",
+          "isPurchasable"
+        ],
+        "properties": {
+          "variantId": { "type": "string", "format": "uuid" },
+          "productId": { "type": "string", "format": "uuid" },
+          "skuCode": { "type": "string" },
+          "variantName": { "type": "string", "nullable": true },
+          "productName": { "type": "string", "nullable": true },
+          "price": { "type": "number", "format": "decimal", "nullable": true },
+          "currency": { "type": "string", "default": "VND" },
+          "status": { "type": "string" },
+          "productStatus": { "type": "string" },
+          "sellerId": { "type": "string", "format": "uuid" },
+          "saleType": { "type": "string", "default": "Regular" },
+          "primaryImageUrl": { "type": "string", "nullable": true },
+          "isPurchasable": { "type": "boolean" }
+        }
+      },
+      "BatchVariantResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/BatchVariantItemDto" }
+          },
+          "notFoundIds": {
+            "type": "array",
+            "items": { "type": "string", "format": "uuid" }
+          }
+        }
+      },
+      "ValidateVariantSwitchRequest": {
+        "type": "object",
+        "required": ["currentSkuId", "newSkuId"],
+        "properties": {
+          "currentSkuId": { "type": "string", "format": "uuid" },
+          "newSkuId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "ValidateVariantSwitchResponse": {
+        "type": "object",
+        "required": ["isValid", "newSkuId", "isPurchasable"],
+        "properties": {
+          "isValid": { "type": "boolean" },
+          "productId": { "type": "string", "format": "uuid" },
+          "sellerId": { "type": "string", "format": "uuid" },
+          "newSkuId": { "type": "string", "format": "uuid" },
+          "newSkuName": { "type": "string" },
+          "newUnitPrice": { "type": "number", "format": "decimal" },
+          "isPurchasable": { "type": "boolean" },
+          "weightGrams": { "type": "integer", "default": 200 }
+        }
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "status": { "type": "integer" },
+          "errorCode": { "type": "string" },
+          "detail": { "type": "string" }
+        }
+      }
+    }
+  }
+}

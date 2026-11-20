@@ -10,7 +10,11 @@ public sealed record CartItemDto(
     Guid SellerId,
     string ProductName,
     int Quantity,
-    decimal UnitPriceSnapshot);
+    decimal UnitPriceSnapshot,
+    decimal LineTotal = 0,
+    DateTimeOffset AddedAt = default,
+    bool IsAvailable = true,
+    string? DisabledReason = null);
 
 public sealed record CartDto(
     Guid Id,
@@ -18,4 +22,5 @@ public sealed record CartDto(
     string Status,
     int ItemCount,
     decimal SubtotalAmount,
-    IReadOnlyList<CartItemDto> Items);
+    IReadOnlyList<CartItemDto> Items,
+    DateTimeOffset LastActivityAt = default);

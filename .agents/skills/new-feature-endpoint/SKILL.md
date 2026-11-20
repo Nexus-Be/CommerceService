@@ -74,7 +74,11 @@ description: Add or change a REST endpoint in CommerceService (port 8003). Use w
 - [ ] Controller lives in `Commerce.Api/Controllers/Public/` and is named `{Feature}Controller`.
 - [ ] `[ApiController]`, one `[Route]`, one route attribute per action, one-line XML `<summary>`.
 - [ ] Only `I{Feature}Service` is injected.
-- [ ] Identity comes from `this.TryGetUserId(...)`, ownership from `this.EnsureOwnership(...)`.
+- [ ] Caller identity and roles: `UserContextMiddleware` automatically decodes gateway headers into `HttpContext.User`.
+  - Extract caller ID via `this.TryGetUserId(out var userId, out var authError)` (returns HTTP 401 ProblemDetails if unauthenticated).
+  - Enforce role restrictions via `[RequireRole("buyer", "seller", "admin")]` or `this.HasRole(...)` (returns HTTP 403 ProblemDetails if unauthorized).
+  - Enforce resource ownership via `this.EnsureOwnership(...)` or pass `userId` to the service. Never accept client-supplied `buyerId`/`userId`.
+  - Outbound cross-service HTTP calls (`IWalletClient`, `ICatalogClient`) automatically propagate identity headers via `IdentityPropagationHandler` in `Commerce.Infrastructure/DependencyInjection.cs`.
 - [ ] DTOs are returned directly; delete returns `NoContent()`.
 - [ ] No `ResultFilter`, no manual envelope, no business branching in the controller.
 

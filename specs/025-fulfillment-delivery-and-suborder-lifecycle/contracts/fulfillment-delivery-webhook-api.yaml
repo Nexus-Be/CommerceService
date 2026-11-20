@@ -1,0 +1,97 @@
+openapi: 3.0.3
+info:
+  title: Fulfillment Delivery Status Webhook API
+  description: Webhook endpoint invoked by Fulfillment Service when carrier updates delivery progress and POD.
+  version: 2.0.0
+paths:
+  /api/v1/sub-orders/{subOrderId}/delivery-status:
+    post:
+      summary: Updates the delivery status of a specific sub-order from fulfillment logistics.
+      operationId: updateSubOrderDeliveryStatus
+      parameters:
+        - name: subOrderId
+          in: path
+          required: true
+          description: Unique identifier of the SubOrder
+          schema:
+            type: string
+            format: uuid
+        - name: X-Internal-Service-Key
+          in: header
+          required: true
+          description: Secret token shared across internal services
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDeliveryStatusRequest'
+      responses:
+        '200':
+          description: Delivery status synchronized successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subOrderId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    example: Delivered
+                  updatedAt:
+                    type: string
+                    format: date-time
+        '400':
+          description: Invalid delivery status or malformed request
+        '403':
+          description: Missing or invalid X-Internal-Service-Key header
+        '404':
+          description: SubOrder not found
+components:
+  schemas:
+    UpdateDeliveryStatusRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          description: Carrier event status (e.g. ReadyToPick, Shipped, Delivered, Returned, Cancelled)
+          example: Delivered
+        carrierCode:
+          type: string
+          description: Logistics carrier provider code
+          example: GHN
+        trackingCode:
+          type: string
+          description: Carrier tracking code
+          example: GHN-SGN-1029384
+        note:
+          type: string
+          description: Carrier event description or remark
+          example: Package delivered successfully to customer
+        location:
+          type: string
+          description: Geographic address or post office hub
+          example: Ben Nghe Ward, District 1, HCMC
+        deliveredAt:
+          type: string
+          format: date-time
+          description: Timestamp of delivery occurrence
+        podUrl:
+          type: string
+          format: uri
+          description: URL to Proof-of-Delivery photo / recipient signature
+          example: https://cdn.ghn.vn/pod/20261116/sign_1029384.jpg
+        shipperName:
+          type: string
+          description: Courier delivery driver name
+          example: Nguyen Van C
+        shipperPhone:
+          type: string
+          description: Courier delivery driver contact phone
+          example: "0987654321"

@@ -1,0 +1,57 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Discount Validation Contract",
+    "version": "v1"
+  },
+  "paths": {
+    "/api/v1/discounts/validate": {
+      "post": {
+        "tags": ["Discounts"],
+        "summary": "Kiểm tra tính hợp lệ của voucher với giỏ hàng",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["code", "cartItemIds"],
+                "properties": {
+                  "code": { "type": "string", "example": "SHOP20K" },
+                  "cartItemIds": {
+                    "type": "array",
+                    "items": { "type": "string", "format": "uuid" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Kết quả kiểm tra voucher",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "isValid": { "type": "boolean" },
+                    "ineligibleReason": { "type": "string", "nullable": true, "example": "VOUCHER_OUT_OF_STOCK" },
+                    "message": { "type": "string", "nullable": true, "example": "Voucher has reached its total usage limit." },
+                    "estimatedDiscount": { "type": "number", "format": "decimal" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Lỗi giỏ hàng không hợp lệ (mã lỗi VAL_INVALID_INPUT khi cartItemIds không thuộc người mua)"
+          },
+          "404": {
+            "description": "Mã voucher không tồn tại (VOUCHER_NOT_FOUND)"
+          }
+        }
+      }
+    }
+  }
+}

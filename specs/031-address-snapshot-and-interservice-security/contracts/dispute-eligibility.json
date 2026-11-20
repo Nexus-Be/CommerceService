@@ -1,0 +1,99 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Internal Dispute Eligibility API",
+    "version": "v1"
+  },
+  "paths": {
+    "/api/v1/internal/orders/dispute-eligibility": {
+      "get": {
+        "tags": ["Internal"],
+        "summary": "Xác minh đơn hàng hợp lệ phục vụ chức năng Khiếu nại/Tố cáo đối tác cho UserService",
+        "parameters": [
+          {
+            "name": "orderOrSubOrderId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "reporterId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "reportedUserId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Kết quả xác minh điều kiện khiếu nại",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisputeEligibilityDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Tham số đầu vào thiếu hoặc không hợp lệ (VAL_INVALID_INPUT)"
+          },
+          "401": {
+            "description": "Sai hoặc thiếu X-Internal-Service-Key (INTERNAL_KEY_INVALID)"
+          },
+          "404": {
+            "description": "Đơn hàng không tồn tại (ORDER_NOT_FOUND)"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DisputeEligibilityDto": {
+        "type": "object",
+        "properties": {
+          "isEligible": {
+            "type": "boolean",
+            "example": true
+          },
+          "orderType": {
+            "type": "string",
+            "example": "SubOrder"
+          },
+          "buyerId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sellerId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "example": "Delivered"
+          },
+          "deliveredAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      }
+    }
+  }
+}

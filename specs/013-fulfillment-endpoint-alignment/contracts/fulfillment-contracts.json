@@ -1,0 +1,243 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Commerce - Fulfillment Standardized REST Contract",
+    "version": "1.5.0",
+    "description": "Standardized REST API contract between CommerceService (Port 8003) and FulfillmentService (Port 8006) aligned with Fulfillment Task F01-F08."
+  },
+  "paths": {
+    "/api/v1/internal/shipping/quote": {
+      "post": {
+        "summary": "Calculate shipping fee for shop items via internal carrier service",
+        "operationId": "calculateShippingFeeInternal",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShopShippingQuoteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Shipping fee calculated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShippingFeeResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid destination address or parameters",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Fulfillment service unavailable (Fail-Closed)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/internal/shipments": {
+      "post": {
+        "summary": "Create shipment and issue tracking code via internal service",
+        "operationId": "createShipmentInternal",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["subOrderId"],
+                "properties": {
+                  "subOrderId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Shipment created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShipmentCreationResult"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Fulfillment service unavailable (Fail-Closed)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/internal/inventories/reservations/{referenceId}/release-items": {
+      "post": {
+        "summary": "Release selective inventory items for rejected sub-order",
+        "operationId": "releaseReservationItems",
+        "parameters": [
+          {
+            "name": "referenceId",
+            "in": "path",
+            "required": true,
+            "description": "Master Order identifier",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseReservationItemsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Partial inventory successfully released"
+          },
+          "503": {
+            "description": "Warehouse inventory service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/internal/inventories/reservations/batch-release": {
+      "post": {
+        "summary": "Batch release reservations for expired orders",
+        "operationId": "batchReleaseReservations",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["orderIds"],
+                "properties": {
+                  "orderIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Batch release succeeded"
+          },
+          "503": {
+            "description": "Batch release failed (Fail-Closed)"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ShopShippingQuoteRequest": {
+        "type": "object",
+        "required": ["sellerId", "ghnDistrictId", "ghnWardCode", "items"],
+        "properties": {
+          "sellerId": { "type": "string", "format": "uuid" },
+          "ghnDistrictId": { "type": "integer" },
+          "ghnWardCode": { "type": "string" },
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ShippingQuoteItem" }
+          }
+        }
+      },
+      "ShippingQuoteItem": {
+        "type": "object",
+        "required": ["skuId", "quantity"],
+        "properties": {
+          "skuId": { "type": "string", "format": "uuid" },
+          "quantity": { "type": "integer" },
+          "weightGrams": { "type": "integer", "default": 200 }
+        }
+      },
+      "ShippingFeeResult": {
+        "type": "object",
+        "required": ["feeAmount"],
+        "properties": {
+          "feeAmount": { "type": "number", "format": "decimal" }
+        }
+      },
+      "ShipmentCreationResult": {
+        "type": "object",
+        "required": ["trackingCode", "carrierCode", "labelPrintUrl"],
+        "properties": {
+          "trackingCode": { "type": "string" },
+          "carrierCode": { "type": "string" },
+          "labelPrintUrl": { "type": "string", "format": "uri" }
+        }
+      },
+      "ReleaseReservationItemsRequest": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["skuId", "quantity"],
+              "properties": {
+                "skuId": { "type": "string", "format": "uuid" },
+                "quantity": { "type": "integer" }
+              }
+            }
+          },
+          "reason": { "type": "string" }
+        }
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "status": { "type": "integer" },
+          "detail": { "type": "string" },
+          "errorCode": { "type": "string" }
+        }
+      }
+    }
+  }
+}

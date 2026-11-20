@@ -1,0 +1,525 @@
+openapi: 3.0.3
+info:
+  title: Commerce Service - Auction Order API Contracts
+  version: 1.1.0
+  description: Canonical REST contracts for Auction Orders settlement, payment, fulfillment, cancellation, and callbacks.
+paths:
+  /api/v1/auction-orders/settlement:
+    post:
+      summary: Ingest won auction settlement from Auction Service
+      operationId: IngestAuctionSettlement
+      parameters:
+        - in: header
+          name: X-Internal-Service-Key
+          schema:
+            type: string
+          required: false
+          description: Internal service authentication key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuctionSettlementRequest'
+      responses:
+        '201':
+          description: Auction order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionSettlementResponse'
+        '200':
+          description: Idempotent duplicate settlement request returned existing order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionSettlementResponse'
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Active auction order already exists for this auction with another winner
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auction-orders/{auctionOrderId}/shipping:
+    put:
+      summary: Submit delivery address and quote carrier shipping fee
+      operationId: SubmitAuctionShipping
+      parameters:
+        - in: path
+          name: auctionOrderId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitAuctionShippingRequest'
+      responses:
+        '200':
+          description: Shipping address submitted and totals calculated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionOrderDetailResponse'
+        '400':
+          description: Deadline expired or invalid status
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Caller is not the winning buyer
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auction-orders/{auctionOrderId}/pay:
+    post:
+      summary: Pay auction order via Nexus Wallet
+      operationId: PayAuctionOrder
+      parameters:
+        - in: path
+          name: auctionOrderId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Order paid successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayAuctionOrderResponse'
+        '400':
+          description: Payment deadline expired or shipping address not yet submitted
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Caller is not the winning buyer
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auction-orders/{auctionOrderId}/accept:
+    post:
+      summary: Seller accepts paid auction order
+      operationId: SellerAcceptAuctionOrder
+      parameters:
+        - in: path
+          name: auctionOrderId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SellerAcceptAuctionOrderRequest'
+      responses:
+        '200':
+          description: Order confirmed and shipment creation triggered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SellerRespondResponse'
+        '400':
+          description: Seller respond deadline expired or invalid status
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Caller is not the seller
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auction-orders/{auctionOrderId}/reject:
+    post:
+      summary: Seller rejects paid auction order, triggering 100% wallet refund
+      operationId: SellerRejectAuctionOrder
+      parameters:
+        - in: path
+          name: auctionOrderId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SellerRejectAuctionOrderRequest'
+      responses:
+        '200':
+          description: Order cancelled and refund executed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SellerRespondResponse'
+        '400':
+          description: Order already shipped or invalid status
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Caller is not the seller
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auction-orders/{auctionOrderId}/confirm-receipt:
+    post:
+      summary: Buyer confirms physical receipt and releases escrow payout
+      operationId: ConfirmAuctionOrderReceipt
+      parameters:
+        - in: path
+          name: auctionOrderId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Receipt confirmed and escrow released
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmReceiptResponse'
+        '400':
+          description: Order not in delivered or shipped status
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auction-orders/{auctionOrderId}:
+    get:
+      summary: Get auction order details by ID
+      operationId: GetAuctionOrderDetail
+      parameters:
+        - in: path
+          name: auctionOrderId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Auction order details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionOrderDetailResponse'
+        '403':
+          description: Caller is neither the buyer nor the seller
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Auction order not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auction-orders/seller:
+    get:
+      summary: List seller auction orders with database pagination
+      operationId: ListSellerAuctionOrders
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: pageSize
+          schema:
+            type: integer
+            default: 20
+        - in: query
+          name: status
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated seller auction orders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedAuctionOrderSummary'
+
+components:
+  schemas:
+    AuctionSettlementRequest:
+      type: object
+      required:
+        - auctionId
+        - winningBidId
+        - winnerId
+        - sellerId
+        - productId
+        - skuId
+        - productName
+        - winningAmount
+        - paymentDeadlineAt
+      properties:
+        auctionId:
+          type: string
+          format: uuid
+        winningBidId:
+          type: string
+          format: uuid
+        winnerId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        skuId:
+          type: string
+          format: uuid
+        productName:
+          type: string
+          maxLength: 500
+        imageUrl:
+          type: string
+          nullable: true
+        winningAmount:
+          type: number
+          format: double
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+
+    AuctionSettlementResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        orderNo:
+          type: string
+        auctionId:
+          type: string
+          format: uuid
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    SubmitAuctionShippingRequest:
+      type: object
+      required:
+        - receiverName
+        - contactPhone
+        - street
+        - ward
+        - district
+        - province
+      properties:
+        receiverName:
+          type: string
+        contactPhone:
+          type: string
+        street:
+          type: string
+        ward:
+          type: string
+        district:
+          type: string
+        province:
+          type: string
+        ghnDistrictId:
+          type: integer
+          nullable: true
+        ghnWardCode:
+          type: string
+          nullable: true
+
+    PayAuctionOrderResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        paidAt:
+          type: string
+          format: date-time
+        sellerRespondDeadlineAt:
+          type: string
+          format: date-time
+        walletTransactionId:
+          type: string
+          format: uuid
+
+    SellerAcceptAuctionOrderRequest:
+      type: object
+      properties:
+        note:
+          type: string
+          nullable: true
+
+    SellerRejectAuctionOrderRequest:
+      type: object
+      required:
+        - reasonCode
+      properties:
+        reasonCode:
+          type: string
+        reasonText:
+          type: string
+          nullable: true
+
+    SellerRespondResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+
+    ConfirmReceiptResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        completedAt:
+          type: string
+          format: date-time
+
+    AuctionOrderDetailResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderNo:
+          type: string
+        auctionId:
+          type: string
+          format: uuid
+        buyerId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        skuId:
+          type: string
+          format: uuid
+          nullable: true
+        productName:
+          type: string
+        imageUrl:
+          type: string
+          nullable: true
+        winningAmount:
+          type: number
+        shippingFeeAmount:
+          type: number
+          nullable: true
+        totalAmount:
+          type: number
+          nullable: true
+        status:
+          type: string
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+        sellerRespondDeadlineAt:
+          type: string
+          format: date-time
+          nullable: true
+        paidAt:
+          type: string
+          format: date-time
+          nullable: true
+        sellerAcceptedAt:
+          type: string
+          format: date-time
+          nullable: true
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    PagedAuctionOrderSummary:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuctionOrderDetailResponse'
+        pagination:
+          type: object
+          properties:
+            pageIndex:
+              type: integer
+            pageSize:
+              type: integer
+            totalCount:
+              type: integer
+            totalPages:
+              type: integer
+
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+        detail:
+          type: string
+        traceId:
+          type: string

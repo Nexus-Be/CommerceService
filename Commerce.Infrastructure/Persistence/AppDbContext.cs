@@ -26,6 +26,7 @@ public class AppDbContext : DbContext, ICommerceDbContext
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<DailyOrderSequence> DailyOrderSequences => Set<DailyOrderSequence>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<NotificationOutboxItem> NotificationOutbox => Set<NotificationOutboxItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

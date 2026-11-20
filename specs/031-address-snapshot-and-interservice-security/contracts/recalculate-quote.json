@@ -1,0 +1,104 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Commerce Recalculate Quote API",
+    "version": "v1"
+  },
+  "paths": {
+    "/api/v1/checkouts/quote/{quoteId}/recalculate": {
+      "post": {
+        "tags": ["Orders"],
+        "summary": "Tính lại phí vận chuyển GHN và tổng thanh toán khi đổi địa chỉ ở màn Checkout",
+        "parameters": [
+          {
+            "name": "quoteId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "addressId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "nullable": true,
+                    "example": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                  },
+                  "shippingAddress": {
+                    "$ref": "#/components/schemas/ShippingAddressInput"
+                  },
+                  "contactPhone": {
+                    "type": "string",
+                    "nullable": true,
+                    "example": "0901234567"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Báo giá cập nhật thành công với cước phí GHN mới",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutQuoteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Địa chỉ không hợp lệ hoặc thiếu mã vùng GHN (VAL_INVALID_INPUT, ADDRESS_REQUIRED)"
+          },
+          "401": {
+            "description": "Chưa đăng nhập (UNAUTHORIZED)"
+          },
+          "403": {
+            "description": "Không có quyền truy cập báo giá của người khác (FORBIDDEN)"
+          },
+          "404": {
+            "description": "Báo giá đã hết hạn hoặc không tìm thấy địa chỉ (QUOTE_NOT_FOUND, ADDRESS_NOT_FOUND)"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ShippingAddressInput": {
+        "type": "object",
+        "properties": {
+          "recipientName": { "type": "string", "example": "Nguyễn Văn A" },
+          "phone": { "type": "string", "example": "0901234567" },
+          "street": { "type": "string", "example": "123 Lê Lợi" },
+          "ward": { "type": "string", "example": "Bến Nghé" },
+          "district": { "type": "string", "example": "Quận 1" },
+          "province": { "type": "string", "example": "TP.HCM" },
+          "ghnDistrictId": { "type": "integer", "example": 1442 },
+          "ghnWardCode": { "type": "string", "example": "20101" }
+        }
+      },
+      "CheckoutQuoteResponse": {
+        "type": "object",
+        "properties": {
+          "quoteId": { "type": "string", "format": "uuid" },
+          "itemsAmount": { "type": "number", "format": "decimal" },
+          "shippingFeeAmount": { "type": "number", "format": "decimal" },
+          "discountAmount": { "type": "number", "format": "decimal" },
+          "totalAmount": { "type": "number", "format": "decimal" },
+          "expiresAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

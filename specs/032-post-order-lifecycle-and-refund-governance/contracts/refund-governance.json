@@ -1,0 +1,64 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Refund Governance API",
+    "version": "v1"
+  },
+  "paths": {
+    "/api/v1/refunds": {
+      "get": {
+        "tags": ["Refunds"],
+        "summary": "Tra cứu danh sách yêu cầu hoàn tiền có phân trang",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "pageSize", "in": "query", "schema": { "type": "integer", "default": 20 } },
+          { "name": "status", "in": "query", "schema": { "type": "string" } },
+          { "name": "subOrderId", "in": "query", "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Danh sách yêu cầu hoàn tiền phân trang" }
+        }
+      }
+    },
+    "/api/v1/refunds/{refundId}/approve": {
+      "post": {
+        "tags": ["Refunds"],
+        "summary": "Người bán hoặc Admin duyệt yêu cầu hoàn tiền",
+        "parameters": [
+          { "name": "refundId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "description": "Duyệt hoàn tiền thành công" },
+          "400": { "description": "Trạng thái refund không hợp lệ" }
+        }
+      }
+    },
+    "/api/v1/refunds/{refundId}/reject": {
+      "post": {
+        "tags": ["Refunds"],
+        "summary": "Người bán hoặc Admin từ chối yêu cầu hoàn tiền",
+        "parameters": [
+          { "name": "refundId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["reason"],
+                "properties": {
+                  "reason": { "type": "string" },
+                  "note": { "type": "string", "nullable": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Từ chối hoàn tiền thành công" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,282 @@
+openapi: 3.0.3
+info:
+  title: Commerce Service - Order Settlement, Refund & Seller Listing API
+  version: 1.0.0
+  description: Contracts for Seller Sub-Order Listing, Buyer Receipt Confirmation, and Outbound Wallet Settlement/Refund.
+
+paths:
+  /api/v1/sub-orders:
+    get:
+      summary: Retrieve paginated list of sub-orders belonging to the authenticated seller
+      operationId: ListSellerSubOrders
+      tags:
+        - SubOrders
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+          description: Page index (1-based)
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+          description: Number of records per page
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/SubOrderStatus'
+          description: Optional filter by sub-order lifecycle status
+      responses:
+        '200':
+          description: Successfully retrieved paginated sub-orders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedSubOrdersResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/sub-orders/{subOrderId}/confirm-receipt:
+    post:
+      summary: Buyer confirms receipt of goods, transitioning SubOrder to Completed and releasing escrow funds to Seller
+      operationId: ConfirmSubOrderReceipt
+      tags:
+        - SubOrders
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: subOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Unique sub-order identifier
+      responses:
+        '200':
+          description: Sub-order confirmed and settled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmReceiptResponse'
+        '400':
+          description: Sub-order is not in Delivered/Shipped status
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: User is not the buyer who owns the sub-order
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Sub-order not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    SubOrderStatus:
+      type: string
+      enum:
+        - PendingPayment
+        - Paid
+        - Confirmed
+        - Shipped
+        - Delivered
+        - Completed
+        - Cancelled
+
+    SubOrderSummaryResponse:
+      type: object
+      required:
+        - subOrderId
+        - subOrderNo
+        - orderId
+        - buyerId
+        - sellerId
+        - status
+        - paymentMethod
+        - itemsAmount
+        - shippingFeeAmount
+        - totalAmount
+        - sellerReceiveAmount
+        - itemCount
+        - createdAt
+      properties:
+        subOrderId:
+          type: string
+          format: uuid
+        subOrderNo:
+          type: string
+        orderId:
+          type: string
+          format: uuid
+        buyerId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        paymentMethod:
+          type: string
+        itemsAmount:
+          type: number
+          format: decimal
+        shippingFeeAmount:
+          type: number
+          format: decimal
+        totalAmount:
+          type: number
+          format: decimal
+        sellerReceiveAmount:
+          type: number
+          format: decimal
+        itemCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        sellerAcceptedAt:
+          type: string
+          format: date-time
+          nullable: true
+        shippedAt:
+          type: string
+          format: date-time
+          nullable: true
+        deliveredAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    PaginationMetadata:
+      type: object
+      required:
+        - pageIndex
+        - pageSize
+        - totalCount
+        - totalPages
+        - hasPreviousPage
+        - hasNextPage
+      properties:
+        pageIndex:
+          type: integer
+        pageSize:
+          type: integer
+        totalCount:
+          type: integer
+        totalPages:
+          type: integer
+        hasPreviousPage:
+          type: boolean
+        hasNextPage:
+          type: boolean
+
+    PagedSubOrdersResponse:
+      type: object
+      required:
+        - items
+        - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubOrderSummaryResponse'
+        pagination:
+          $ref: '#/components/schemas/PaginationMetadata'
+
+    ConfirmReceiptResponse:
+      type: object
+      required:
+        - subOrderId
+        - status
+        - completedAt
+        - escrowSettled
+        - amountSettled
+      properties:
+        subOrderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          example: Completed
+        completedAt:
+          type: string
+          format: date-time
+        escrowSettled:
+          type: boolean
+        amountSettled:
+          type: number
+          format: decimal
+
+    ProblemDetails:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - errorCode
+        - detail
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+        detail:
+          type: string
+        instance:
+          type: string
+        traceId:
+          type: string
+
+  responses:
+    Unauthorized:
+      description: Authentication required or invalid JWT token
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    Forbidden:
+      description: Insufficient permission to access resource
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

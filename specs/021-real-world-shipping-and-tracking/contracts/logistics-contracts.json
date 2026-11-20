@@ -1,0 +1,213 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Commerce - Logistics and Shipment Tracking API Contract",
+    "version": "2.0.0",
+    "description": "Standardized REST API specification for carrier shipment creation, tracking timeline queries, and webhook ingestion in CommerceService."
+  },
+  "paths": {
+    "/api/v1/sub-orders/{subOrderId}/shipments/timeline": {
+      "get": {
+        "summary": "Retrieve visual shipment tracking timeline for a sub-order",
+        "operationId": "getSubOrderShipmentTimeline",
+        "parameters": [
+          {
+            "name": "subOrderId",
+            "in": "path",
+            "required": true,
+            "description": "Sub-order UUID",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Shipment timeline retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ShipmentTimelineResponse" }
+              }
+            }
+          },
+          "403": {
+            "description": "User is not authorized to view this sub-order",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDetails" }
+              }
+            }
+          },
+          "404": {
+            "description": "Sub-order was not found",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDetails" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sub-orders/{subOrderId}/shipments/retry": {
+      "post": {
+        "summary": "Retry carrier shipment creation for confirmed sub-order with pending shipment",
+        "operationId": "retryCreateShipment",
+        "parameters": [
+          {
+            "name": "subOrderId",
+            "in": "path",
+            "required": true,
+            "description": "Sub-order UUID",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Shipment successfully created on retry",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RetryShipmentResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "Sub-order already has tracking code or invalid status",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDetails" }
+              }
+            }
+          },
+          "503": {
+            "description": "Carrier logistics service temporarily unreachable",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDetails" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sub-orders/{subOrderId}/delivery-status": {
+      "post": {
+        "summary": "Inbound webhook callback from Fulfillment Service with carrier status updates",
+        "operationId": "updateDeliveryStatus",
+        "parameters": [
+          {
+            "name": "subOrderId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "X-Internal-Service-Key",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateDeliveryStatusRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Delivery status successfully processed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "subOrderId": { "type": "string", "format": "uuid" },
+                    "status": { "type": "string" },
+                    "updatedAt": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing or invalid internal service key",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDetails" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "UpdateDeliveryStatusRequest": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": { "type": "string", "example": "InTransit" },
+          "deliveredAt": { "type": "string", "format": "date-time", "nullable": true },
+          "carrierCode": { "type": "string", "nullable": true, "example": "GHN" },
+          "trackingCode": { "type": "string", "nullable": true, "example": "GHN-SGN-1029384" },
+          "note": { "type": "string", "nullable": true },
+          "location": { "type": "string", "nullable": true }
+        }
+      },
+      "TimelineEventDto": {
+        "type": "object",
+        "required": ["status", "title", "description", "occurredAt"],
+        "properties": {
+          "status": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "occurredAt": { "type": "string", "format": "date-time" },
+          "location": { "type": "string", "nullable": true }
+        }
+      },
+      "ShipmentTimelineResponse": {
+        "type": "object",
+        "required": ["subOrderId", "subOrderNo", "orderId", "currentStatus", "timeline"],
+        "properties": {
+          "subOrderId": { "type": "string", "format": "uuid" },
+          "subOrderNo": { "type": "string" },
+          "orderId": { "type": "string", "format": "uuid" },
+          "carrierCode": { "type": "string", "nullable": true },
+          "carrierName": { "type": "string", "nullable": true },
+          "trackingCode": { "type": "string", "nullable": true },
+          "labelPrintUrl": { "type": "string", "format": "uri", "nullable": true },
+          "currentStatus": { "type": "string" },
+          "estimatedDeliveryAt": { "type": "string", "format": "date-time", "nullable": true },
+          "timeline": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/TimelineEventDto" }
+          }
+        }
+      },
+      "RetryShipmentResponse": {
+        "type": "object",
+        "required": ["subOrderId", "subOrderNo", "trackingCode", "carrierCode", "labelPrintUrl", "createdAt"],
+        "properties": {
+          "subOrderId": { "type": "string", "format": "uuid" },
+          "subOrderNo": { "type": "string" },
+          "trackingCode": { "type": "string" },
+          "carrierCode": { "type": "string" },
+          "labelPrintUrl": { "type": "string", "format": "uri" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "status": { "type": "integer" },
+          "detail": { "type": "string" },
+          "errorCode": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -19,6 +19,11 @@ public sealed class RequireRoleAttribute : Attribute, IAuthorizationFilter
 
     public void OnAuthorization(AuthorizationFilterContext context)
     {
+        // An action marked [AllowAnonymous] opts out of the class-level role check. It is for service-to-service endpoints
+        // (the delivery webhook) that have no user and protect themselves with the internal service key.
+        if (context.ActionDescriptor.EndpointMetadata.OfType<Microsoft.AspNetCore.Authorization.IAllowAnonymous>().Any())
+            return;
+
         var httpContext = context.HttpContext;
         var userId = httpContext.GetUserId();
 

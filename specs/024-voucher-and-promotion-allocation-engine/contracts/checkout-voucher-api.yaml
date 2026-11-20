@@ -1,0 +1,252 @@
+openapi: 3.0.3
+info:
+  title: Checkout & Order Voucher Integration API
+  description: API specifications for checkout quote voucher calculation and order creation reservation.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8003/api/v1
+    description: Local Docker / Test Server
+
+paths:
+  /orders/quote:
+    post:
+      summary: Quote Checkout with Voucher Evaluation (CHK-01)
+      operationId: quoteCheckout
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutQuoteRequest'
+      responses:
+        '200':
+          description: Calculated quote with 3-tier discount breakdown
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutQuoteResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetails'
+
+  /orders:
+    post:
+      summary: Create Order with Atomic Voucher Reservation (CHK-02)
+      operationId: createOrder
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '200':
+          description: Order created with committed/reserved vouchers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateOrderResponse'
+        '400':
+          $ref: '#/components/responses/ProblemDetails'
+        '409':
+          $ref: '#/components/responses/ProblemDetails'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CheckoutQuoteRequest:
+      type: object
+      required: [cartItemIds, shippingAddress]
+      properties:
+        cartItemIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        voucherCodes:
+          type: array
+          items:
+            type: string
+          example: ["JEAN20", "SHOPA50", "ALLSALL"]
+        shippingAddress:
+          $ref: '#/components/schemas/ShippingAddressInput'
+
+    ShippingAddressInput:
+      type: object
+      required: [receiverName, contactPhone, street, ward, province, ghnDistrictId, ghnWardCode]
+      properties:
+        receiverName:
+          type: string
+        contactPhone:
+          type: string
+        street:
+          type: string
+        ward:
+          type: string
+        district:
+          type: string
+        province:
+          type: string
+        ghnDistrictId:
+          type: integer
+        ghnWardCode:
+          type: string
+
+    ShopQuoteItem:
+      type: object
+      properties:
+        cartItemId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        skuId:
+          type: string
+          format: uuid
+        productName:
+          type: string
+        quantity:
+          type: integer
+        unitPrice:
+          type: number
+          format: decimal
+        lineTotal:
+          type: number
+          format: decimal
+
+    ShopOrderQuote:
+      type: object
+      properties:
+        sellerId:
+          type: string
+          format: uuid
+        shopName:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShopQuoteItem'
+        itemsAmount:
+          type: number
+          format: decimal
+        productDiscountAmount:
+          type: number
+          format: decimal
+        shopDiscountAmount:
+          type: number
+          format: decimal
+        systemDiscountAmount:
+          type: number
+          format: decimal
+        discountAmount:
+          type: number
+          format: decimal
+        shippingFee:
+          type: number
+          format: decimal
+        totalAmount:
+          type: number
+          format: decimal
+
+    CheckoutQuoteResponse:
+      type: object
+      properties:
+        quoteId:
+          type: string
+          format: uuid
+        grandTotal:
+          type: number
+          format: decimal
+        walletBalance:
+          type: number
+          format: decimal
+        shops:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShopOrderQuote'
+        appliedVouchers:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+          nullable: true
+        expiredAt:
+          type: string
+          format: date-time
+
+    CreateOrderRequest:
+      type: object
+      required: [quoteId, paymentMethod, shippingAddress, contactPhone]
+      properties:
+        quoteId:
+          type: string
+          format: uuid
+        paymentMethod:
+          type: string
+          enum: [Wallet, Cod]
+          description: "VNPay is decommissioned. Only Wallet or Cod is accepted."
+        shippingAddress:
+          type: string
+        contactPhone:
+          type: string
+
+    CreateOrderResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        orderNo:
+          type: string
+        subOrderIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        status:
+          type: string
+        totalAmount:
+          type: number
+          format: decimal
+        paymentMethod:
+          type: string
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+        detail:
+          type: string
+        traceId:
+          type: string
+
+  responses:
+    ProblemDetails:
+      description: Domain error
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

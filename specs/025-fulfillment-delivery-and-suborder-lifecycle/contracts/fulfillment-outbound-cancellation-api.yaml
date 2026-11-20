@@ -1,0 +1,87 @@
+openapi: 3.0.3
+info:
+  title: Fulfillment Outbound Cancellation and Stock Release API
+  description: Outbound HTTP endpoints called by CommerceService on FulfillmentService (Port 8006).
+  version: 2.0.0
+paths:
+  /api/v1/internal/inventories/reservations/{orderId}/release-items:
+    post:
+      summary: Releases reserved inventory stock for specific items belonging to a cancelled SubOrder.
+      operationId: releaseSubOrderStockItems
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-Internal-Service-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - items
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - skuId
+                      - quantity
+                    properties:
+                      skuId:
+                        type: string
+                        format: uuid
+                      quantity:
+                        type: integer
+                        example: 2
+                reason:
+                  type: string
+                  example: BuyerCancelledSubOrder
+      responses:
+        '200':
+          description: Stock reservation successfully released
+        '503':
+          description: Fulfillment service temporarily unavailable
+
+  /api/v1/shipments/{shipmentId}/cancel:
+    post:
+      summary: Cancels an active carrier shipment with logistics provider (GHN).
+      operationId: cancelCarrierShipment
+      parameters:
+        - name: shipmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-Internal-Service-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  example: Buyer cancelled sub-order prior to courier pickup
+      responses:
+        '200':
+          description: Carrier shipment successfully cancelled
+        '400':
+          description: Shipment cannot be cancelled (already picked up by courier)
+        '503':
+          description: Logistics gateway unreachable

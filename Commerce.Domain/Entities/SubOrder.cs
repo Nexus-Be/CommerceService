@@ -1,5 +1,10 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using Commerce.Domain.Base;
 using Commerce.Domain.Enums;
+using Commerce.Domain.Exceptions;
+using Commerce.Domain.ValueObjects;
 
 namespace Commerce.Domain.Entities;
 
@@ -12,7 +17,11 @@ public class SubOrder : BaseEntity<Guid>
     public required SubOrderStatus Status { get; set; } = SubOrderStatus.PendingPayment;
     public required PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Wallet;
     public Guid? WalletTransactionId { get; set; }
-    public required string ShippingAddress { get; set; }
+
+    /// <summary>The seller profile id of the shop (not the seller's user id), saved when it is first looked up for a notification.</summary>
+    public Guid? ShopId { get; set; }
+
+    public ShippingAddressSnapshot ShippingAddress { get; set; } = new();
     public required string ContactPhone { get; set; }
     public decimal ItemsAmount { get; set; }
     public decimal ProductDiscountAmount { get; set; }
@@ -31,6 +40,12 @@ public class SubOrder : BaseEntity<Guid>
     public DateTimeOffset? DeliveredAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }
+    public string? CarrierCode { get; set; }
+    public string? TrackingCode { get; set; }
+    public string? LabelPrintUrl { get; set; }
+    public DateTimeOffset? EstimatedDeliveryAt { get; set; }
+    public bool ShipmentPendingCreation { get; set; } = false;
+    public bool IsEscrowSettled { get; set; } = false;
     public long RowVersion { get; set; }
 
     // Navigation
@@ -41,4 +56,39 @@ public class SubOrder : BaseEntity<Guid>
     public OrderCancellation? Cancellation { get; set; }
     public ICollection<OrderRefund> Refunds { get; set; } = new List<OrderRefund>();
     public ICollection<DiscountCodeUsage> DiscountCodeUsages { get; set; } = new List<DiscountCodeUsage>();
+
+    public void CalculateFinancials(
+        decimal shippingFee,
+        decimal shopDiscount,
+        decimal systemDiscount,
+        decimal platformMarkupPercent = 0m,
+        decimal? productDiscount = null)
+    {
+        ItemsAmount = Items.Sum(i => i.Quantity * i.UnitPrice);
+        ProductDiscountAmount = productDiscount ?? Items.Sum(i => i.Quantity * (i.UnitPrice - i.UnitPriceAfterDiscount));
+        ShopDiscountAmount = shopDiscount;
+        SystemDiscountAmount = systemDiscount;
+
+        // Shopee / TikTok Shop Model:
+        // NetSeller = ItemsAmount - ProductDiscount - ShopDiscount
+        var netSeller = Math.Max(0m, ItemsAmount - ProductDiscountAmount - ShopDiscountAmount);
+
+        // PlatformFee is deducted from Seller sales (5% platform commission)
+        PlatformFeeAmount = Math.Round(netSeller * (platformMarkupPercent / 100m), 0, MidpointRounding.AwayFromZero);
+        PlatformMarkupAmount = 0m;
+
+        // Seller payout after commission
+        SellerReceiveAmount = Math.Max(0m, netSeller - PlatformFeeAmount);
+
+        // Buyer pays catalog prices minus discounts + shipping (no extra buyer markup)
+        ShippingFeeAmount = shippingFee;
+        TotalAmount = Math.Max(0m, netSeller - SystemDiscountAmount) + ShippingFeeAmount;
+
+        // Accounting invariant check
+        var accountingSum = SellerReceiveAmount + (PlatformFeeAmount - SystemDiscountAmount) + ShippingFeeAmount;
+        if (TotalAmount != accountingSum)
+        {
+            throw new DomainException($"TotalAmount invariant violated: total ({TotalAmount}) must equal seller_receive + (platform_fee - system_discount) + shipping_fee ({accountingSum})");
+        }
+    }
 }

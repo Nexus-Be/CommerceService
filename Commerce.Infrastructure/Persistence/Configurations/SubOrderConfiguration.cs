@@ -11,7 +11,10 @@ public class SubOrderConfiguration : IEntityTypeConfiguration<SubOrder>
         builder.HasKey(x => x.Id);
         builder.Property(x => x.SubOrderNo).HasMaxLength(100).IsRequired();
         builder.HasIndex(x => x.SubOrderNo).IsUnique();
-        builder.Property(x => x.ShippingAddress).HasColumnType("jsonb");
+        builder.OwnsOne(x => x.ShippingAddress, nav =>
+        {
+            nav.ToJson();
+        });
         builder.Property(x => x.ContactPhone).HasMaxLength(50);
         builder.Property(x => x.ItemsAmount).HasPrecision(18, 2);
         builder.Property(x => x.ProductDiscountAmount).HasPrecision(18, 2);
@@ -22,6 +25,13 @@ public class SubOrderConfiguration : IEntityTypeConfiguration<SubOrder>
         builder.Property(x => x.TotalAmount).HasPrecision(18, 2);
         builder.Property(x => x.SellerReceiveAmount).HasPrecision(18, 2);
         builder.Property(x => x.PlatformFeeAmount).HasPrecision(18, 2);
+        builder.Property(x => x.CarrierCode).HasMaxLength(50);
+        builder.Property(x => x.TrackingCode).HasMaxLength(100);
+        builder.HasIndex(x => x.TrackingCode);
+        builder.Property(x => x.LabelPrintUrl).HasMaxLength(500);
+        builder.Property(x => x.EstimatedDeliveryAt);
+        builder.Property(x => x.ShipmentPendingCreation).HasDefaultValue(false);
+        builder.Property(x => x.IsEscrowSettled).HasDefaultValue(false);
         builder.Property(x => x.RowVersion).IsConcurrencyToken();
 
         builder.HasOne(s => s.Order)

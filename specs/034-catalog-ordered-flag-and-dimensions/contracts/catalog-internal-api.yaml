@@ -1,0 +1,199 @@
+openapi: 3.0.3
+info:
+  title: Catalog Service Internal API for Commerce Service
+  version: 1.0.0
+  description: Technical contract for internal variant queries, variant switch validation, and mark-ordered synchronization.
+paths:
+  /api/v1/internal/variants/mark-ordered:
+    post:
+      summary: Mark variants as having orders (locks hard deletion)
+      description: Sets HasOrder = true on the specified variants in Catalog Service. Idempotent.
+      operationId: markVariantsOrdered
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkOrderedRequest'
+      responses:
+        '200':
+          description: Successfully processed variant IDs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkOrderedResponse'
+        '500':
+          description: Internal service error
+
+  /api/v1/internal/variants:
+    post:
+      summary: Batch retrieve variant details including 3D dimensions
+      description: Used by Cart and Order services to fetch real-time prices, statuses, and physical packaging dimensions.
+      operationId: getBatchVariants
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [variantIds]
+              properties:
+                variantIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        '200':
+          description: Batch result containing variant items and not found IDs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchVariantResponse'
+
+  /api/v1/internal/variants/validate-switch:
+    post:
+      summary: Validate switching a variant in cart and retrieve new dimensions
+      description: Validates that the new SKU belongs to the same parent product and returns updated price and dimensions.
+      operationId: validateVariantSwitch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentSkuId, newSkuId]
+              properties:
+                currentSkuId:
+                  type: string
+                  format: uuid
+                newSkuId:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Switch validation outcome with packaging specifications
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VariantSwitchResponse'
+
+components:
+  schemas:
+    MarkOrderedRequest:
+      type: object
+      required: [variantIds]
+      properties:
+        variantIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          example:
+            - "b8f6c38a-1234-4567-89ab-cdef01234567"
+            - "c9a1d2e3-4567-89ab-cdef-0123456789ab"
+
+    MarkOrderedResponse:
+      type: object
+      properties:
+        updatedCount:
+          type: integer
+          example: 1
+        updatedVariantIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          example:
+            - "b8f6c38a-1234-4567-89ab-cdef01234567"
+
+    BatchVariantResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/VariantItem'
+        notFoundIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    VariantItem:
+      type: object
+      properties:
+        variantId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        skuCode:
+          type: string
+        variantName:
+          type: string
+        productName:
+          type: string
+        price:
+          type: number
+          format: decimal
+        currency:
+          type: string
+        status:
+          type: string
+        productStatus:
+          type: string
+        saleType:
+          type: string
+        isPurchasable:
+          type: boolean
+        weightGrams:
+          type: integer
+          example: 1350
+        lengthCm:
+          type: integer
+          example: 35
+        widthCm:
+          type: integer
+          example: 28
+        heightCm:
+          type: integer
+          example: 26
+
+    VariantSwitchResponse:
+      type: object
+      properties:
+        isValid:
+          type: boolean
+        productId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        newSkuId:
+          type: string
+          format: uuid
+        newSkuName:
+          type: string
+        newUnitPrice:
+          type: number
+          format: decimal
+        isPurchasable:
+          type: boolean
+        weightGrams:
+          type: integer
+          example: 1350
+        lengthCm:
+          type: integer
+          example: 35
+        widthCm:
+          type: integer
+          example: 28
+        heightCm:
+          type: integer
+          example: 26

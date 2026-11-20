@@ -1,0 +1,113 @@
+openapi: 3.0.3
+info:
+  title: Catalog Service Internal Purchase Record Synchronization API
+  description: Internal service-to-service endpoint in CatalogService (Port 8002) invoked by CommerceService upon order receipt confirmation.
+  version: 1.0.0
+paths:
+  /api/v1/internal/purchases:
+    post:
+      summary: Synchronize completed purchase record to unlock verified reviews
+      operationId: syncPurchaseRecord
+      tags:
+        - Internal Purchases
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseRecordSyncRequest'
+      responses:
+        '201':
+          description: Purchase record successfully created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseRecordResponse'
+        '200':
+          description: Purchase record already existed (idempotent duplicate)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseRecordResponse'
+        '400':
+          description: Invalid input parameters
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Product ID not found in Catalog master data
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal catalog service or database error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+components:
+  schemas:
+    PurchaseRecordSyncRequest:
+      type: object
+      required:
+        - buyerId
+        - orderId
+        - productId
+      properties:
+        buyerId:
+          type: string
+          format: uuid
+          description: Buyer user identifier
+          example: 'dddddddd-4444-4444-4444-444444444444'
+        orderId:
+          type: string
+          format: uuid
+          description: Completed SubOrder ID or Order ID
+          example: '99000000-0000-0000-0000-000000000002'
+        productId:
+          type: string
+          format: uuid
+          description: Parent product identifier (not SKU or variant ID)
+          example: '11000000-0000-0000-0000-000000000001'
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO 8601 UTC timestamp of order completion
+          example: '2026-11-10T07:30:00Z'
+    PurchaseRecordResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        buyerId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        completedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+        detail:
+          type: string

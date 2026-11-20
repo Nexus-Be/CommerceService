@@ -10,6 +10,7 @@ public class OrderStatusHistoryConfiguration : IEntityTypeConfiguration<OrderSta
     {
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Reason).HasMaxLength(1000);
+        builder.Property(x => x.AuctionCallbackStatus).HasMaxLength(50);
 
         builder.HasOne(h => h.SubOrder)
             .WithMany(s => s.StatusHistories)
