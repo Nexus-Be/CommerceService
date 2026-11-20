@@ -357,6 +357,28 @@ public sealed class FulfillmentClient : IFulfillmentClient
         }
     }
 
+    /// <summary>True when Fulfillment's error body carries the code WAREHOUSE_NOT_FOUND (the seller has no active warehouse).</summary>
+    private static bool IsWarehouseMissing(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("errorCode", out var code)
+                && code.ValueKind == System.Text.Json.JsonValueKind.String
+                && string.Equals(code.GetString(), "WAREHOUSE_NOT_FOUND", StringComparison.Ordinal);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
+
     public async Task<decimal> CalculateShopShippingFeeAsync(ShopShippingQuoteRequest request, CancellationToken ct = default)
     {
         try
@@ -383,6 +405,16 @@ public sealed class FulfillmentClient : IFulfillmentClient
                     return feeResult.Fee > 0 ? feeResult.Fee : feeResult.FeeAmount;
                 }
                 throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Fulfillment service returned an empty shipping quote response.", 503);
+            }
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                var missingBody = await response.Content.ReadAsStringAsync(ct);
+                if (IsWarehouseMissing(missingBody))
+                {
+                    _logger.LogWarning("[REST Fulfillment Client] Seller '{SellerId}' has no active warehouse; no shipping fee can be quoted.", request.SellerId);
+                    throw new CommerceDomainException("SELLER_WAREHOUSE_MISSING", "This shop is not ready to ship yet because it has no active warehouse.", 422);
+                }
             }
 
             if (response.StatusCode == HttpStatusCode.BadRequest)
@@ -457,6 +489,11 @@ public sealed class FulfillmentClient : IFulfillmentClient
                 _logger.LogWarning(
                     "[REST Fulfillment Client] Create shipment rejected with {StatusCode} for SubOrder '{SubOrderId}': {Error}",
                     (int)response.StatusCode, subOrderId, errorBody);
+                if (IsWarehouseMissing(errorBody))
+                {
+                    throw new CommerceDomainException("SELLER_WAREHOUSE_MISSING", "The seller has no active warehouse yet, so no shipment can be created. Set up the warehouse, then retry.", 422);
+                }
+
                 throw new CommerceDomainException("SHIPMENT_CREATION_REJECTED", "The carrier shipment request was rejected by the fulfillment service.", 422);
             }
 
