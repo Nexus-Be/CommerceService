@@ -86,6 +86,32 @@ public class FulfillmentClientWarehouseTests
     }
 
     [Fact]
+    public async Task Quote_WhenTheWarehouseHasNoOriginDistrict_SaysTheWarehouseIsIncomplete_NotThatTheAddressIsInvalid()
+    {
+        var act = () => CreateClient(HttpStatusCode.BadRequest, "{\"errorCode\":\"INVALID_FROM_DISTRICT\"}").CalculateShopShippingFeeAsync(Quote());
+
+        var ex = (await act.Should().ThrowAsync<CommerceDomainException>()).Which;
+        ex.ErrorCode.Should().Be("SELLER_WAREHOUSE_INCOMPLETE");
+        ex.StatusCode.Should().Be(422);
+    }
+
+    [Fact]
+    public async Task Quote_AnotherBadRequest_StillMeansTheAddressOrItemsAreInvalid()
+    {
+        var act = () => CreateClient(HttpStatusCode.BadRequest, "{\"errorCode\":\"VAL_INVALID_INPUT\"}").CalculateShopShippingFeeAsync(Quote());
+
+        (await act.Should().ThrowAsync<CommerceDomainException>()).Which.ErrorCode.Should().Be("SHIPPING_QUOTE_FAILED");
+    }
+
+    [Fact]
+    public async Task CreateShipment_WhenTheWarehouseHasNoOriginDistrict_TellsTheSellerToCompleteTheAddress()
+    {
+        var act = () => CreateClient(HttpStatusCode.BadRequest, "{\"errorCode\":\"INVALID_FROM_DISTRICT\"}").CreateShipmentAsync(Create());
+
+        (await act.Should().ThrowAsync<CommerceDomainException>()).Which.ErrorCode.Should().Be("SELLER_WAREHOUSE_INCOMPLETE");
+    }
+
+    [Fact]
     public async Task CreateShipment_AnotherRefusal_KeepsTheGenericRejectionCode()
     {
         var act = () => CreateClient(HttpStatusCode.BadRequest, "{\"errorCode\":\"VAL_INVALID_INPUT\"}").CreateShipmentAsync(Create());

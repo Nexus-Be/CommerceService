@@ -357,12 +357,12 @@ public sealed class FulfillmentClient : IFulfillmentClient
         }
     }
 
-    /// <summary>True when Fulfillment's error body carries the code WAREHOUSE_NOT_FOUND (the seller has no active warehouse).</summary>
-    private static bool IsWarehouseMissing(string? body)
+    /// <summary>The error code in Fulfillment's error body ("errorCode"), or null when the body is empty or not an error object.</summary>
+    private static string? ReadErrorCode(string? body)
     {
         if (string.IsNullOrWhiteSpace(body))
         {
-            return false;
+            return null;
         }
 
         try
@@ -371,13 +371,19 @@ public sealed class FulfillmentClient : IFulfillmentClient
             return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
                 && doc.RootElement.TryGetProperty("errorCode", out var code)
                 && code.ValueKind == System.Text.Json.JsonValueKind.String
-                && string.Equals(code.GetString(), "WAREHOUSE_NOT_FOUND", StringComparison.Ordinal);
+                    ? code.GetString()
+                    : null;
         }
         catch (System.Text.Json.JsonException)
         {
-            return false;
+            return null;
         }
     }
+
+    private static bool IsWarehouseMissing(string? body) => string.Equals(ReadErrorCode(body), "WAREHOUSE_NOT_FOUND", StringComparison.Ordinal);
+
+    /// <summary>The seller has a warehouse but it has no origin district, so no fee can be quoted and no pickup arranged.</summary>
+    private static bool IsWarehouseIncomplete(string? body) => string.Equals(ReadErrorCode(body), "INVALID_FROM_DISTRICT", StringComparison.Ordinal);
 
     public async Task<decimal> CalculateShopShippingFeeAsync(ShopShippingQuoteRequest request, CancellationToken ct = default)
     {
@@ -420,6 +426,12 @@ public sealed class FulfillmentClient : IFulfillmentClient
             if (response.StatusCode == HttpStatusCode.BadRequest)
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
+                if (IsWarehouseIncomplete(errorBody))
+                {
+                    _logger.LogWarning("[REST Fulfillment Client] The warehouse of Seller '{SellerId}' has no origin district; no shipping fee can be quoted.", request.SellerId);
+                    throw new CommerceDomainException("SELLER_WAREHOUSE_INCOMPLETE", "This shop's warehouse has no pickup location yet, so shipping cannot be arranged.", 422);
+                }
+
                 _logger.LogWarning("[REST Fulfillment Client] Shipping quote rejected with 400 for Seller '{SellerId}': {Error}", request.SellerId, errorBody);
                 throw new CommerceDomainException("SHIPPING_QUOTE_FAILED", "Invalid shipping destination address or items payload for carrier calculation.", 400);
             }
@@ -492,6 +504,10 @@ public sealed class FulfillmentClient : IFulfillmentClient
                 if (IsWarehouseMissing(errorBody))
                 {
                     throw new CommerceDomainException("SELLER_WAREHOUSE_MISSING", "The seller has no active warehouse yet, so no shipment can be created. Set up the warehouse, then retry.", 422);
+                }
+                if (IsWarehouseIncomplete(errorBody))
+                {
+                    throw new CommerceDomainException("SELLER_WAREHOUSE_INCOMPLETE", "The seller's warehouse has no pickup location yet, so no shipment can be created. Complete the warehouse address, then retry.", 422);
                 }
 
                 throw new CommerceDomainException("SHIPMENT_CREATION_REJECTED", "The carrier shipment request was rejected by the fulfillment service.", 422);
