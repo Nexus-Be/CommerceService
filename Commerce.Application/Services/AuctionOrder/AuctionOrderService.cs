@@ -1,4 +1,4 @@
-namespace Commerce.Application.Services.AuctionOrder;
+﻿namespace Commerce.Application.Services.AuctionOrder;
 
 using Commerce.Application.Common.Models;
 using Commerce.Application.Services.Order;
@@ -57,11 +57,16 @@ public class AuctionOrderService : IAuctionOrderService
     {
         var depositAmount = request.DepositAmount ?? 0m;
         var sourceText = request.Source?.Trim().ToUpperInvariant() ?? "WINNER";
-        if (sourceText is not ("WINNER" or "SECOND_CHANCE"))
-            throw new CommerceDomainException("VAL_INVALID_SETTLEMENT", "Auction settlement source must be WINNER or SECOND_CHANCE.", 400);
-        var source = sourceText == "SECOND_CHANCE"
-            ? AuctionOrderSource.SecondChance
-            : AuctionOrderSource.Winner;
+        if (sourceText is not ("WINNER" or "SECOND_CHANCE" or "BUY_NOW"))
+            throw new CommerceDomainException("VAL_INVALID_SETTLEMENT", "Auction settlement source must be WINNER, SECOND_CHANCE or BUY_NOW.", 400);
+        // A Buy Now settlement carries the total held by Auction (deposit plus goods hold) as DepositAmount, so the remaining amount is zero
+        // and the buyer only pays shipping; the checks below (whole VND, deposit not above the price) apply to it like to any other source.
+        var source = sourceText switch
+        {
+            "SECOND_CHANCE" => AuctionOrderSource.SecondChance,
+            "BUY_NOW" => AuctionOrderSource.BuyNow,
+            _ => AuctionOrderSource.Winner
+        };
 
         if (request.WinningAmount <= 0 || depositAmount < 0)
         {

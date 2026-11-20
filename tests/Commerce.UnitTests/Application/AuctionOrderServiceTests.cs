@@ -1,4 +1,4 @@
-namespace Commerce.UnitTests.Application;
+﻿namespace Commerce.UnitTests.Application;
 
 using System;
 using System.Threading.Tasks;
@@ -84,6 +84,86 @@ public class AuctionOrderServiceTests
         savedOrder.SellerReceiveAmount.Should().Be(1900000m); // 2,000,000 - 100,000
         savedOrder.TotalAmount.Should().BeNull(); // awaiting shipping quote
         savedOrder.Status.Should().Be(SubOrderStatus.PendingPayment);
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_BuyNow_CreatesAPendingOrderWhereTheGoodsAreFullyCovered_AndNothingIsLeftButShipping()
+    {
+        // Arrange: Auction sends the total it holds (deposit plus goods hold) as DepositAmount for a Buy Now.
+        var request = new AuctionSettlementRequest(
+            AuctionId: Guid.NewGuid(),
+            WinnerId: Guid.NewGuid(),
+            SellerId: Guid.NewGuid(),
+            WinningBidId: Guid.NewGuid(),
+            ProductId: Guid.NewGuid(),
+            SkuId: null,
+            ProductName: "Buy Now Item",
+            ProductImageUrl: null,
+            SkuAttributes: null,
+            WinningAmount: 5000000m,
+            PaymentDeadlineAt: DateTimeOffset.UtcNow.AddHours(24),
+            DepositAmount: 5000000m,
+            Source: "BUY_NOW");
+
+        // Act
+        var result = await _service.ReceiveSettlementAsync(request);
+
+        // Assert
+        result.IsNewlyCreated.Should().BeTrue();
+        result.Response.Status.Should().Be("PendingPayment");
+        var order = await _dbContext.AuctionOrders.FindAsync(result.Response.OrderId);
+        order!.OrderSource.Should().Be(AuctionOrderSource.BuyNow);
+        order.DepositAmount.Should().Be(5000000m);
+        order.RemainingAmount.Should().Be(0m);
+        order.Status.Should().Be(SubOrderStatus.PendingPayment);
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_BuyNow_WhenSentAgain_ReturnsTheSameOrderInsteadOfASecondOne()
+    {
+        var request = new AuctionSettlementRequest(
+            AuctionId: Guid.NewGuid(),
+            WinnerId: Guid.NewGuid(),
+            SellerId: Guid.NewGuid(),
+            WinningBidId: Guid.NewGuid(),
+            ProductId: Guid.NewGuid(),
+            SkuId: null,
+            ProductName: "Buy Now Item",
+            ProductImageUrl: null,
+            SkuAttributes: null,
+            WinningAmount: 3000000m,
+            PaymentDeadlineAt: DateTimeOffset.UtcNow.AddHours(24),
+            DepositAmount: 3000000m,
+            Source: "BUY_NOW");
+
+        var first = await _service.ReceiveSettlementAsync(request);
+        var second = await _service.ReceiveSettlementAsync(request);
+
+        second.IsNewlyCreated.Should().BeFalse();
+        second.Response.OrderId.Should().Be(first.Response.OrderId);
+        _dbContext.AuctionOrders.Local.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_UnknownSource_IsStillRejected()
+    {
+        var request = new AuctionSettlementRequest(
+            AuctionId: Guid.NewGuid(),
+            WinnerId: Guid.NewGuid(),
+            SellerId: Guid.NewGuid(),
+            WinningBidId: Guid.NewGuid(),
+            ProductId: Guid.NewGuid(),
+            SkuId: null,
+            ProductName: "Item",
+            ProductImageUrl: null,
+            SkuAttributes: null,
+            WinningAmount: 1000000m,
+            PaymentDeadlineAt: DateTimeOffset.UtcNow.AddHours(24),
+            Source: "MYSTERY");
+
+        var act = () => _service.ReceiveSettlementAsync(request);
+
+        (await act.Should().ThrowAsync<CommerceDomainException>()).Which.ErrorCode.Should().Be("VAL_INVALID_SETTLEMENT");
     }
 
     [Fact]

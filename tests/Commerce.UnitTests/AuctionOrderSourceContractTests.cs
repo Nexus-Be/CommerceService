@@ -1,4 +1,4 @@
-namespace Commerce.UnitTests;
+﻿namespace Commerce.UnitTests;
 
 using Commerce.Domain.Enums;
 using Xunit;
@@ -8,6 +8,7 @@ public sealed class AuctionOrderSourceContractTests
     [Theory]
     [InlineData(AuctionOrderSource.Winner, "WINNER")]
     [InlineData(AuctionOrderSource.SecondChance, "SECOND_CHANCE")]
+    [InlineData(AuctionOrderSource.BuyNow, "BUY_NOW")]
     public void ToWireValue_MatchesTheContractWithAuctionService(AuctionOrderSource source, string expected)
     {
         // AuctionService compares with SECOND_CHANCE; Enum.ToString().ToUpperInvariant() would send SECONDCHANCE.
