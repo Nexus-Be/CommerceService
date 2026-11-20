@@ -1,0 +1,231 @@
+openapi: 3.0.3
+info:
+  title: CommerceService Auction Buy Now & Settlement API Contract
+  version: 0.4.1
+  description: API specification for Buy Now settlement ingestion, shipping submission, payment, and callbacks.
+paths:
+  /api/v1/auction-orders/settlement:
+    post:
+      summary: Ingest auction settlement from Auction Service (Winner, Second Chance, or Buy Now)
+      tags:
+        - Auction Orders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuctionSettlementRequest'
+      responses:
+        '201':
+          description: Auction order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionSettlementResponse'
+        '200':
+          description: Idempotent repeat request; existing order returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionSettlementResponse'
+        '400':
+          description: Validation error or invalid order source
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Active conflicting order already exists
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Unprocessable entity (e.g. deposit exceeds winning amount or negative values)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auction-orders/{id}/shipping:
+    put:
+      summary: Submit shipping destination address and calculate carrier fee
+      tags:
+        - Auction Orders
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuctionShippingRequest'
+      responses:
+        '200':
+          description: Shipping fee calculated and added to order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionOrderDetailResponse'
+        '400':
+          description: Payment deadline expired or invalid status
+        '403':
+          description: Forbidden (caller is not the buyer)
+
+  /api/v1/auction-orders/{id}/pay:
+    post:
+      summary: Pay remaining order balance (shipping fee for Buy Now) via digital wallet
+      tags:
+        - Auction Orders
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Payment successful, status updated to Paid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionOrderDetailResponse'
+        '400':
+          description: Payment failed, address missing, or deadline expired
+
+components:
+  schemas:
+    AuctionSettlementRequest:
+      type: object
+      required:
+        - sessionId
+        - winnerId
+        - sellerId
+        - itemId
+        - winningAmount
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        source:
+          type: string
+          enum: [WINNER, SECOND_CHANCE, BUY_NOW]
+          default: WINNER
+        winnerId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        itemId:
+          type: string
+          format: uuid
+        winningAmount:
+          type: number
+          format: decimal
+          example: 5000000.0
+        depositAmount:
+          type: number
+          format: decimal
+          example: 5000000.0
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+
+    AuctionSettlementResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        orderNo:
+          type: string
+        auctionId:
+          type: string
+          format: uuid
+        orderSource:
+          type: string
+          enum: [WINNER, SECOND_CHANCE, BUY_NOW]
+        status:
+          type: string
+          example: PendingPayment
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+
+    AuctionShippingRequest:
+      type: object
+      required:
+        - recipientName
+        - phone
+        - province
+        - district
+        - ward
+        - detailAddress
+      properties:
+        recipientName:
+          type: string
+        phone:
+          type: string
+        province:
+          type: string
+        district:
+          type: string
+        ward:
+          type: string
+        detailAddress:
+          type: string
+
+    AuctionOrderDetailResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderNo:
+          type: string
+        status:
+          type: string
+        orderSource:
+          type: string
+          enum: [WINNER, SECOND_CHANCE, BUY_NOW]
+        winningAmount:
+          type: number
+          format: decimal
+        depositAmount:
+          type: number
+          format: decimal
+        remainingAmount:
+          type: number
+          format: decimal
+        shippingFeeAmount:
+          type: number
+          format: decimal
+        totalAmount:
+          type: number
+          format: decimal
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+        detail:
+          type: string
+        traceId:
+          type: string

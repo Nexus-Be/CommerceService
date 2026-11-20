@@ -718,6 +718,39 @@ Commerce Service áp dụng **Quy trình Thanh toán 2 Bước (Two-Phase Checko
 
 ### 7.2. Chi Tiết Một Số Endpoint Đơn Đấu Giá Quan Trọng
 
+#### `AUC-01`: Tiếp Nhận Kết Quả Đấu Giá (Settlement Ingestion)
+* **Endpoint:** `POST /api/v1/auction-orders/settlement`
+* **Bảo mật:** `X-Internal-Service-Key`
+* **Mô tả:** Tiếp nhận thông tin chốt phiên từ `AuctionService` để tạo đơn `AuctionOrder` ở trạng thái `PendingPayment`. Hỗ trợ 3 nguồn đơn:
+  1. `source = "WINNER"`: Đơn thắng đấu giá bậc thang tiêu chuẩn (hoặc đơn đấu giá có Giá sàn được Người bán chấp nhận bán dưới giá sàn). Khấu trừ tiền cọc (`depositAmount`), tính `remainingAmount = winningAmount - depositAmount`.
+  2. `source = "SECOND_CHANCE"`: Đơn trao cơ hội cho Runner-up khi Winner chính quá hạn 24h.
+  3. `source = "BUY_NOW"`: Đơn Mua ngay với mức giá định sẵn. AuctionService đã hold 100% tiền hàng (`depositAmount == winningAmount`). Commerce tính `remainingAmount = 0 VND`. Đơn ở trạng thái `PendingPayment` chờ Buyer nhập địa chỉ nhận hàng để tính phí ship GHN. Khi Buyer trả phí ship (`TotalAmount = ShippingFeeAmount`), đơn chuyển sang `Paid`.
+* **Quy chuẩn Giá sàn (Reserve Price):** Khi phiên không đạt giá sàn, AuctionService giữ phiên trong trạng thái `AwaitingSellerApproval` (12h) và **không** gửi sang Commerce. Nếu Seller đồng ý bán, AuctionService đẩy sang Commerce với `source = "WINNER"`.
+* **Request Body (BUY_NOW):**
+  ```json
+  {
+    "sessionId": "4f9c6d1a-8b2e-4e7a-9a1b-3c5d7e9f0a2b",
+    "source": "BUY_NOW",
+    "winnerId": "11111111-2222-3333-4444-555555555555",
+    "sellerId": "99999999-8888-7777-6666-555555555555",
+    "itemId": "aaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    "winningAmount": 5000000.0,
+    "depositAmount": 5000000.0,
+    "paymentDeadlineAt": "2026-11-21T16:00:00Z"
+  }
+  ```
+* **Response (HTTP 201 Created):**
+  ```json
+  {
+    "orderId": "7b8c9d0e-1f2a-3b4c-5d6e-7f8a9b0c1d2e",
+    "orderNo": "AO-20261120-A1B2C3",
+    "auctionId": "4f9c6d1a-8b2e-4e7a-9a1b-3c5d7e9f0a2b",
+    "orderSource": "BuyNow",
+    "status": "PendingPayment",
+    "paymentDeadlineAt": "2026-11-21T16:00:00Z"
+  }
+  ```
+
 #### `AUC-10`: Danh Sách Đơn Đấu Giá Của Người Mua Cá Nhân
 * **Endpoint:** `GET /api/v1/auction-orders/me?page=1&pageSize=20&status=PendingPayment`
 * **Vai trò:** `buyer`, `admin`, `staff`

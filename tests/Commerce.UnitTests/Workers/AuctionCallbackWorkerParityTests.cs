@@ -151,4 +151,59 @@ public class AuctionCallbackWorkerParityTests
         history.AuctionCallbackSentAt.Should().NotBeNull();
         mockAuctionClient.Verify(a => a.NotifyPaymentStatusAsync(order.AuctionId, It.IsAny<AuctionPaymentStatusCallbackRequest>(), It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public void Factory_Build_ForBuyNowOrder_OutputsStrictBuyNowWireValue()
+    {
+        var orderId = Guid.NewGuid();
+        var winnerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var historyId = Guid.NewGuid();
+        var paidAt = DateTimeOffset.UtcNow;
+        var deadline = paidAt.AddHours(24);
+
+        var order = new AuctionOrder
+        {
+            Id = orderId,
+            OrderNo = "AUC-20261120-BUYNOW-01",
+            BuyerId = winnerId,
+            SellerId = sellerId,
+            AuctionId = Guid.NewGuid(),
+            WinningBidId = Guid.NewGuid(),
+            ProductId = Guid.NewGuid(),
+            ProductNameSnapshot = "Buy Now Parity Item",
+            WinningAmount = 5000000m,
+            DepositAmount = 5000000m,
+            RemainingAmount = 0m,
+            ShippingFeeAmount = 35000m,
+            TotalAmount = 35000m,
+            SellerReceiveAmount = 4750000m,
+            PlatformFeeAmount = 250000m,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = deadline,
+            OrderSource = AuctionOrderSource.BuyNow,
+            PaidAt = paidAt,
+            SellerRespondDeadlineAt = deadline,
+            Status = SubOrderStatus.Paid
+        };
+
+        var history = new OrderStatusHistory
+        {
+            Id = historyId,
+            AuctionOrderId = orderId,
+            AuctionCallbackStatus = "Paid",
+            ActorRole = OrderActorRole.Buyer,
+            ToStatus = SubOrderStatus.Paid,
+            CreatedAt = paidAt
+        };
+
+        var callback = AuctionPaymentCallbackFactory.Build(order, history);
+
+        callback.OrderId.Should().Be(orderId);
+        callback.WinnerId.Should().Be(winnerId);
+        callback.Status.Should().Be("Paid");
+        callback.Amount.Should().Be(5000000m);
+        callback.TotalAmount.Should().Be(35000m);
+        callback.OrderSource.Should().Be("BUY_NOW");
+    }
 }

@@ -321,7 +321,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                                     WinnerId: auctionOrder.BuyerId,
                                     Status: "SellerExpired",
                                     EventId: Guid.NewGuid(),
-                                    OrderSource: auctionOrder.OrderSource.ToString().ToUpperInvariant(),
+                                    OrderSource: auctionOrder.OrderSource.ToWireValue(),
                                     OccurredAt: now
                                 ),
                                 ct);
