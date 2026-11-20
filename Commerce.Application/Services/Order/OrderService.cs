@@ -282,6 +282,12 @@ public sealed class OrderService : IOrderService
             {
                 throw;
             }
+            // A shop with no usable warehouse cannot ship at all, so the buyer is told instead of being charged a default fee for a parcel
+            // nobody can send. Only a real outage (the next catch) falls back to the default rate.
+            catch (CommerceDomainException ex) when (ex.ErrorCode is "SELLER_WAREHOUSE_MISSING" or "SELLER_WAREHOUSE_INCOMPLETE")
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to calculate dynamic carrier shipping fee for Shop '{SellerId}'. Falling back to default rate.", sellerId);
