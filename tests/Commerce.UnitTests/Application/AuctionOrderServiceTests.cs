@@ -1236,6 +1236,28 @@ public class AuctionOrderServiceTests
     }
 
     [Fact]
+    public async Task SellerRejectAsync_BeforeTheBuyerPaid_IsRefusedAndNothingChanges()
+    {
+        var sellerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        _dbContext.AuctionOrders.Add(new AuctionOrder
+        {
+            Id = orderId, OrderNo = "AO-20261120-00001", AuctionId = Guid.NewGuid(), BuyerId = Guid.NewGuid(), SellerId = sellerId,
+            WinningBidId = Guid.NewGuid(), ProductId = Guid.NewGuid(), ProductNameSnapshot = "Camera", WinningAmount = 2000000m,
+            DepositAmount = 2000000m, RemainingAmount = 0m, ShippingAddress = "{}", ShippingFeeAmount = 30000m, TotalAmount = 30000m,
+            SellerReceiveAmount = 1900000m, PlatformFeeAmount = 100000m, OrderSource = AuctionOrderSource.Winner,
+            Status = SubOrderStatus.PendingPayment, PaymentMethod = PaymentMethod.Wallet, PaymentDeadlineAt = DateTimeOffset.UtcNow.AddHours(20)
+        });
+        await _dbContext.SaveChangesAsync();
+
+        var act = () => _service.SellerRejectAsync(orderId, sellerId, new SellerRejectAuctionOrderRequest(ReasonNote: "No stock"));
+
+        (await act.Should().ThrowAsync<CommerceDomainException>()).Which.ErrorCode.Should().Be("ORDER_NOT_PAID");
+        (await _dbContext.AuctionOrders.FindAsync(orderId))!.Status.Should().Be(SubOrderStatus.PendingPayment);
+        _auctionClientMock.Verify(a => a.NotifyPaymentStatusAsync(It.IsAny<Guid>(), It.IsAny<AuctionPaymentStatusCallbackRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task SellerRejectAsync_WhenUserClientPenaltyFails_DoesNotRollbackRefundAndSucceeds()
     {
         // Arrange
