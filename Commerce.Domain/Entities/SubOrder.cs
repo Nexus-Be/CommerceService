@@ -34,6 +34,8 @@ public class SubOrder : BaseEntity<Guid>
     public decimal PlatformFeeAmount { get; set; }
     /// <summary>Platform fee rate (percent) captured when the order was created; null for orders created before the snapshot existed.</summary>
     public decimal? PlatformFeePercent { get; set; }
+    /// <summary>Seller payout protocol of this order: 1 = legacy (V1) route, 2 = atomic allocation command (V2). Set per order, never inferred from dates.</summary>
+    public int SettlementProtocolVersion { get; set; } = 1;
     public required DateTimeOffset PaymentDeadlineAt { get; set; }
     public DateTimeOffset? SellerRespondDeadlineAt { get; set; }
     public DateTimeOffset? PaidAt { get; set; }

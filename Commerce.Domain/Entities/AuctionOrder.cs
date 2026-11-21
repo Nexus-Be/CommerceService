@@ -29,6 +29,8 @@ public class AuctionOrder : BaseEntity<Guid>
     public required decimal PlatformFeeAmount { get; set; }
     /// <summary>Platform fee rate (percent) applied to this order; null for orders created before the snapshot existed.</summary>
     public decimal? PlatformFeePercent { get; set; }
+    /// <summary>Seller payout protocol of this order: 1 = legacy (V1) route, 2 = atomic allocation command (V2). Set per order, never inferred from dates.</summary>
+    public int SettlementProtocolVersion { get; set; } = 1;
     public required SubOrderStatus Status { get; set; } = SubOrderStatus.PendingPayment;
     public required PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Wallet;
     public Guid? WalletTransactionId { get; set; }
