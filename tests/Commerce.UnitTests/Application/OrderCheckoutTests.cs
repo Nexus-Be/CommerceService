@@ -682,4 +682,91 @@ public class OrderCheckoutTests : IDisposable
             It.Is<VoucherCalculationRequest>(r => r.BuyerId == buyerId && r.VoucherCodes.Contains("SHOP30K")),
             It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // =========================================================================
+    // G-1 step 2: platform fee rate is durable and snapshotted per order
+    // =========================================================================
+
+    private async Task SeedPlatformFeeSettingAsync(string percent)
+    {
+        _dbContext.SystemSettings.Add(new SystemSetting
+        {
+            Id = Guid.NewGuid(),
+            SettingKey = OrderService.PlatformFeeSettingKey,
+            SettingValue = percent,
+            ValueType = SettingValueType.Decimal,
+            Category = SettingCategory.Money
+        });
+        await _dbContext.SaveChangesAsync();
+    }
+
+    private static CheckoutQuoteRequest PlatformFeeQuoteRequest(Guid cartItemId) => new(
+        CartItemIds: new List<Guid> { cartItemId },
+        ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+        ContactPhone: "0901234567",
+        PaymentMethod: PaymentMethod.Wallet);
+
+    [Fact]
+    public async Task QuoteCheckoutAsync_ShouldReadStoredFee_WhenCacheIsCold_AndRefillCache()
+    {
+        var buyerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), Guid.NewGuid(), 100000m, 2);
+        await SeedPlatformFeeSettingAsync("10");
+        var service = CreateOrderService();
+
+        var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id), CancellationToken.None);
+
+        var cachedQuote = JsonSerializer.Deserialize<CachedQuote>((await _cache.GetStringAsync($"checkout_quote:{quote.QuoteId}"))!);
+        cachedQuote!.PlatformFeePercent.Should().Be(10m);
+        (await _cache.GetStringAsync("commerce:platform_fee_percent")).Should().Be("10");
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldSnapshotQuotedFeePercent_EvenWhenRateChangesAfterQuote()
+    {
+        var buyerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), Guid.NewGuid(), 100000m, 2);
+        await SeedPlatformFeeSettingAsync("10");
+        var service = CreateOrderService();
+
+        var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id), CancellationToken.None);
+
+        // The admin raises the fee after the buyer was quoted.
+        var setting = await _dbContext.SystemSettings.SingleAsync(s => s.SettingKey == OrderService.PlatformFeeSettingKey);
+        setting.SettingValue = "20";
+        await _dbContext.SaveChangesAsync();
+        await _cache.SetStringAsync("commerce:platform_fee_percent", "20");
+
+        var order = await service.CreateOrderAsync(buyerId, new CreateOrderRequest(
+            QuoteId: quote.QuoteId,
+            PaymentMethod: PaymentMethod.Wallet,
+            ShippingAddress: "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
+            ContactPhone: "0901234567",
+            Note: null), CancellationToken.None);
+
+        var sub = await _dbContext.SubOrders.SingleAsync(s => s.OrderId == order.OrderId);
+        sub.PlatformFeePercent.Should().Be(10m);
+        sub.PlatformFeeAmount.Should().Be(20000m); // 10% of 200,000, not 20%
+        sub.SellerReceiveAmount.Should().Be(180000m);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldRecordZeroPercent_WhenNoFeeIsConfigured()
+    {
+        var buyerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), Guid.NewGuid(), 100000m, 2);
+        var service = CreateOrderService();
+
+        var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id), CancellationToken.None);
+        var order = await service.CreateOrderAsync(buyerId, new CreateOrderRequest(
+            QuoteId: quote.QuoteId,
+            PaymentMethod: PaymentMethod.Wallet,
+            ShippingAddress: "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
+            ContactPhone: "0901234567",
+            Note: null), CancellationToken.None);
+
+        var sub = await _dbContext.SubOrders.SingleAsync(s => s.OrderId == order.OrderId);
+        sub.PlatformFeePercent.Should().Be(0m);
+        sub.PlatformFeeAmount.Should().Be(0m);
+    }
 }

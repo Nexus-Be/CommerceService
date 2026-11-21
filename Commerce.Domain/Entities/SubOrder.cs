@@ -32,6 +32,8 @@ public class SubOrder : BaseEntity<Guid>
     public decimal TotalAmount { get; set; }
     public decimal SellerReceiveAmount { get; set; }
     public decimal PlatformFeeAmount { get; set; }
+    /// <summary>Platform fee rate (percent) captured when the order was created; null for orders created before the snapshot existed.</summary>
+    public decimal? PlatformFeePercent { get; set; }
     public required DateTimeOffset PaymentDeadlineAt { get; set; }
     public DateTimeOffset? SellerRespondDeadlineAt { get; set; }
     public DateTimeOffset? PaidAt { get; set; }

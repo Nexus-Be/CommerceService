@@ -108,6 +108,10 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
+                    b.Property<decimal?>("PlatformFeePercent")
+                        .HasPrecision(9, 4)
+                        .HasColumnType("numeric(9,4)");
+
                     b.Property<Guid>("ProductId")
                         .HasColumnType("uuid");
 
@@ -1171,6 +1175,10 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("PlatformFeeAmount")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal?>("PlatformFeePercent")
+                        .HasPrecision(9, 4)
+                        .HasColumnType("numeric(9,4)");
 
                     b.Property<decimal>("PlatformMarkupAmount")
                         .HasPrecision(18, 2)

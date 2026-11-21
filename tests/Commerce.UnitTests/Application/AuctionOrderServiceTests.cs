@@ -81,6 +81,7 @@ public class AuctionOrderServiceTests
         savedOrder.RemainingAmount.Should().Be(2000000m);
         savedOrder.OrderSource.Should().Be(AuctionOrderSource.Winner);
         savedOrder.PlatformFeeAmount.Should().Be(100000m); // 5% of 2,000,000
+        savedOrder.PlatformFeePercent.Should().Be(5m);
         savedOrder.SellerReceiveAmount.Should().Be(1900000m); // 2,000,000 - 100,000
         savedOrder.TotalAmount.Should().BeNull(); // awaiting shipping quote
         savedOrder.Status.Should().Be(SubOrderStatus.PendingPayment);

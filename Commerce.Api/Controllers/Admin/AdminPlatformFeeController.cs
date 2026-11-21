@@ -9,7 +9,9 @@ using Commerce.Api.Filters;
 using Commerce.Application.Common.Extensions;
 using Commerce.Application.Common.Models;
 using Commerce.Application.Interfaces;
+using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Distributed;
@@ -69,6 +71,18 @@ public class AdminPlatformFeeController : ControllerBase
             }
         }
 
+        // The cache is empty: read the durable setting before falling back to configuration.
+        var stored = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.SettingKey == Commerce.Application.Services.Order.OrderService.PlatformFeeSettingKey, ct);
+        if (stored != null &&
+            decimal.TryParse(stored.SettingValue, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var storedPercent))
+        {
+            return Ok(new PlatformFeeResponse(
+                DefaultPercent: storedPercent,
+                UpdatedByRole: "system",
+                UpdatedAt: stored.UpdatedAt));
+        }
+
         var defaultPercent = _configuration.GetValue<decimal>("PlatformFee:DefaultPercent", 0.0m);
         var fallbackResponse = new PlatformFeeResponse(
             DefaultPercent: defaultPercent,
@@ -119,10 +133,41 @@ public class AdminPlatformFeeController : ControllerBase
 
         // The fee lives in the cache, so the audit record is the only durable trace of who changed it and from what.
         decimal? previousPercent = null;
-        var previousText = await _cache.GetStringAsync(PlatformFeePercentCacheKey, ct);
-        if (decimal.TryParse(previousText, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsedPrevious))
+        var setting = await _db.SystemSettings
+            .FirstOrDefaultAsync(s => s.SettingKey == Commerce.Application.Services.Order.OrderService.PlatformFeeSettingKey, ct);
+        if (setting != null &&
+            decimal.TryParse(setting.SettingValue, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var parsedPrevious))
         {
             previousPercent = parsedPrevious;
+        }
+        else
+        {
+            var previousText = await _cache.GetStringAsync(PlatformFeePercentCacheKey, ct);
+            if (decimal.TryParse(previousText, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var cachedPrevious))
+            {
+                previousPercent = cachedPrevious;
+            }
+        }
+
+        var newValueText = request.DefaultPercent.ToString("G", System.Globalization.CultureInfo.InvariantCulture);
+        if (setting == null)
+        {
+            _db.SystemSettings.Add(new SystemSetting
+            {
+                Id = Guid.NewGuid(),
+                SettingKey = Commerce.Application.Services.Order.OrderService.PlatformFeeSettingKey,
+                SettingValue = newValueText,
+                ValueType = SettingValueType.Decimal,
+                Category = SettingCategory.Money,
+                Description = "Platform fee percent applied to new orders",
+                UpdatedBy = HttpContext.GetUserId()
+            });
+        }
+        else
+        {
+            setting.SettingValue = newValueText;
+            setting.UpdatedBy = HttpContext.GetUserId();
+            setting.UpdatedAt = DateTimeOffset.UtcNow;
         }
 
         _db.AddAuditLog(
@@ -136,7 +181,7 @@ public class AdminPlatformFeeController : ControllerBase
 
         var serialized = JsonSerializer.Serialize(response);
         await _cache.SetStringAsync(PlatformFeeMetadataCacheKey, serialized, ct);
-        await _cache.SetStringAsync(PlatformFeePercentCacheKey, request.DefaultPercent.ToString("G"), ct);
+        await _cache.SetStringAsync(PlatformFeePercentCacheKey, newValueText, ct);
 
         _logger.LogInformation("Platform fee updated to {Percent}% by role '{Role}'.",
             request.DefaultPercent, updatedByRole);

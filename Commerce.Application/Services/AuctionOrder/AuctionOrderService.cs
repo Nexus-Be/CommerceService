@@ -141,6 +141,7 @@ public class AuctionOrderService : IAuctionOrderService
 
         var auctionOrder = new AuctionOrder
         {
+            PlatformFeePercent = DefaultPlatformFeeRate * 100m,
             Id = orderId,
             OrderNo = orderNo,
             AuctionId = request.AuctionId,

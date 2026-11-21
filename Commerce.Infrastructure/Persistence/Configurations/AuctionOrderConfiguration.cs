@@ -25,6 +25,7 @@ public class AuctionOrderConfiguration : IEntityTypeConfiguration<AuctionOrder>
         builder.Property(x => x.TotalAmount).HasPrecision(18, 2);
         builder.Property(x => x.SellerReceiveAmount).HasPrecision(18, 2);
         builder.Property(x => x.PlatformFeeAmount).HasPrecision(18, 2);
+        builder.Property(x => x.PlatformFeePercent).HasPrecision(9, 4);
         builder.Property(x => x.CarrierCode).HasMaxLength(50);
         builder.Property(x => x.TrackingCode).HasMaxLength(100);
         builder.HasIndex(x => x.TrackingCode);

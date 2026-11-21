@@ -67,6 +67,9 @@ public sealed class OrderService : IOrderService
         _voucherLifecycleService = voucherLifecycleService;
     }
 
+    /// <summary>Durable key of the platform fee rate in SystemSettings (the cache is only an accelerator).</summary>
+    public const string PlatformFeeSettingKey = "PLATFORM_FEE_PERCENT";
+
     private async Task<decimal> GetActivePlatformMarkupPercentAsync(CancellationToken ct)
     {
         try
@@ -89,7 +92,35 @@ public sealed class OrderService : IOrderService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to retrieve platform fee percent from cache. Using fallback default.");
+            _logger.LogWarning(ex, "Failed to retrieve platform fee percent from cache. Falling back to the stored setting.");
+        }
+
+        // The cache is only an accelerator. A cold or flushed cache must not silently reset the rate to 0%.
+        try
+        {
+            var stored = await _dbContext.SystemSettings.AsNoTracking()
+                .Where(s => s.SettingKey == PlatformFeeSettingKey)
+                .Select(s => s.SettingValue)
+                .FirstOrDefaultAsync(ct);
+            if (!string.IsNullOrEmpty(stored) &&
+                decimal.TryParse(stored, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var storedPercent) &&
+                storedPercent >= 0m && storedPercent <= 100m)
+            {
+                try
+                {
+                    await _cache.SetStringAsync("commerce:platform_fee_percent",
+                        storedPercent.ToString("G", System.Globalization.CultureInfo.InvariantCulture), ct);
+                }
+                catch (Exception cacheEx)
+                {
+                    _logger.LogWarning(cacheEx, "Failed to refill the platform fee cache.");
+                }
+                return storedPercent;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read the stored platform fee percent. Using fallback default.");
         }
 
         return 0.0m;
@@ -428,7 +459,8 @@ public sealed class OrderService : IOrderService
             BuyerId = buyerId,
             Request = effectiveRequest,
             Response = quoteResponse,
-            ExpiredAt = expiredAt
+            ExpiredAt = expiredAt,
+            PlatformFeePercent = platformMarkupPercent
         });
 
         await _cache.SetStringAsync(quoteKey, quotePayload, new DistributedCacheEntryOptions
@@ -543,7 +575,8 @@ public sealed class OrderService : IOrderService
             BuyerId = buyerId,
             Request = effectiveRequest,
             Response = updatedResponse,
-            ExpiredAt = cachedQuote.ExpiredAt
+            ExpiredAt = cachedQuote.ExpiredAt,
+            PlatformFeePercent = cachedQuote.PlatformFeePercent
         };
 
         await _cache.SetStringAsync(quoteKey, JsonSerializer.Serialize(updatedCachedQuote), new DistributedCacheEntryOptions
@@ -814,7 +847,8 @@ public sealed class OrderService : IOrderService
 
         decimal grandTotal = 0m;
         var createdSubOrders = new List<SubOrder>();
-        var platformMarkupPercent = await GetActivePlatformMarkupPercentAsync(ct);
+        // Reuse the rate the buyer was quoted; only quotes created before the snapshot existed fall back to the current rate.
+        var platformMarkupPercent = cachedQuote.PlatformFeePercent ?? await GetActivePlatformMarkupPercentAsync(ct);
 
         foreach (var shop in cachedQuote.Response.Shops)
         {
@@ -891,6 +925,7 @@ public sealed class OrderService : IOrderService
                 productDiscount = freshBreakdown.ProductDiscountAmount;
             }
 
+            subOrder.PlatformFeePercent = platformMarkupPercent;
             subOrder.CalculateFinancials(
                 shippingFee: shop.ShippingFeeAmount,
                 shopDiscount: shopDiscount,
