@@ -83,7 +83,7 @@ public class OrderCheckoutTests : IDisposable
         _dbContext.Dispose();
     }
 
-    private OrderService CreateOrderService(IVoucherDiscountCalculator? voucherCalculator = null)
+    private OrderService CreateOrderService(IVoucherDiscountCalculator? voucherCalculator = null, ISettlementService? settlementService = null)
     {
         return new OrderService(
             _dbContext,
@@ -93,7 +93,10 @@ public class OrderCheckoutTests : IDisposable
             _mockUserClient.Object,
             _cache,
             _mockLogger.Object,
-            voucherCalculator);
+            voucherCalculator,
+            null,
+            null,
+            settlementService);
     }
 
     private async Task<Cart> SeedCartWithItemAsync(Guid buyerId, Guid skuId, Guid sellerId, decimal price, int quantity)
@@ -838,5 +841,105 @@ public class OrderCheckoutTests : IDisposable
         var quote = await service.QuoteCheckoutAsync(buyerId, request, CancellationToken.None);
 
         quote.AppliedVouchers.Should().Contain("SHOP30K");
+    }
+
+    // =========================================================================
+    // G-1: platform voucher subsidy is reserved per sub-order before the buyer pays (protocol V2)
+    // =========================================================================
+
+    private static Mock<IVoucherDiscountCalculator> PlatformVoucherCalculator(Guid sellerId)
+    {
+        var calc = new Mock<IVoucherDiscountCalculator>();
+        calc.Setup(v => v.CalculateDiscountsAsync(It.IsAny<VoucherCalculationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VoucherCalculationResult(
+                new Dictionary<Guid, ShopDiscountBreakdown> { [sellerId] = new ShopDiscountBreakdown(SystemDiscountAmount: 10000m) },
+                new List<string> { "SYS10K" }, new List<string>()));
+        return calc;
+    }
+
+    private async Task<(OrderService Service, Guid BuyerId, CheckoutQuoteResponse Quote, Mock<ISettlementService> Settlement)> V2PlatformVoucherQuoteAsync(
+        Action<Mock<ISettlementService>>? configure = null)
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+        var settlement = new Mock<ISettlementService>();
+        settlement.SetupGet(s => s.NewOrderProtocolVersion).Returns(2);
+        configure?.Invoke(settlement);
+        var service = CreateOrderService(PlatformVoucherCalculator(sellerId).Object, settlement.Object);
+        var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id) with
+        {
+            VoucherCodes = new List<string> { "SYS10K" }
+        }, CancellationToken.None);
+        return (service, buyerId, quote, settlement);
+    }
+
+    private static CreateOrderRequest WalletCreateRequest(Guid quoteId) => new(
+        QuoteId: quoteId,
+        PaymentMethod: PaymentMethod.Wallet,
+        ShippingAddress: "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
+        ContactPhone: "0901234567",
+        Note: null);
+
+    [Fact]
+    public async Task CreateOrderAsync_V2_ShouldReserveThePlatformSubsidyPerSubOrder_AndMarkItHeld()
+    {
+        var (service, buyerId, quote, settlement) = await V2PlatformVoucherQuoteAsync();
+
+        var order = await service.CreateOrderAsync(buyerId, WalletCreateRequest(quote.QuoteId), CancellationToken.None);
+
+        var sub = await _dbContext.SubOrders.SingleAsync(s => s.OrderId == order.OrderId);
+        sub.SettlementProtocolVersion.Should().Be(2);
+        sub.SystemDiscountAmount.Should().Be(10000m);
+        sub.SubsidyState.Should().Be(SubsidyState.Held);
+        settlement.Verify(s => s.HoldSubsidyAsync(order.OrderId, sub.Id, 10000m, It.IsAny<CancellationToken>()), Times.Once);
+        _mockWalletClient.Verify(w => w.PayOrderAsync(order.OrderId, buyerId, It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_V2_ShouldRefuseWithoutChargingAnything_WhenTheBudgetCannotCoverTheDiscount()
+    {
+        var (service, buyerId, quote, _) = await V2PlatformVoucherQuoteAsync(settlement =>
+            settlement.Setup(s => s.HoldSubsidyAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new CommerceDomainException("VOUCHER_BUDGET_EXHAUSTED", "Please request a new quote.", 409)));
+
+        var act = () => service.CreateOrderAsync(buyerId, WalletCreateRequest(quote.QuoteId), CancellationToken.None);
+
+        (await act.Should().ThrowAsync<CommerceDomainException>()).Which.ErrorCode.Should().Be("VOUCHER_BUDGET_EXHAUSTED");
+        _mockWalletClient.Verify(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockFulfillmentClient.Verify(f => f.ReleaseStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
+        (await _dbContext.SubOrders.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_V2_ShouldGiveTheSubsidyBack_WhenThePaymentFailsDefinitively()
+    {
+        var (service, buyerId, quote, settlement) = await V2PlatformVoucherQuoteAsync();
+        _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WalletPaymentResult(false, ErrorCode: "INSUFFICIENT_BALANCE", ErrorMessage: "Insufficient wallet balance"));
+
+        var act = () => service.CreateOrderAsync(buyerId, WalletCreateRequest(quote.QuoteId), CancellationToken.None);
+
+        await act.Should().ThrowAsync<CommerceDomainException>();
+        settlement.Verify(s => s.HoldSubsidyAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), 10000m, It.IsAny<CancellationToken>()), Times.Once);
+        settlement.Verify(s => s.ReleaseSubsidyAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldStayOnProtocolV1AndSkipTheBudget_WhenTheSettlementServiceSaysV1()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+        var settlement = new Mock<ISettlementService>();
+        settlement.SetupGet(s => s.NewOrderProtocolVersion).Returns(1);
+        var service = CreateOrderService(PlatformVoucherCalculator(sellerId).Object, settlement.Object);
+        var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id) with { VoucherCodes = new List<string> { "SYS10K" } }, CancellationToken.None);
+
+        var order = await service.CreateOrderAsync(buyerId, WalletCreateRequest(quote.QuoteId), CancellationToken.None);
+
+        (await _dbContext.SubOrders.SingleAsync(s => s.OrderId == order.OrderId)).SettlementProtocolVersion.Should().Be(1);
+        settlement.Verify(s => s.HoldSubsidyAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

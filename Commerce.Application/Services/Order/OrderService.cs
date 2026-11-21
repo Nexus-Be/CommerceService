@@ -31,6 +31,7 @@ public sealed class OrderService : IOrderService
     private readonly IVoucherDiscountCalculator? _voucherCalculator;
     private readonly IVoucherLifecycleService? _voucherLifecycleService;
     private readonly INotificationSettings? _notificationSettings;
+    private readonly ISettlementService? _settlementService;
 
     public OrderService(
         ICommerceDbContext dbContext,
@@ -39,7 +40,7 @@ public sealed class OrderService : IOrderService
         ICatalogClient catalogClient,
         IDistributedCache cache,
         ILogger<OrderService> logger)
-        : this(dbContext, walletClient, fulfillmentClient, catalogClient, null!, cache, logger, null, null, null)
+        : this(dbContext, walletClient, fulfillmentClient, catalogClient, null!, cache, logger, null, null, null, null)
     {
     }
 
@@ -53,9 +54,11 @@ public sealed class OrderService : IOrderService
         ILogger<OrderService> logger,
         IVoucherDiscountCalculator? voucherCalculator = null,
         IVoucherLifecycleService? voucherLifecycleService = null,
-        INotificationSettings? notificationSettings = null)
+        INotificationSettings? notificationSettings = null,
+        ISettlementService? settlementService = null)
     {
         _notificationSettings = notificationSettings;
+        _settlementService = settlementService;
         _dbContext = dbContext;
         _walletClient = walletClient;
         _fulfillmentClient = fulfillmentClient;
@@ -65,6 +68,48 @@ public sealed class OrderService : IOrderService
         _logger = logger;
         _voucherCalculator = voucherCalculator;
         _voucherLifecycleService = voucherLifecycleService;
+    }
+
+    /// <summary>
+    /// Pays the seller of a completed sub-order through the shared settlement service (protocol V2 snapshot and retry state, or the
+    /// legacy route for V1 orders). Without the service (older wiring) it falls back to the legacy wallet call.
+    /// </summary>
+    private async Task<bool> SettleSubOrderPayoutAsync(SubOrder so, CancellationToken ct)
+    {
+        if (_settlementService != null)
+        {
+            return await _settlementService.SettleSubOrderAsync(so, ct);
+        }
+
+        if (so.SellerReceiveAmount <= 0m)
+        {
+            return true;
+        }
+
+        return await _walletClient.SettleSellerSubOrderAsync(so.Id, so.SellerId, so.SellerReceiveAmount, idempotencyKey: $"settle-{so.Id}", cancellationToken: ct);
+    }
+
+    private async Task ReleaseHeldSubsidiesAsync(IReadOnlyCollection<SubOrder> heldSubOrders, string reason)
+    {
+        if (_settlementService == null)
+        {
+            return;
+        }
+
+        foreach (var so in heldSubOrders)
+        {
+            try
+            {
+                if (await _settlementService.ReleaseSubsidyAsync(so.Id, reason, CancellationToken.None))
+                {
+                    so.SubsidyState = SubsidyState.Released;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to release the platform subsidy of sub-order '{SubOrderId}'.", so.Id);
+            }
+        }
     }
 
     /// <summary>Durable key of the platform fee rate in SystemSettings (the cache is only an accelerator).</summary>
@@ -949,6 +994,7 @@ public sealed class OrderService : IOrderService
             }
 
             subOrder.PlatformFeePercent = platformMarkupPercent;
+            subOrder.SettlementProtocolVersion = _settlementService?.NewOrderProtocolVersion ?? 1;
             subOrder.CalculateFinancials(
                 shippingFee: shop.ShippingFeeAmount,
                 shopDiscount: shopDiscount,
@@ -1005,6 +1051,33 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("INSUFFICIENT_STOCK", "One or more items in the order have insufficient stock.", 400);
         }
 
+        // Platform-funded voucher discounts (protocol V2, wallet payment): the budget must cover them before the buyer pays, one reservation per
+        // sub-order. If the budget cannot cover one, nothing is charged and the buyer is asked to re-quote and confirm the new total.
+        var heldSubsidySubOrders = new List<SubOrder>();
+        if (request.PaymentMethod == PaymentMethod.Wallet && _settlementService != null)
+        {
+            try
+            {
+                foreach (var so in createdSubOrders.Where(s => s.SettlementProtocolVersion >= 2 && s.SystemDiscountAmount > 0m))
+                {
+                    await _settlementService.HoldSubsidyAsync(orderId, so.Id, so.SystemDiscountAmount, ct);
+                    so.SubsidyState = SubsidyState.Held;
+                    heldSubsidySubOrders.Add(so);
+                }
+            }
+            catch
+            {
+                await ReleaseHeldSubsidiesAsync(heldSubsidySubOrders, "Order creation failed before payment");
+                await _fulfillmentClient.ReleaseStockAsync(orderId, CancellationToken.None);
+                if (reservedUsageIds.Count > 0 && _voucherLifecycleService != null)
+                {
+                    await _voucherLifecycleService.ReleaseReservationsAsync(reservedUsageIds, CancellationToken.None);
+                }
+
+                throw;
+            }
+        }
+
         bool paid = false;
 
         // Tích hợp thanh toán ví theo hợp đồng chuẩn của WalletService
@@ -1058,6 +1131,7 @@ public sealed class OrderService : IOrderService
                     orderId, paymentResult?.ErrorCode, paymentResult?.ErrorMessage);
 
                 await _fulfillmentClient.ReleaseStockAsync(orderId, ct);
+                await ReleaseHeldSubsidiesAsync(heldSubsidySubOrders, "Order payment failed");
 
                 if (reservedUsageIds.Count > 0 && _voucherLifecycleService != null)
                 {
@@ -1183,6 +1257,9 @@ public sealed class OrderService : IOrderService
                     _logger.LogError(walletEx, "CRITICAL: Compensation failed while executing wallet refund for Order '{OrderId}'. Flagged for immediate financial reconciliation.", orderId);
                 }
             }
+
+            // 2b. Rollback ngân sách voucher sàn: trả lại phần nền tảng chịu đã giữ chỗ
+            await ReleaseHeldSubsidiesAsync(heldSubsidySubOrders, "Order creation failed during database persistence.");
 
             // 3. Rollback Voucher: Giải phóng các voucher đã giữ chỗ
             if (reservedUsageIds.Count > 0 && _voucherLifecycleService != null)
@@ -2171,16 +2248,11 @@ public sealed class OrderService : IOrderService
             _logger.LogInformation("COD SubOrder '{SubOrderId}' confirmed. Courier reconciles physical cash directly. Skipping wallet escrow disbursement.", so.Id);
             settled = true;
         }
-        else if (so.SellerReceiveAmount > 0m)
+        else if (so.SellerReceiveAmount > 0m || (_settlementService != null && so.SettlementProtocolVersion >= 2 && so.TotalAmount > 0m))
         {
             try
             {
-                settled = await _walletClient.SettleSellerSubOrderAsync(
-                    so.Id,
-                    so.SellerId,
-                    so.SellerReceiveAmount,
-                    idempotencyKey: $"settle-{so.Id}",
-                    cancellationToken: ct);
+                settled = await SettleSubOrderPayoutAsync(so, ct);
 
                 if (settled)
                 {
@@ -2306,16 +2378,11 @@ public sealed class OrderService : IOrderService
                     _logger.LogInformation("COD SubOrder '{SubOrderId}' completed during master order complete. Courier reconciles physical cash directly. Skipping escrow disbursement.", so.Id);
                     subOrderSettled = true;
                 }
-                else if (so.SellerReceiveAmount > 0m)
+                else if (so.SellerReceiveAmount > 0m || (_settlementService != null && so.SettlementProtocolVersion >= 2 && so.TotalAmount > 0m))
                 {
                     try
                     {
-                        subOrderSettled = await _walletClient.SettleSellerSubOrderAsync(
-                            so.Id,
-                            so.SellerId,
-                            so.SellerReceiveAmount,
-                            idempotencyKey: $"settle-{so.Id}",
-                            cancellationToken: ct);
+                        subOrderSettled = await SettleSubOrderPayoutAsync(so, ct);
                     }
                     catch (Exception ex)
                     {

@@ -54,6 +54,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
         var fulfillmentClient = scope.ServiceProvider.GetRequiredService<IFulfillmentClient>();
         var auctionClient = scope.ServiceProvider.GetService<IAuctionClient>();
         var walletClient = scope.ServiceProvider.GetService<IWalletClient>();
+        var settlementService = scope.ServiceProvider.GetService<ISettlementService>();
         var userClient = scope.ServiceProvider.GetService<IUserClient>();
         var catalogClient = scope.ServiceProvider.GetService<ICatalogClient>();
         var configuration = scope.ServiceProvider.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
@@ -424,16 +425,19 @@ public sealed class PaymentTimeoutWorker : BackgroundService
 
                     // Giải ngân Escrow sang ví người bán (bỏ qua nếu COD)
                     bool autoSettled = so.PaymentMethod == PaymentMethod.Cod;
-                    if (walletClient != null && so.PaymentMethod != PaymentMethod.Cod && so.SellerReceiveAmount > 0m)
+                    if ((walletClient != null || settlementService != null) && so.PaymentMethod != PaymentMethod.Cod
+                        && (so.SellerReceiveAmount > 0m || (settlementService != null && so.SettlementProtocolVersion >= 2 && so.TotalAmount > 0m)))
                     {
                         try
                         {
-                            var settled = await walletClient.SettleSellerSubOrderAsync(
-                                so.Id,
-                                so.SellerId,
-                                so.SellerReceiveAmount,
-                                idempotencyKey: $"settle-auto-{so.Id}",
-                                cancellationToken: ct);
+                            var settled = settlementService != null
+                                ? await settlementService.SettleSubOrderAsync(so, ct)
+                                : await walletClient!.SettleSellerSubOrderAsync(
+                                    so.Id,
+                                    so.SellerId,
+                                    so.SellerReceiveAmount,
+                                    idempotencyKey: $"settle-auto-{so.Id}",
+                                    cancellationToken: ct);
 
                             if (settled)
                             {
@@ -509,7 +513,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
         await ReconcilePendingRefundsAsync(dbContext, walletClient, ct);
 
         // 6. Quét bù đối soát giải ngân Escrow cho Shop (Self-healing unsettled seller escrow)
-        await ReconcileUnsettledEscrowsAsync(dbContext, walletClient, ct);
+        await ReconcileUnsettledEscrowsAsync(dbContext, walletClient, ct, settlementService);
     }
 
     internal async Task ReconcilePendingRefundsAsync(
@@ -603,17 +607,24 @@ public sealed class PaymentTimeoutWorker : BackgroundService
     internal async Task ReconcileUnsettledEscrowsAsync(
         ICommerceDbContext dbContext,
         IWalletClient? walletClient,
-        CancellationToken ct)
+        CancellationToken ct,
+        ISettlementService? settlementService = null)
     {
-        if (walletClient == null) return;
+        if (walletClient == null && settlementService == null) return;
 
         try
         {
+            // A payout that needs a finance decision, or whose next attempt is not due, must not occupy one of the 50 slots of a scan:
+            // otherwise a few stuck orders would starve every order behind them.
+            var dueNow = DateTimeOffset.UtcNow;
             var unsettledSubOrders = await dbContext.SubOrders
                 .Where(s => s.Status == SubOrderStatus.Completed &&
                             !s.IsEscrowSettled &&
                             s.PaymentMethod == PaymentMethod.Wallet &&
-                            s.SellerReceiveAmount > 0m)
+                            (s.SellerReceiveAmount > 0m || (s.SettlementProtocolVersion >= 2 && s.TotalAmount > 0m)) &&
+                            !dbContext.SettlementSnapshots.Any(n => n.SubOrderId == s.Id &&
+                                (n.Status == SettlementSnapshotStatus.NeedsFinance ||
+                                 (n.Status == SettlementSnapshotStatus.Pending && n.NextRetryAt != null && n.NextRetryAt > dueNow))))
                 .OrderBy(s => s.CompletedAt)
                 .Take(50)
                 .ToListAsync(ct);
@@ -629,12 +640,14 @@ public sealed class PaymentTimeoutWorker : BackgroundService
             {
                 try
                 {
-                    var succeeded = await walletClient.SettleSellerSubOrderAsync(
-                        so.Id,
-                        so.SellerId,
-                        so.SellerReceiveAmount,
-                        idempotencyKey: $"settle-{so.Id}",
-                        cancellationToken: ct);
+                    var succeeded = settlementService != null
+                        ? await settlementService.SettleSubOrderAsync(so, ct, respectBackoff: true)
+                        : await walletClient!.SettleSellerSubOrderAsync(
+                            so.Id,
+                            so.SellerId,
+                            so.SellerReceiveAmount,
+                            idempotencyKey: $"settle-{so.Id}",
+                            cancellationToken: ct);
 
                     if (succeeded)
                     {

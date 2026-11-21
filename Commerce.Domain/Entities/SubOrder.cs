@@ -36,6 +36,8 @@ public class SubOrder : BaseEntity<Guid>
     public decimal? PlatformFeePercent { get; set; }
     /// <summary>Seller payout protocol of this order: 1 = legacy (V1) route, 2 = atomic allocation command (V2). Set per order, never inferred from dates.</summary>
     public int SettlementProtocolVersion { get; set; } = 1;
+    /// <summary>Lifecycle of the platform-funded voucher subsidy reserved for this sub-order (None for orders without one).</summary>
+    public SubsidyState SubsidyState { get; set; } = SubsidyState.None;
     public required DateTimeOffset PaymentDeadlineAt { get; set; }
     public DateTimeOffset? SellerRespondDeadlineAt { get; set; }
     public DateTimeOffset? PaidAt { get; set; }

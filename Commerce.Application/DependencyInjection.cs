@@ -17,6 +17,7 @@ public static class DependencyInjection
         services.AddScoped<IAuctionOrderService, AuctionOrderService>();
         services.AddSingleton<IVoucherCalculationEngine, VoucherCalculationEngine>();
         services.AddScoped<IVoucherLifecycleService, VoucherLifecycleService>();
+        services.AddScoped<ISettlementService, Commerce.Application.Services.Settlement.SettlementService>();
         services.AddScoped<IVoucherDiscountCalculator, VoucherDiscountCalculator>();
         services.AddScoped<IDiscountService, DiscountService>();
         return services;

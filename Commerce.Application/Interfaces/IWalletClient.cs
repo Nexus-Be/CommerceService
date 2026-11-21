@@ -72,6 +72,45 @@ public interface IWalletClient
         decimal amount,
         string? idempotencyKey = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Atomic seller payout (protocol V2): escrows, seller credit, fee and shipping allocation and subsidy use in one Wallet transaction.
+    /// POST /api/v1/internal/wallets/order-settlements
+    /// </summary>
+    Task<WalletCallOutcome> SettleOrderPayoutAsync(WalletSettlementRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>Reserves the platform-funded voucher subsidy of a sub-order. POST /api/v1/internal/wallets/sub-orders/{subOrderId}/subsidy-hold</summary>
+    Task<WalletCallOutcome> HoldPlatformSubsidyAsync(Guid orderId, Guid subOrderId, decimal amount, CancellationToken cancellationToken = default);
+
+    /// <summary>Gives a held subsidy back. POST /api/v1/internal/wallets/sub-orders/{subOrderId}/subsidy-release</summary>
+    Task<WalletCallOutcome> ReleasePlatformSubsidyAsync(Guid subOrderId, string reason, CancellationToken cancellationToken = default);
+}
+
+/// <summary>The full allocation of one payout, exactly as stored in the settlement snapshot.</summary>
+public sealed record WalletSettlementRequest(
+    string BusinessType,
+    Guid ParentOrderId,
+    Guid SubOrderId,
+    Guid SellerId,
+    decimal SellerReceiveAmount,
+    decimal PlatformFeeAmount,
+    decimal ShippingAmount,
+    decimal SubsidyAmount,
+    decimal OrderEscrowAmount,
+    decimal DepositEscrowAmount,
+    int PayloadVersion);
+
+/// <summary>
+/// Result of a Wallet call that must tell a permanent refusal from a temporary problem. A 4xx answer (conflict, missing money, bad
+/// payload) is permanent; a timeout, a 5xx or a disabled feature is transient and worth retrying.
+/// </summary>
+public sealed record WalletCallOutcome(bool Success, int StatusCode, string? ErrorCode, string? ErrorMessage, bool IsReplay = false)
+{
+    public bool IsPermanentFailure => !Success && StatusCode is >= 400 and < 500 and not 408 and not 429;
+    public bool IsTransientFailure => !Success && !IsPermanentFailure;
+
+    public static WalletCallOutcome Ok(bool isReplay = false) => new(true, 200, null, null, isReplay);
+    public static WalletCallOutcome Transient(string? code, string? message) => new(false, 0, code ?? "WALLET_UNAVAILABLE", message);
 }
 
 public sealed record WalletAuctionHoldStatus(string Status, string? CapturePurpose, Guid? OrderId);

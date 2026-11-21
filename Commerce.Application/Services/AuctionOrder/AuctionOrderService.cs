@@ -26,6 +26,7 @@ public class AuctionOrderService : IAuctionOrderService
     private readonly ICatalogClient _catalogClient;
     private readonly IUserClient _userClient;
     private readonly ILogger<AuctionOrderService> _logger;
+    private readonly ISettlementService? _settlementService;
     private const decimal DefaultPlatformFeeRate = 0.05m; // 5%
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -40,8 +41,10 @@ public class AuctionOrderService : IAuctionOrderService
         IAuctionClient auctionClient,
         ICatalogClient catalogClient,
         IUserClient userClient,
-        ILogger<AuctionOrderService> logger)
+        ILogger<AuctionOrderService> logger,
+        ISettlementService? settlementService = null)
     {
+        _settlementService = settlementService;
         _dbContext = dbContext;
         _walletClient = walletClient;
         _fulfillmentClient = fulfillmentClient;
@@ -142,6 +145,7 @@ public class AuctionOrderService : IAuctionOrderService
         var auctionOrder = new AuctionOrder
         {
             PlatformFeePercent = DefaultPlatformFeeRate * 100m,
+            SettlementProtocolVersion = _settlementService?.NewOrderProtocolVersion ?? 1,
             Id = orderId,
             OrderNo = orderNo,
             AuctionId = request.AuctionId,
@@ -757,18 +761,30 @@ public class AuctionOrderService : IAuctionOrderService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        // Escrow release payout to seller
+        // Escrow release payout to seller. The return value matters: the payout is complete (and PayoutCompletedAt is set) only when
+        // Wallet confirmed it. Otherwise the order stays unpaid and AuctionFinancialRetryWorker sends the same stored payload again.
         try
         {
-            await _walletClient.SettleSellerSubOrderAsync(
-                auctionOrder.Id,
-                auctionOrder.SellerId,
-                auctionOrder.SellerReceiveAmount,
-                null,
-                cancellationToken);
+            var paid = _settlementService != null
+                ? await _settlementService.SettleAuctionOrderAsync(auctionOrder, cancellationToken)
+                : await _walletClient.SettleSellerSubOrderAsync(
+                    auctionOrder.Id,
+                    auctionOrder.SellerId,
+                    auctionOrder.SellerReceiveAmount,
+                    null,
+                    cancellationToken);
 
-            _logger.LogInformation("[AuctionOrder] Escrow payout of {Amount} settled to Seller '{SellerId}' for Order '{OrderId}'.",
-                auctionOrder.SellerReceiveAmount, auctionOrder.SellerId, auctionOrder.Id);
+            if (paid)
+            {
+                auctionOrder.PayoutCompletedAt = DateTimeOffset.UtcNow;
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                _logger.LogInformation("[AuctionOrder] Escrow payout of {Amount} settled to Seller '{SellerId}' for Order '{OrderId}'.",
+                    auctionOrder.SellerReceiveAmount, auctionOrder.SellerId, auctionOrder.Id);
+            }
+            else
+            {
+                _logger.LogWarning("[AuctionOrder] Escrow payout for Order '{OrderId}' was not confirmed by Wallet. The retry worker will send it again.", auctionOrder.Id);
+            }
         }
         catch (Exception ex)
         {

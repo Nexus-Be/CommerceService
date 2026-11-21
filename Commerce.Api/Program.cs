@@ -27,6 +27,7 @@ builder.Services.AddInfrastructureServices(builder.Configuration);
 builder.Services.AddHostedService<PaymentTimeoutWorker>();
 builder.Services.AddHostedService<AuctionCallbackRetryWorker>();
 builder.Services.AddHostedService<AuctionFinancialRetryWorker>();
+builder.Services.AddHostedService<SettlementRetryWorker>();
 
 // Notifications of paid regular orders: written to the notification outbox in the same SaveChanges as the payment, sent afterwards by this worker.
 // Off by default (Notification:Enabled). The Notification service is called directly with this service's identity headers.

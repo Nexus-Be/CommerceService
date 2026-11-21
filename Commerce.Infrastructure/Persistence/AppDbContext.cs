@@ -24,6 +24,7 @@ public class AppDbContext : DbContext, ICommerceDbContext
     public DbSet<OrderCancellation> OrderCancellations => Set<OrderCancellation>();
     public DbSet<OrderRefund> OrderRefunds => Set<OrderRefund>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
+    public DbSet<SettlementSnapshot> SettlementSnapshots => Set<SettlementSnapshot>();
     public DbSet<DailyOrderSequence> DailyOrderSequences => Set<DailyOrderSequence>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<NotificationOutboxItem> NotificationOutbox => Set<NotificationOutboxItem>();

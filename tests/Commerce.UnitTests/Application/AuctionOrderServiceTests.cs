@@ -1878,4 +1878,65 @@ public class AuctionOrderServiceTests
         result.Items.Should().HaveCount(1);
         result.Items[0].OrderNo.Should().Be("AO-ACTIVE-1");
     }
+
+    // =========================================================================
+    // G-1: PayoutCompletedAt is set only after Wallet confirmed the payout
+    // =========================================================================
+
+    private async Task<AuctionOrder> DeliveredAuctionOrderAsync(Guid buyerId)
+    {
+        var order = new AuctionOrder
+        {
+            Id = Guid.NewGuid(), OrderNo = "AO-20261121-00001", AuctionId = Guid.NewGuid(), BuyerId = buyerId, SellerId = Guid.NewGuid(),
+            WinningBidId = Guid.NewGuid(), ProductId = Guid.NewGuid(), ProductNameSnapshot = "Rare Painting",
+            WinningAmount = 5000000m, DepositAmount = 500000m, RemainingAmount = 4500000m, ShippingFeeAmount = 50000m, TotalAmount = 4550000m,
+            SellerReceiveAmount = 4750000m, PlatformFeeAmount = 250000m,
+            Status = SubOrderStatus.Delivered, PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddDays(-2), PaidAt = DateTimeOffset.UtcNow.AddDays(-2), DeliveredAt = DateTimeOffset.UtcNow.AddHours(-1)
+        };
+        _dbContext.AuctionOrders.Add(order);
+        await _dbContext.SaveChangesAsync();
+        return order;
+    }
+
+    [Fact]
+    public async Task ConfirmReceiptAsync_ShouldSetPayoutCompletedAt_OnlyWhenTheLegacyPayoutWasConfirmed()
+    {
+        var buyerId = Guid.NewGuid();
+        var paidOrder = await DeliveredAuctionOrderAsync(buyerId);
+        var unpaidOrder = await DeliveredAuctionOrderAsync(buyerId);
+        _walletClientMock.Setup(w => w.SettleSellerSubOrderAsync(paidOrder.Id, It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<System.Threading.CancellationToken>())).ReturnsAsync(true);
+        _walletClientMock.Setup(w => w.SettleSellerSubOrderAsync(unpaidOrder.Id, It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<System.Threading.CancellationToken>())).ReturnsAsync(false);
+
+        await _service.ConfirmReceiptAsync(paidOrder.Id, buyerId);
+        await _service.ConfirmReceiptAsync(unpaidOrder.Id, buyerId);
+
+        (await _dbContext.AuctionOrders.FindAsync(paidOrder.Id))!.PayoutCompletedAt.Should().NotBeNull();
+        // Not confirmed: the order is Completed but still unpaid, so the retry worker picks it up.
+        var unpaid = await _dbContext.AuctionOrders.FindAsync(unpaidOrder.Id);
+        unpaid!.Status.Should().Be(SubOrderStatus.Completed);
+        unpaid.PayoutCompletedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ConfirmReceiptAsync_V2_ShouldUseTheSettlementServiceAndSetPayoutCompletedAtOnlyOnSuccess()
+    {
+        var buyerId = Guid.NewGuid();
+        var paidOrder = await DeliveredAuctionOrderAsync(buyerId);
+        var unpaidOrder = await DeliveredAuctionOrderAsync(buyerId);
+        var settlement = new Mock<ISettlementService>();
+        settlement.SetupGet(s => s.NewOrderProtocolVersion).Returns(2);
+        settlement.Setup(s => s.SettleAuctionOrderAsync(It.Is<AuctionOrder>(o => o.Id == paidOrder.Id), It.IsAny<System.Threading.CancellationToken>(), It.IsAny<bool>())).ReturnsAsync(true);
+        settlement.Setup(s => s.SettleAuctionOrderAsync(It.Is<AuctionOrder>(o => o.Id == unpaidOrder.Id), It.IsAny<System.Threading.CancellationToken>(), It.IsAny<bool>())).ReturnsAsync(false);
+        var service = new AuctionOrderService(
+            _dbContext, _walletClientMock.Object, _fulfillmentClientMock.Object, _auctionClientMock.Object,
+            _catalogClientMock.Object, _userClientMock.Object, _loggerMock.Object, settlement.Object);
+
+        await service.ConfirmReceiptAsync(paidOrder.Id, buyerId);
+        await service.ConfirmReceiptAsync(unpaidOrder.Id, buyerId);
+
+        (await _dbContext.AuctionOrders.FindAsync(paidOrder.Id))!.PayoutCompletedAt.Should().NotBeNull();
+        (await _dbContext.AuctionOrders.FindAsync(unpaidOrder.Id))!.PayoutCompletedAt.Should().BeNull();
+        _walletClientMock.Verify(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<System.Threading.CancellationToken>()), Times.Never);
+    }
 }
