@@ -5,6 +5,9 @@ public class DomainException : Exception
     public string ErrorCode { get; }
     public int StatusCode { get; }
 
+    /// <summary>A stable code a client can branch on when one error code covers several situations (for example the voucher stacking rules).</summary>
+    public string? ReasonCode { get; init; }
+
     public DomainException(string message) : base(message)
     {
         ErrorCode = "DOMAIN_ERROR";

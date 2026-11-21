@@ -94,7 +94,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
         var systemCandidates = candidateVouchers.Where(v => v.ScopeType == DiscountScopeType.System).ToList();
         if (systemCandidates.Count > 1)
         {
-            throw new CommerceDomainException("VOUCHER_STACKING_CONFLICT", "Multiple system vouchers cannot be applied to the same order.", 400);
+            throw new CommerceDomainException("VOUCHER_STACKING_CONFLICT", "Multiple system vouchers cannot be applied to the same order.", 400) { ReasonCode = "STACKING_CONFLICT" };
         }
 
         // Shop-Level Exclusivity Guard (Shopee 2-Tier Standard):
@@ -110,7 +110,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
 
         if (multipleShopVoucher != null)
         {
-            throw new CommerceDomainException("SHOP_MULTIPLE_VOUCHERS_NOT_ALLOWED", "Only one voucher per shop can be applied.", 400);
+            throw new CommerceDomainException("SHOP_MULTIPLE_VOUCHERS_NOT_ALLOWED", "Only one voucher per shop can be applied.", 400) { ReasonCode = "STACKING_CONFLICT" };
         }
 
         var shopCandidates = candidateVouchers.Where(v => v.ScopeType == DiscountScopeType.Shop).ToList();
