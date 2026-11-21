@@ -909,6 +909,9 @@ public class OrderCheckoutTests : IDisposable
         _mockWalletClient.Verify(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockFulfillmentClient.Verify(f => f.ReleaseStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
         (await _dbContext.SubOrders.CountAsync()).Should().Be(0);
+        // Nothing is left waiting to be saved either: releasing the voucher reservations saves the unit of work, and must not persist the refused order.
+        _dbContext.ChangeTracker.Entries<SubOrder>().Should().BeEmpty();
+        _dbContext.ChangeTracker.Entries<Order>().Should().BeEmpty();
     }
 
     [Fact]

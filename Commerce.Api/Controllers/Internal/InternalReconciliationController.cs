@@ -69,6 +69,54 @@ public sealed class InternalReconciliationController : ControllerBase
         return Ok(new OrderReconPage(items, next));
     }
 
+    public sealed record LegacyClassItem(string Class, Guid Id, decimal SellerReceiveAmount, decimal PlatformFeeAmount, string Detail);
+
+    public sealed record LegacySettlementClasses(System.Collections.Generic.Dictionary<string, int> Counts, LegacyClassItem[] Items);
+
+    /// <summary>
+    /// Classifies orders that are on the legacy payout protocol (V1) or whose V2 payout needs a finance decision, so the old data can be
+    /// reviewed and a fix approved per group. It only reads: it never pays, adjusts a wallet or recalculates a fee.
+    /// </summary>
+    [HttpGet("legacy-settlement-classes")]
+    public async Task<IActionResult> GetLegacySettlementClasses([FromQuery] int limit = 100, CancellationToken ct = default)
+    {
+        if (Denied() is { } denied) return denied;
+        limit = limit is > 0 and <= 500 ? limit : 100;
+
+        var walletV1 = _db.SubOrders.AsNoTracking().Where(s => !s.IsDeleted && s.SettlementProtocolVersion < 2 && s.PaymentMethod == Commerce.Domain.Enums.PaymentMethod.Wallet
+            && s.Status == Commerce.Domain.Enums.SubOrderStatus.Completed);
+        var unpaidV1 = walletV1.Where(s => !s.IsEscrowSettled && s.SellerReceiveAmount > 0m);
+        var auctionUnpaid = _db.AuctionOrders.AsNoTracking().Where(a => !a.IsDeleted && a.Status == Commerce.Domain.Enums.SubOrderStatus.Completed && a.PayoutCompletedAt == null);
+        var auctionFractionalFee = _db.AuctionOrders.AsNoTracking().Where(a => !a.IsDeleted && a.PlatformFeeAmount != Math.Round(a.PlatformFeeAmount, 0));
+        var needsFinance = _db.SettlementSnapshots.AsNoTracking().Where(n => n.Status == Commerce.Domain.Entities.SettlementSnapshotStatus.NeedsFinance);
+
+        var items = new System.Collections.Generic.List<LegacyClassItem>();
+        // Unpaid V1 sub-orders with a platform discount have no reserved subsidy, so they cannot move to V2 without finance providing the source.
+        var noSubsidy = unpaidV1.Where(s => s.SystemDiscountAmount > 0m);
+        var convertible = unpaidV1.Where(s => s.SystemDiscountAmount == 0m);
+        items.AddRange((await noSubsidy.OrderBy(s => s.CompletedAt).Take(limit).ToListAsync(ct)).Select(s =>
+            new LegacyClassItem("V1_UNPAID_PLATFORM_DISCOUNT", s.Id, s.SellerReceiveAmount, s.PlatformFeeAmount, "Unpaid legacy order with a platform discount and no reserved subsidy: needs a funding source before it can be paid.")));
+        items.AddRange((await convertible.OrderBy(s => s.CompletedAt).Take(limit).ToListAsync(ct)).Select(s =>
+            new LegacyClassItem("V1_UNPAID_CONVERTIBLE", s.Id, s.SellerReceiveAmount, s.PlatformFeeAmount, "Unpaid legacy order that can continue through protocol V2.")));
+        items.AddRange((await auctionUnpaid.OrderBy(a => a.CompletedAt).Take(limit).ToListAsync(ct)).Select(a =>
+            new LegacyClassItem("AUCTION_PAYOUT_PENDING", a.Id, a.SellerReceiveAmount, a.PlatformFeeAmount, "Completed auction order whose payout was never confirmed.")));
+        items.AddRange((await auctionFractionalFee.OrderBy(a => a.CreatedAt).Take(limit).ToListAsync(ct)).Select(a =>
+            new LegacyClassItem("AUCTION_FRACTIONAL_FEE", a.Id, a.SellerReceiveAmount, a.PlatformFeeAmount, "Auction fee with a fractional VND amount. Reported only: the fee is never recalculated.")));
+        items.AddRange((await needsFinance.OrderBy(n => n.CreatedAt).Take(limit).ToListAsync(ct)).Select(n =>
+            new LegacyClassItem("PAYOUT_NEEDS_FINANCE", n.SubOrderId, n.SellerReceiveAmount, n.PlatformFeeAmount, $"{n.LastErrorCode}: {n.LastError}")));
+
+        var counts = new System.Collections.Generic.Dictionary<string, int>
+        {
+            ["V1_UNPAID_PLATFORM_DISCOUNT"] = await noSubsidy.CountAsync(ct),
+            ["V1_UNPAID_CONVERTIBLE"] = await convertible.CountAsync(ct),
+            ["V1_PAID"] = await walletV1.CountAsync(s => s.IsEscrowSettled, ct),
+            ["AUCTION_PAYOUT_PENDING"] = await auctionUnpaid.CountAsync(ct),
+            ["AUCTION_FRACTIONAL_FEE"] = await auctionFractionalFee.CountAsync(ct),
+            ["PAYOUT_NEEDS_FINANCE"] = await needsFinance.CountAsync(ct)
+        };
+        return Ok(new LegacySettlementClasses(counts, items.ToArray()));
+    }
+
     private IActionResult? Denied()
     {
         var expected = Environment.GetEnvironmentVariable("INTERNAL_SERVICE_SECRET")

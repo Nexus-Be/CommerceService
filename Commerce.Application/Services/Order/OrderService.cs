@@ -89,6 +89,27 @@ public sealed class OrderService : IOrderService
         return await _walletClient.SettleSellerSubOrderAsync(so.Id, so.SellerId, so.SellerReceiveAmount, idempotencyKey: $"settle-{so.Id}", cancellationToken: ct);
     }
 
+    /// <summary>Drops an order and its sub-orders that were never saved, and unlinks the voucher usages that were pointed at them.</summary>
+    private void DiscardUnsavedOrder(Order order, IEnumerable<SubOrder> subOrders, IReadOnlyCollection<Guid> usageIds)
+    {
+        foreach (var so in subOrders.ToList())
+        {
+            foreach (var item in so.Items.ToList())
+            {
+                _dbContext.SubOrderItems.Remove(item);
+            }
+
+            _dbContext.SubOrders.Remove(so);
+        }
+
+        _dbContext.Orders.Remove(order);
+        foreach (var usage in _dbContext.DiscountCodeUsages.Local.Where(u => usageIds.Contains(u.Id)))
+        {
+            usage.OrderId = null;
+            usage.SubOrderId = null;
+        }
+    }
+
     private async Task ReleaseHeldSubsidiesAsync(IReadOnlyCollection<SubOrder> heldSubOrders, string reason)
     {
         if (_settlementService == null)
@@ -1069,6 +1090,8 @@ public sealed class OrderService : IOrderService
             {
                 await ReleaseHeldSubsidiesAsync(heldSubsidySubOrders, "Order creation failed before payment");
                 await _fulfillmentClient.ReleaseStockAsync(orderId, CancellationToken.None);
+                // Releasing the voucher reservations saves the unit of work, which would also persist the order that is being refused.
+                DiscardUnsavedOrder(order, createdSubOrders, reservedUsageIds);
                 if (reservedUsageIds.Count > 0 && _voucherLifecycleService != null)
                 {
                     await _voucherLifecycleService.ReleaseReservationsAsync(reservedUsageIds, CancellationToken.None);
