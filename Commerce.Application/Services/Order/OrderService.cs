@@ -381,9 +381,20 @@ public sealed class OrderService : IOrderService
             _logger.LogWarning(ex, "Failed to fetch real-time wallet balance for Buyer '{BuyerId}'. Fallback to 0.", buyerId);
         }
 
-        var appliedVouchers = voucherResult?.AppliedVouchers != null && voucherResult.AppliedVouchers.Count > 0
-            ? voucherResult.AppliedVouchers.ToList()
-            : request.VoucherCodes ?? new List<string>();
+        // Only vouchers the engine actually applied are reported as applied. Falling back to the requested codes
+        // used to show rejected vouchers as applied and then fail at order time.
+        var appliedVouchers = voucherResult?.AppliedVouchers?.ToList() ?? new List<string>();
+
+        var appliedDetails = voucherResult?.AllocatedUsages?
+            .GroupBy(u => new { u.Code, u.ScopeType, u.SubOrderSellerId })
+            .Select(g => new AppliedVoucherDetail(g.Key.Code, g.Key.ScopeType.ToString(), g.Key.SubOrderSellerId, g.Sum(x => x.DiscountAmount)))
+            .ToList();
+
+        var rejectedDetails = voucherResult?.RejectedVouchers?
+            .Select(code => new RejectedVoucherDetail(
+                code,
+                voucherResult.RejectedReasons != null && voucherResult.RejectedReasons.TryGetValue(code, out var reason) ? reason : "REJECTED"))
+            .ToList();
 
         var warnings = voucherResult?.Warnings != null && voucherResult.Warnings.Count > 0
             ? voucherResult.Warnings.ToList()
@@ -398,7 +409,9 @@ public sealed class OrderService : IOrderService
             shopQuotes,
             appliedVouchers,
             warnings,
-            expiredAt
+            expiredAt,
+            appliedDetails,
+            rejectedDetails
         );
 
         // Lưu vào Distributed Cache (Redis / Memory) với TTL 15 phút (ISSUE-01)
@@ -512,7 +525,9 @@ public sealed class OrderService : IOrderService
             updatedShops,
             cachedQuote.Response.AppliedVouchers,
             cachedQuote.Response.Warnings,
-            cachedQuote.ExpiredAt
+            cachedQuote.ExpiredAt,
+            cachedQuote.Response.AppliedVoucherDetails,
+            cachedQuote.Response.RejectedVouchers
         );
 
         var effectiveRequest = cachedQuote.Request with
@@ -768,6 +783,18 @@ public sealed class OrderService : IOrderService
                 );
 
                 recalculatedVouchers = await _voucherCalculator.CalculateDiscountsAsync(vReq, ct);
+
+                // A voucher shown as applied in the quote that no longer applies (limit reached by someone else,
+                // expired, minimum no longer met) must stop the order. Creating it anyway would charge more than quoted.
+                var stillApplied = new HashSet<string>(recalculatedVouchers.AppliedVouchers ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+                var lost = cachedQuote.Response.AppliedVouchers.Where(code => !stillApplied.Contains(code)).ToList();
+                if (lost.Count > 0)
+                {
+                    throw new CommerceDomainException(
+                        "VOUCHER_NO_LONGER_VALID",
+                        $"Voucher '{string.Join(", ", lost)}' can no longer be applied. Please request a new quote.",
+                        409);
+                }
 
                 if (_voucherLifecycleService != null && recalculatedVouchers.AllocatedUsages != null && recalculatedVouchers.AllocatedUsages.Count > 0)
                 {

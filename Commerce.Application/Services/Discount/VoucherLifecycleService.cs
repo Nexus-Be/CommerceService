@@ -33,23 +33,32 @@ public sealed class VoucherLifecycleService : IVoucherLifecycleService
         var createdUsageIds = new List<Guid>();
         var isPostgres = _db.Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true;
 
-        // Group allocated vouchers by DiscountCodeId to avoid duplicate locks
-        var distinctVoucherIds = vouchers.Select(v => v.DiscountCodeId).Distinct().ToList();
+        // Lock per voucher (not per buyer) so the total-use limit is safe across buyers, and take the locks in a
+        // fixed order so two orders using the same vouchers cannot deadlock. The lock lives as long as the
+        // transaction, so the check and the counter update below happen under it.
+        var distinctVoucherIds = vouchers.Select(v => v.DiscountCodeId).Distinct().OrderBy(id => id).ToList();
 
-        // If PostgreSQL is used and not in an ambient transaction, manage advisory locks
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? ownTx = null;
+        if (isPostgres && _db.Database.CurrentTransaction == null)
+        {
+            ownTx = await _db.Database.BeginTransactionAsync(ct);
+        }
+
+        try
+        {
         foreach (var voucherId in distinctVoucherIds)
         {
             if (isPostgres)
             {
-                // Acquire transaction-scoped advisory lock for (voucherId, buyerId)
                 await _db.Database.ExecuteSqlRawAsync(
-                    "SELECT pg_advisory_xact_lock(hashtext(concat({0}, ':', {1})));",
-                    new object[] { voucherId.ToString(), buyerId.ToString() },
+                    "SELECT pg_advisory_xact_lock(hashtext({0}));",
+                    new object[] { voucherId.ToString() },
                     ct
                 );
             }
 
-            var voucher = await _db.DiscountCodes.FirstOrDefaultAsync(d => d.Id == voucherId && !d.IsDeleted, ct);
+            // Read the row fresh after taking the lock: the calculator may already hold a stale tracked copy of it.
+            var voucher = await _db.DiscountCodes.AsNoTracking().FirstOrDefaultAsync(d => d.Id == voucherId && !d.IsDeleted, ct);
             if (voucher == null)
             {
                 throw new CommerceDomainException("VOUCHER_NOT_FOUND", "Voucher was not found.", 404);
@@ -82,7 +91,10 @@ public sealed class VoucherLifecycleService : IVoucherLifecycleService
             var matchingAllocations = vouchers.Where(v => v.DiscountCodeId == voucherId).ToList();
             var totalAllocatedDiscount = matchingAllocations.Sum(a => a.DiscountAmount);
 
-            voucher.ReservedCount += 1;
+            // Write the counter as (value read under the lock) + 1 on the tracked row, so later steps in this same
+            // request (commit/release) see the same number instead of a stale one.
+            var tracked = await _db.DiscountCodes.FirstAsync(d => d.Id == voucherId, ct);
+            tracked.ReservedCount = voucher.ReservedCount + 1;
 
             var usage = new DiscountCodeUsage
             {
@@ -101,7 +113,13 @@ public sealed class VoucherLifecycleService : IVoucherLifecycleService
         }
 
         await _db.SaveChangesAsync(ct);
+        if (ownTx != null) await ownTx.CommitAsync(ct);
         return createdUsageIds;
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
     }
 
     public async Task CommitOrderVouchersAsync(

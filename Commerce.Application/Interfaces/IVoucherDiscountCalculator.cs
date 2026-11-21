@@ -26,7 +26,9 @@ public sealed record VoucherCalculationResult(
     IReadOnlyList<string> AppliedVouchers,
     IReadOnlyList<string> RejectedVouchers,
     IReadOnlyList<string>? Warnings = null,
-    IReadOnlyList<AllocatedVoucherUsage>? AllocatedUsages = null
+    IReadOnlyList<AllocatedVoucherUsage>? AllocatedUsages = null,
+    /// <summary>Why each rejected code was left out, as a stable reason code. Keyed by voucher code.</summary>
+    IReadOnlyDictionary<string, string>? RejectedReasons = null
 );
 
 public interface IVoucherDiscountCalculator

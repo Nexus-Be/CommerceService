@@ -58,6 +58,7 @@ public sealed class VoucherDiscountCalculator : IVoucherDiscountCalculator
         var foundCodes = matchingVouchers.Select(v => v.Code.ToUpperInvariant()).ToHashSet();
         var warnings = new List<string>();
         var rejectedCodes = new List<string>();
+        var reasons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var code in codes)
         {
@@ -65,7 +66,30 @@ public sealed class VoucherDiscountCalculator : IVoucherDiscountCalculator
             {
                 warnings.Add($"Voucher code '{code}' was not found.");
                 rejectedCodes.Add(code);
+                reasons[code] = "NOT_FOUND";
             }
+        }
+
+        // A buyer who already used a voucher as many times as allowed is told so now, not when the order is placed.
+        if (request.BuyerId != Guid.Empty && matchingVouchers.Any(v => v.MaxUsesPerUser.HasValue))
+        {
+            var limited = matchingVouchers.Where(v => v.MaxUsesPerUser.HasValue).Select(v => v.Id).ToList();
+            var usedByBuyer = await _db.DiscountCodeUsages
+                .Where(u => u.UserId == request.BuyerId && limited.Contains(u.DiscountCodeId) && u.Status != DiscountUsageStatus.Released)
+                .GroupBy(u => u.DiscountCodeId)
+                .Select(g => new { Id = g.Key, Count = g.Count() })
+                .ToListAsync(ct);
+            var usedById = usedByBuyer.ToDictionary(x => x.Id, x => x.Count);
+            var blocked = matchingVouchers
+                .Where(v => v.MaxUsesPerUser.HasValue && usedById.TryGetValue(v.Id, out var n) && n >= v.MaxUsesPerUser.Value)
+                .ToList();
+            foreach (var voucher in blocked)
+            {
+                warnings.Add($"You have reached the maximum redemption limit for voucher '{voucher.Code}'.");
+                rejectedCodes.Add(voucher.Code);
+                reasons[voucher.Code] = "USER_LIMIT_REACHED";
+            }
+            matchingVouchers = matchingVouchers.Where(v => !blocked.Contains(v)).ToList();
         }
 
         // Prepare calculation items: use provided items or synthesize from shop amounts
@@ -116,7 +140,8 @@ public sealed class VoucherDiscountCalculator : IVoucherDiscountCalculator
                 AllAllocatedUsages: Array.Empty<AllocatedVoucherUsage>(),
                 AppliedVoucherCodes: Array.Empty<string>(),
                 RejectedVoucherCodes: codes.ToList(),
-                Warnings: warnings
+                Warnings: warnings,
+                RejectedReasons: codes.ToDictionary(c => c, _ => "EVALUATION_FAILED", StringComparer.OrdinalIgnoreCase)
             );
         }
 
@@ -141,12 +166,19 @@ public sealed class VoucherDiscountCalculator : IVoucherDiscountCalculator
         var allWarnings = warnings.Concat(evalResult.Warnings).Distinct().ToList();
         var allRejected = rejectedCodes.Concat(evalResult.RejectedVoucherCodes).Distinct().ToList();
 
+        var allReasons = new Dictionary<string, string>(reasons, StringComparer.OrdinalIgnoreCase);
+        if (evalResult.RejectedReasons != null)
+        {
+            foreach (var (code, reason) in evalResult.RejectedReasons) allReasons[code] = reason;
+        }
+
         return new VoucherCalculationResult(
             ShopDiscounts: shopDiscounts,
             AppliedVouchers: evalResult.AppliedVoucherCodes,
             RejectedVouchers: allRejected,
             Warnings: allWarnings,
-            AllocatedUsages: evalResult.AllAllocatedUsages
+            AllocatedUsages: evalResult.AllAllocatedUsages,
+            RejectedReasons: allReasons
         );
     }
 }

@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Commerce.Application.Common.Models;
+using Commerce.Application.Common.Extensions;
 using Commerce.Application.Interfaces;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
@@ -162,6 +163,9 @@ public sealed class DiscountService : IDiscountService
         }
 
         _db.DiscountCodes.Add(discount);
+        _db.AddAuditLog(AuditAction.DiscountCreate, "DiscountCode", discount.Id.ToString(),
+            newValues: new { discount.Code, discount.ScopeType, discount.OwnerSellerId, discount.DiscountType, discount.DiscountValue, discount.MinOrderAmount, discount.MaxDiscountAmount, discount.MaxUsesTotal, discount.MaxUsesPerUser, discount.StartsAt, discount.EndsAt, ByAdmin = isAdmin },
+            userId: currentUserId.ToString());
         await _db.SaveChangesAsync(ct);
 
         return MapToDetailResponse(discount);
@@ -287,6 +291,7 @@ public sealed class DiscountService : IDiscountService
             throw new CommerceDomainException("VOUCHER_USAGE_LIMIT_CONFLICT", "Total usage limit cannot be lower than the number of used and reserved vouchers.", 400);
         }
 
+        var before = new { voucher.Name, voucher.IsVisible, voucher.MaxUsesPerUser, voucher.MaxUsesTotal, voucher.EndsAt };
         voucher.Name = request.Name.Trim();
         voucher.IsVisible = request.IsVisible;
         voucher.MaxUsesPerUser = request.MaxUsesPerUser > 0 ? request.MaxUsesPerUser : 1;
@@ -294,6 +299,10 @@ public sealed class DiscountService : IDiscountService
         voucher.EndsAt = request.EndsAt;
         voucher.UpdatedAt = DateTimeOffset.UtcNow;
 
+        _db.AddAuditLog(AuditAction.DiscountUpdate, "DiscountCode", voucher.Id.ToString(),
+            oldValues: before,
+            newValues: new { voucher.Name, voucher.IsVisible, voucher.MaxUsesPerUser, voucher.MaxUsesTotal, voucher.EndsAt },
+            userId: currentUserId.ToString());
         await _db.SaveChangesAsync(ct);
         return MapToDetailResponse(voucher);
     }
@@ -329,9 +338,13 @@ public sealed class DiscountService : IDiscountService
             throw new CommerceDomainException("VOUCHER_EXPIRED", "Cannot activate an expired voucher.", 400);
         }
 
+        var previousStatus = voucher.Status;
         voucher.Status = request.Status;
         voucher.UpdatedAt = DateTimeOffset.UtcNow;
 
+        _db.AddAuditLog(AuditAction.DiscountStatusChange, "DiscountCode", voucher.Id.ToString(),
+            oldValues: new { Status = previousStatus }, newValues: new { Status = request.Status },
+            userId: currentUserId.ToString());
         await _db.SaveChangesAsync(ct);
         return MapToDetailResponse(voucher);
     }
@@ -377,6 +390,9 @@ public sealed class DiscountService : IDiscountService
             s.DeletedAt = now;
         }
 
+        _db.AddAuditLog(AuditAction.DiscountDelete, "DiscountCode", voucher.Id.ToString(),
+            oldValues: new { voucher.Code, voucher.ScopeType, voucher.Status },
+            userId: currentUserId.ToString());
         await _db.SaveChangesAsync(ct);
     }
 

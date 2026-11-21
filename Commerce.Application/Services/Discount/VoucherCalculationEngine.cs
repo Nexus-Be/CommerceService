@@ -44,6 +44,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
 
         var warnings = new List<string>();
         var rejectedVoucherCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var rejectedReasons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var appliedVoucherCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var allAllocatedUsages = new List<AllocatedVoucherUsage>();
 
@@ -58,6 +59,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             {
                 warnings.Add($"Voucher '{v.Code}' is not active.");
                 rejectedVoucherCodes.Add(v.Code);
+                rejectedReasons[v.Code] = "NOT_ACTIVE";
                 continue;
             }
 
@@ -65,6 +67,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             {
                 warnings.Add($"Voucher '{v.Code}' has not started yet.");
                 rejectedVoucherCodes.Add(v.Code);
+                rejectedReasons[v.Code] = "NOT_STARTED";
                 continue;
             }
 
@@ -72,6 +75,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             {
                 warnings.Add($"Voucher '{v.Code}' has expired.");
                 rejectedVoucherCodes.Add(v.Code);
+                rejectedReasons[v.Code] = "EXPIRED";
                 continue;
             }
 
@@ -79,6 +83,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             {
                 warnings.Add($"Voucher '{v.Code}' has reached its total usage limit.");
                 rejectedVoucherCodes.Add(v.Code);
+                rejectedReasons[v.Code] = "USAGE_LIMIT_REACHED";
                 continue;
             }
 
@@ -139,6 +144,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             {
                 warnings.Add($"Product voucher '{pv.Code}' is not applicable to any items in cart.");
                 rejectedVoucherCodes.Add(pv.Code);
+                rejectedReasons[pv.Code] = "SCOPE_MISMATCH";
                 continue;
             }
 
@@ -156,6 +162,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             {
                 warnings.Add($"Product voucher '{pv.Code}' is not applicable to any items in cart.");
                 rejectedVoucherCodes.Add(pv.Code);
+                rejectedReasons[pv.Code] = "SCOPE_MISMATCH";
                 continue;
             }
 
@@ -164,6 +171,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             {
                 warnings.Add($"Minimum order amount {pv.MinOrderAmount:N0} VND not met for voucher '{pv.Code}'.");
                 rejectedVoucherCodes.Add(pv.Code);
+                rejectedReasons[pv.Code] = "MIN_ORDER_NOT_MET";
                 continue;
             }
 
@@ -185,6 +193,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             {
                 warnings.Add($"Shop voucher '{sv.Code}' does not match any shop in the cart.");
                 rejectedVoucherCodes.Add(sv.Code);
+                rejectedReasons[sv.Code] = "SCOPE_MISMATCH";
                 continue;
             }
 
@@ -196,6 +205,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             {
                 warnings.Add($"Minimum order amount {sv.MinOrderAmount:N0} VND not met for shop voucher '{sv.Code}'.");
                 rejectedVoucherCodes.Add(sv.Code);
+                rejectedReasons[sv.Code] = "MIN_ORDER_NOT_MET";
                 continue;
             }
 
@@ -233,6 +243,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             {
                 warnings.Add($"Minimum order amount {sysVoucher.MinOrderAmount:N0} VND not met for system voucher '{sysVoucher.Code}'.");
                 rejectedVoucherCodes.Add(sysVoucher.Code);
+                rejectedReasons[sysVoucher.Code] = "MIN_ORDER_NOT_MET";
             }
             else
             {
@@ -321,7 +332,8 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             AllAllocatedUsages: allAllocatedUsages,
             AppliedVoucherCodes: appliedVoucherCodes.ToList(),
             RejectedVoucherCodes: rejectedVoucherCodes.ToList(),
-            Warnings: warnings
+            Warnings: warnings,
+            RejectedReasons: rejectedReasons
         );
     }
 }
