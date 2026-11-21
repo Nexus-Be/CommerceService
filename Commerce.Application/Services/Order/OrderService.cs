@@ -70,6 +70,25 @@ public sealed class OrderService : IOrderService
     /// <summary>Durable key of the platform fee rate in SystemSettings (the cache is only an accelerator).</summary>
     public const string PlatformFeeSettingKey = "PLATFORM_FEE_PERCENT";
 
+    /// <summary>
+    /// The configured rate applies to wallet-paid orders only. COD is fixed at 0% until the cash reconciliation
+    /// path and the collecting party are agreed (decision 5 of the payout plan).
+    /// </summary>
+    internal static decimal ResolvePlatformFeePercent(PaymentMethod paymentMethod, decimal walletOrderPercent) =>
+        paymentMethod == PaymentMethod.Cod ? 0m : walletOrderPercent;
+
+    private static void EnsureNoSystemDiscountOnCod(PaymentMethod paymentMethod, VoucherCalculationResult? result)
+    {
+        if (paymentMethod != PaymentMethod.Cod || result == null) return;
+        if (result.ShopDiscounts.Values.Any(b => b.SystemDiscountAmount > 0m))
+        {
+            throw new CommerceDomainException(
+                "SYSTEM_VOUCHER_NOT_ALLOWED_FOR_COD",
+                "Platform vouchers cannot be used with cash on delivery. Remove the platform voucher or pay by wallet.",
+                409);
+        }
+    }
+
     private async Task<decimal> GetActivePlatformMarkupPercentAsync(CancellationToken ct)
     {
         try
@@ -353,6 +372,7 @@ public sealed class OrderService : IOrderService
                     calculationItems);
 
                 voucherResult = await _voucherCalculator.CalculateDiscountsAsync(vCalcRequest, ct);
+                EnsureNoSystemDiscountOnCod(request.PaymentMethod, voucherResult);
             }
             catch (CommerceDomainException)
             {
@@ -379,7 +399,7 @@ public sealed class OrderService : IOrderService
 
             decimal discountAmount = productDiscount + shopDiscount + systemDiscount;
             decimal netSeller = Math.Max(0m, pq.ItemsAmount - productDiscount - shopDiscount);
-            decimal platformFeeAmount = Math.Round(netSeller * (platformMarkupPercent / 100m), 0, MidpointRounding.AwayFromZero);
+            decimal platformFeeAmount = Math.Round(netSeller * (ResolvePlatformFeePercent(request.PaymentMethod, platformMarkupPercent) / 100m), 0, MidpointRounding.AwayFromZero);
             decimal sellerReceiveAmount = Math.Max(0m, netSeller - platformFeeAmount);
             decimal totalAmount = Math.Max(0m, netSeller - systemDiscount) + pq.ShippingFee;
 
@@ -829,6 +849,8 @@ public sealed class OrderService : IOrderService
                         409);
                 }
 
+                EnsureNoSystemDiscountOnCod(request.PaymentMethod, recalculatedVouchers);
+
                 if (_voucherLifecycleService != null && recalculatedVouchers.AllocatedUsages != null && recalculatedVouchers.AllocatedUsages.Count > 0)
                 {
                     var ids = await _voucherLifecycleService.ReserveVouchersAsync(buyerId, recalculatedVouchers.AllocatedUsages, ct);
@@ -848,7 +870,8 @@ public sealed class OrderService : IOrderService
         decimal grandTotal = 0m;
         var createdSubOrders = new List<SubOrder>();
         // Reuse the rate the buyer was quoted; only quotes created before the snapshot existed fall back to the current rate.
-        var platformMarkupPercent = cachedQuote.PlatformFeePercent ?? await GetActivePlatformMarkupPercentAsync(ct);
+        var walletOrderPercent = cachedQuote.PlatformFeePercent ?? await GetActivePlatformMarkupPercentAsync(ct);
+        var platformMarkupPercent = ResolvePlatformFeePercent(request.PaymentMethod, walletOrderPercent);
 
         foreach (var shop in cachedQuote.Response.Shops)
         {

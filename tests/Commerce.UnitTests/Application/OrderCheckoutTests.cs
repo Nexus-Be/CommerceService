@@ -769,4 +769,74 @@ public class OrderCheckoutTests : IDisposable
         sub.PlatformFeePercent.Should().Be(0m);
         sub.PlatformFeeAmount.Should().Be(0m);
     }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldCharge0PercentFee_ForCod_EvenWhenWalletFeeIsConfigured()
+    {
+        var buyerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), Guid.NewGuid(), 100000m, 2);
+        await SeedPlatformFeeSettingAsync("10");
+        var service = CreateOrderService();
+
+        var quoteRequest = PlatformFeeQuoteRequest(cart.Items.First().Id) with { PaymentMethod = PaymentMethod.Cod };
+        var quote = await service.QuoteCheckoutAsync(buyerId, quoteRequest, CancellationToken.None);
+        var order = await service.CreateOrderAsync(buyerId, new CreateOrderRequest(
+            QuoteId: quote.QuoteId,
+            PaymentMethod: PaymentMethod.Cod,
+            ShippingAddress: "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
+            ContactPhone: "0901234567",
+            Note: null), CancellationToken.None);
+
+        var sub = await _dbContext.SubOrders.SingleAsync(s => s.OrderId == order.OrderId);
+        sub.PlatformFeePercent.Should().Be(0m);
+        sub.PlatformFeeAmount.Should().Be(0m);
+        sub.SellerReceiveAmount.Should().Be(200000m);
+    }
+
+    [Fact]
+    public async Task QuoteCheckoutAsync_ShouldRejectPlatformVoucher_WhenPaymentIsCod()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+        var calc = new Mock<IVoucherDiscountCalculator>();
+        calc.Setup(v => v.CalculateDiscountsAsync(It.IsAny<VoucherCalculationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VoucherCalculationResult(
+                new Dictionary<Guid, ShopDiscountBreakdown> { [sellerId] = new ShopDiscountBreakdown(SystemDiscountAmount: 10000m) },
+                new List<string> { "SYS10K" }, new List<string>()));
+        var service = CreateOrderService(calc.Object);
+
+        var request = PlatformFeeQuoteRequest(cart.Items.First().Id) with
+        {
+            PaymentMethod = PaymentMethod.Cod,
+            VoucherCodes = new List<string> { "SYS10K" }
+        };
+        var act = () => service.QuoteCheckoutAsync(buyerId, request, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<CommerceDomainException>())
+            .Which.ErrorCode.Should().Be("SYSTEM_VOUCHER_NOT_ALLOWED_FOR_COD");
+    }
+
+    [Fact]
+    public async Task QuoteCheckoutAsync_ShouldAllowShopVoucher_WhenPaymentIsCod()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+        var calc = new Mock<IVoucherDiscountCalculator>();
+        calc.Setup(v => v.CalculateDiscountsAsync(It.IsAny<VoucherCalculationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VoucherCalculationResult(
+                new Dictionary<Guid, ShopDiscountBreakdown> { [sellerId] = new ShopDiscountBreakdown(ShopDiscountAmount: 30000m) },
+                new List<string> { "SHOP30K" }, new List<string>()));
+        var service = CreateOrderService(calc.Object);
+
+        var request = PlatformFeeQuoteRequest(cart.Items.First().Id) with
+        {
+            PaymentMethod = PaymentMethod.Cod,
+            VoucherCodes = new List<string> { "SHOP30K" }
+        };
+        var quote = await service.QuoteCheckoutAsync(buyerId, request, CancellationToken.None);
+
+        quote.AppliedVouchers.Should().Contain("SHOP30K");
+    }
 }
