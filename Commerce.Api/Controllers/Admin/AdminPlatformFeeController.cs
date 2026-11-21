@@ -6,7 +6,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Commerce.Api.Extensions;
 using Commerce.Api.Filters;
+using Commerce.Application.Common.Extensions;
 using Commerce.Application.Common.Models;
+using Commerce.Application.Interfaces;
+using Commerce.Domain.Enums;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Distributed;
@@ -22,15 +25,18 @@ public class AdminPlatformFeeController : ControllerBase
     public const string PlatformFeePercentCacheKey = "commerce:platform_fee_percent";
 
     private readonly IDistributedCache _cache;
+    private readonly ICommerceDbContext _db;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AdminPlatformFeeController> _logger;
 
     public AdminPlatformFeeController(
         IDistributedCache cache,
+        ICommerceDbContext db,
         IConfiguration configuration,
         ILogger<AdminPlatformFeeController> logger)
     {
         _cache = cache;
+        _db = db;
         _configuration = configuration;
         _logger = logger;
     }
@@ -110,6 +116,23 @@ public class AdminPlatformFeeController : ControllerBase
             UpdatedByRole: updatedByRole,
             UpdatedAt: DateTimeOffset.UtcNow
         );
+
+        // The fee lives in the cache, so the audit record is the only durable trace of who changed it and from what.
+        decimal? previousPercent = null;
+        var previousText = await _cache.GetStringAsync(PlatformFeePercentCacheKey, ct);
+        if (decimal.TryParse(previousText, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var parsedPrevious))
+        {
+            previousPercent = parsedPrevious;
+        }
+
+        _db.AddAuditLog(
+            AuditAction.PlatformFeeUpdate,
+            "PlatformFee",
+            "platform-fee",
+            oldValues: new { DefaultPercent = previousPercent },
+            newValues: new { request.DefaultPercent, Role = updatedByRole },
+            userId: HttpContext.GetUserId()?.ToString());
+        await _db.SaveChangesAsync(ct);
 
         var serialized = JsonSerializer.Serialize(response);
         await _cache.SetStringAsync(PlatformFeeMetadataCacheKey, serialized, ct);

@@ -11,6 +11,7 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddApplicationServices(this IServiceCollection services)
     {
+        services.AddScoped<Commerce.Application.Services.Audit.IAuditSyncSourceService, Commerce.Application.Services.Audit.AuditSyncSourceService>();
         services.AddScoped<ICartService, CartService>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IAuctionOrderService, AuctionOrderService>();

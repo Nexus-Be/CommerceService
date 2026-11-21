@@ -11,5 +11,6 @@ public enum AuditAction
     DiscountUpdate = 6,
     InvoiceGenerate = 7,
     DiscountStatusChange = 8,
-    DiscountDelete = 9
+    DiscountDelete = 9,
+    PlatformFeeUpdate = 10
 }

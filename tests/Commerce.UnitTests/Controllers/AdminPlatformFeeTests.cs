@@ -41,7 +41,7 @@ public class AdminPlatformFeeTests
 
     private AdminPlatformFeeController CreateController(Guid? userId = null, string? role = null)
     {
-        var controller = new AdminPlatformFeeController(_cache, _configuration, _mockLogger.Object);
+        var controller = new AdminPlatformFeeController(_cache, Commerce.UnitTests.Common.TestDbContextFactory.CreateInMemoryDbContext(), _configuration, _mockLogger.Object);
         var httpContext = new DefaultHttpContext();
 
         if (userId.HasValue)
