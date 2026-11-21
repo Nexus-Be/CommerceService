@@ -178,6 +178,26 @@ public sealed class SettlementServiceTests : IDisposable
         _wallet.Verify(w => w.SettleOrderPayoutAsync(It.IsAny<WalletSettlementRequest>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Theory]
+    [InlineData("DEPOSIT_ESCROW_INSUFFICIENT")]
+    [InlineData("DEPOSIT_ESCROW_NOT_FOUND")]
+    public async Task A_deposit_escrow_that_is_not_filled_yet_is_retried_not_sent_to_finance(string code)
+    {
+        var order = NewAuctionOrder(protocol: 2);
+        var outcomes = new Queue<WalletCallOutcome>(new[] { new WalletCallOutcome(false, 409, code, "not yet"), WalletCallOutcome.Ok() });
+        _wallet.Setup(w => w.SettleOrderPayoutAsync(It.IsAny<WalletSettlementRequest>(), It.IsAny<CancellationToken>())).Returns(() => Task.FromResult(outcomes.Dequeue()));
+        var service = Create();
+
+        (await service.SettleAuctionOrderAsync(order, default)).Should().BeFalse();
+        var snapshot = await _db.SettlementSnapshots.SingleAsync();
+        snapshot.Status.Should().Be(SettlementSnapshotStatus.Pending);
+        snapshot.NextRetryAt.Should().NotBeNull();
+
+        snapshot.NextRetryAt = DateTimeOffset.UtcNow.AddSeconds(-1);
+        await _db.SaveChangesAsync();
+        (await service.SettleAuctionOrderAsync(order, default, respectBackoff: true)).Should().BeTrue();
+    }
+
     [Fact]
     public async Task Too_many_transient_failures_move_the_payout_to_finance()
     {

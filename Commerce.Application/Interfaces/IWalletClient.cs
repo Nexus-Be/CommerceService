@@ -106,7 +106,18 @@ public sealed record WalletSettlementRequest(
 /// </summary>
 public sealed record WalletCallOutcome(bool Success, int StatusCode, string? ErrorCode, string? ErrorMessage, bool IsReplay = false)
 {
-    public bool IsPermanentFailure => !Success && StatusCode is >= 400 and < 500 and not 408 and not 429;
+    /// <summary>
+    /// Refusals that can clear by themselves: the deposit escrow of an auction order is filled by a background capture in Auction
+    /// (Buy Now goods hold), so a payout that arrives first is retried instead of being sent to finance.
+    /// </summary>
+    private static readonly System.Collections.Generic.HashSet<string> RetryableCodes = new(StringComparer.Ordinal)
+    {
+        "DEPOSIT_ESCROW_INSUFFICIENT",
+        "DEPOSIT_ESCROW_NOT_FOUND"
+    };
+
+    public bool IsPermanentFailure => !Success && StatusCode is >= 400 and < 500 and not 408 and not 429
+        && (ErrorCode is null || !RetryableCodes.Contains(ErrorCode));
     public bool IsTransientFailure => !Success && !IsPermanentFailure;
 
     public static WalletCallOutcome Ok(bool isReplay = false) => new(true, 200, null, null, isReplay);
