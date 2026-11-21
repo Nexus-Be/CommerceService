@@ -131,7 +131,8 @@ public class AuctionOrderService : IAuctionOrderService
 
         // Calculate financials
         var remainingAmount = request.WinningAmount - depositAmount;
-        var platformFeeAmount = Math.Round(request.WinningAmount * DefaultPlatformFeeRate, 2);
+        // One VND rounding rule for every new order: whole VND, halves away from zero (same as regular orders). The fee never carries cents.
+        var platformFeeAmount = Math.Round(request.WinningAmount * DefaultPlatformFeeRate, 0, MidpointRounding.AwayFromZero);
         var sellerReceiveAmount = request.WinningAmount - platformFeeAmount;
         var orderId = Guid.NewGuid();
         var orderNo = $"AO-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString()[..6].ToUpperInvariant()}";

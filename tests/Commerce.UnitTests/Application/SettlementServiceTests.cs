@@ -288,6 +288,41 @@ public sealed class SettlementServiceTests : IDisposable
         sent.DepositEscrowAmount.Should().Be(100_000m);
     }
 
+    [Theory]
+    [InlineData("Winner", 1_000_000, 100_000, 35_000)]        // deposit is part of the price, buyer pays the rest plus shipping
+    [InlineData("SecondChance", 800_000, 80_000, 30_000)]     // second-chance bidder: own deposit, own price
+    [InlineData("BuyNow", 3_000_000, 3_000_000, 40_000)]      // Buy Now: the whole price is already held, the buyer only pays shipping
+    public async Task Every_auction_source_balances_and_uses_the_deposit_exactly_once(string source, decimal win, decimal deposit, decimal shipping)
+    {
+        var fee = Math.Round(win * 0.05m, 0, MidpointRounding.AwayFromZero);
+        var order = new AuctionOrder
+        {
+            Id = Guid.NewGuid(), OrderNo = "AO-S", AuctionId = Guid.NewGuid(), BuyerId = Guid.NewGuid(), SellerId = Guid.NewGuid(),
+            WinningBidId = Guid.NewGuid(), ProductId = Guid.NewGuid(), ProductNameSnapshot = "p",
+            WinningAmount = win, DepositAmount = deposit, RemainingAmount = win - deposit, ShippingFeeAmount = shipping,
+            TotalAmount = win - deposit + shipping,
+            SellerReceiveAmount = win - fee, PlatformFeeAmount = fee,
+            OrderSource = Enum.Parse<AuctionOrderSource>(source),
+            Status = SubOrderStatus.Completed, PaymentMethod = PaymentMethod.Wallet, PaymentDeadlineAt = DateTimeOffset.UtcNow,
+            SettlementProtocolVersion = 2
+        };
+        _db.AuctionOrders.Add(order);
+        _db.SaveChanges();
+        WalletSettlementRequest? sent = null;
+        _wallet.Setup(w => w.SettleOrderPayoutAsync(It.IsAny<WalletSettlementRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<WalletSettlementRequest, CancellationToken>((request, _) => sent = request)
+            .ReturnsAsync(WalletCallOutcome.Ok());
+
+        (await Create().SettleAuctionOrderAsync(order, default)).Should().BeTrue();
+
+        sent.Should().NotBeNull();
+        // What leaves both escrows equals what is paid to the seller plus the fee and shipping allocation: nothing is created or lost.
+        (sent!.OrderEscrowAmount + sent.DepositEscrowAmount + sent.SubsidyAmount).Should().Be(sent.SellerReceiveAmount + sent.PlatformFeeAmount + sent.ShippingAmount);
+        sent.SellerReceiveAmount.Should().Be(win - fee);
+        sent.DepositEscrowAmount.Should().Be(deposit); // the deposit is used once, as one of the two sources
+        sent.OrderEscrowAmount.Should().Be(win - deposit + shipping);
+    }
+
     [Fact]
     public async Task An_unpaid_auction_order_has_nothing_to_pay_out_and_goes_to_finance()
     {

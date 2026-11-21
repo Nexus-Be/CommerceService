@@ -38,6 +38,25 @@ public class AuctionOrderServiceTests
     }
 
     [Fact]
+    public async Task ReceiveSettlementAsync_ShouldRoundTheFeeToWholeVnd_SoTheIdentityStaysExact()
+    {
+        var request = new AuctionSettlementRequest(
+            AuctionId: Guid.NewGuid(), WinnerId: Guid.NewGuid(), SellerId: Guid.NewGuid(), WinningBidId: Guid.NewGuid(), ProductId: Guid.NewGuid(),
+            SkuId: null, ProductName: "Odd price", ProductImageUrl: "https://example.com/x.png", SkuAttributes: "{}",
+            WinningAmount: 1000010m, // 5% = 50,000.5 -> 50,001 (halves away from zero)
+            PaymentDeadlineAt: DateTimeOffset.UtcNow.AddHours(24));
+
+        var result = await _service.ReceiveSettlementAsync(request);
+
+        var order = await _dbContext.AuctionOrders.FindAsync(result.Response.OrderId);
+        order!.PlatformFeeAmount.Should().Be(50001m);
+        order.SellerReceiveAmount.Should().Be(950009m);
+        (order.PlatformFeeAmount + order.SellerReceiveAmount).Should().Be(order.WinningAmount);
+        order.PlatformFeePercent.Should().Be(5m);
+        order.PlatformFeeAmount.Should().Be(decimal.Round(order.PlatformFeeAmount, 0));
+    }
+
+    [Fact]
     public async Task ReceiveSettlementAsync_ValidRequest_CreatesAuctionOrderWithAOOrderNoAndPendingPaymentStatus()
     {
         // Arrange
