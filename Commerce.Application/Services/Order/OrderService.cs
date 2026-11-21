@@ -3438,6 +3438,19 @@ public sealed class OrderService : IOrderService
 
         await _dbContext.SaveChangesAsync(ct);
 
+        // The reservation made when the order was created becomes a use now that the order is paid (as in the create path).
+        if (_voucherLifecycleService != null)
+        {
+            try
+            {
+                await _voucherLifecycleService.CommitOrderVouchersAsync(order.Id, ct);
+            }
+            catch (Exception cvEx)
+            {
+                _logger.LogWarning(cvEx, "Failed to commit voucher redemptions for repaid Order '{OrderId}'.", order.Id);
+            }
+        }
+
         bool stockCommitted = await _fulfillmentClient.CommitStockAsync(order.Id, ct);
         if (!stockCommitted)
         {

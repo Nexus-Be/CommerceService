@@ -93,6 +93,11 @@ public sealed class PaymentTimeoutWorker : BackgroundService
 
                     foreach (var so in order.SubOrders)
                     {
+                        // A sub-order that was already cancelled (for example a COD sub-order the buyer or seller cancelled while the parent
+                        // order stayed pending) already has its cancellation record. Adding a second one violates the unique index and used to
+                        // make the whole batch fail, so one such order stopped every payment timeout.
+                        if (so.Status == SubOrderStatus.Cancelled) continue;
+
                         so.Status = SubOrderStatus.Cancelled;
                         so.CancelledAt = now;
 
