@@ -181,6 +181,9 @@ public class AdminPlatformFeeTests
         var response = okResult.Value.Should().BeOfType<PlatformFeeResponse>().Subject;
         response.DefaultPercent.Should().Be(5.5m);
         response.UpdatedByRole.Should().Be("staff");
+        // The screen must say that this rate is the wallet-order fee and that COD is fixed at 0%.
+        response.AppliesTo.Should().Be("WalletOrders");
+        response.CodPercent.Should().Be(0m);
 
         // Assert Subsequent Get
         var getResult = await controller.GetPlatformFee(CancellationToken.None);
