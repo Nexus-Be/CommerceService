@@ -41,6 +41,7 @@ public interface IDiscountService
         DiscountScopeType? scopeType = null,
         DiscountStatus? status = null,
         string? search = null,
+        Guid? ownerSellerId = null,
         CancellationToken ct = default);
 
     Task<DiscountDetailResponse> GetDiscountByIdAsync(

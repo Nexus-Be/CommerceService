@@ -179,12 +179,19 @@ public sealed class DiscountService : IDiscountService
         DiscountScopeType? scopeType = null,
         DiscountStatus? status = null,
         string? search = null,
+        Guid? ownerSellerId = null,
         CancellationToken ct = default)
     {
         page = Math.Max(1, page);
         pageSize = pageSize is > 0 and <= 100 ? pageSize : 20;
+        var now = DateTimeOffset.UtcNow;
 
         var query = _db.DiscountCodes.AsNoTracking().Where(d => !d.IsDeleted);
+
+        if (isAdmin && ownerSellerId.HasValue)
+        {
+            query = query.Where(d => d.OwnerSellerId == ownerSellerId.Value);
+        }
 
         if (!isAdmin)
         {
@@ -228,7 +235,9 @@ public sealed class DiscountService : IDiscountService
                 d.IsVisible,
                 d.Status,
                 d.StartsAt,
-                d.EndsAt
+                d.EndsAt,
+                d.EndsAt != null && d.EndsAt <= now,
+                d.MaxUsesTotal == null ? (int?)null : Math.Max(0, d.MaxUsesTotal.Value - d.UsedCount - d.ReservedCount)
             ))
             .ToListAsync(ct);
 

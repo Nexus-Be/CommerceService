@@ -114,6 +114,7 @@ public class DiscountsController : ControllerBase
         [FromQuery] DiscountScopeType? scopeType = null,
         [FromQuery] DiscountStatus? status = null,
         [FromQuery] string? search = null,
+        [FromQuery] Guid? ownerSellerId = null,
         CancellationToken ct = default)
     {
         if (!this.TryGetUserId(out var currentUserId, out var authError))
@@ -123,7 +124,7 @@ public class DiscountsController : ControllerBase
 
         var isAdmin = this.IsAdmin() || this.HasRole("staff");
         var result = await _discountService.ListDiscountsAsync(
-            currentUserId, isAdmin, page, pageSize, scopeType, status, search, ct);
+            currentUserId, isAdmin, page, pageSize, scopeType, status, search, ownerSellerId, ct);
 
         return Ok(result);
     }
