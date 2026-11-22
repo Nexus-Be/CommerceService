@@ -507,6 +507,17 @@ public sealed class SettlementServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task A_failing_orphan_check_does_not_fail_the_payout_pass()
+    {
+        var sub = NewSubOrder(protocol: 2);
+        _wallet.Setup(w => w.ListStaleSubsidyHoldsAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("boom"));
+
+        var act = async () => await Create(protocol: 2).RunPendingWorkAsync(50, default);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
     public async Task The_worker_pass_includes_the_orphan_release()
     {
         var orphan = Guid.NewGuid();

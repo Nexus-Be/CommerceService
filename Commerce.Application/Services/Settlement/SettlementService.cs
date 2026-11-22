@@ -197,7 +197,16 @@ public sealed class SettlementService : ISettlementService
         }
 
         await ReleaseCancelledSubsidiesAsync(batchSize, cancellationToken);
-        await ReleaseOrphanSubsidiesAsync(cancellationToken);
+        try
+        {
+            await ReleaseOrphanSubsidiesAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // A housekeeping check must never turn a pass that paid sellers into a failed pass.
+            _logger.LogError(ex, "[Settlement] The check for orphan subsidy holds failed; it will run again on the next pass.");
+        }
+
         return completed;
     }
 
