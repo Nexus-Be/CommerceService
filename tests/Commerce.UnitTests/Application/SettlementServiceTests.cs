@@ -451,4 +451,70 @@ public sealed class SettlementServiceTests : IDisposable
         ex.ErrorCode.Should().Be("SUBSIDY_UNAVAILABLE");
         ex.StatusCode.Should().Be(503);
     }
+
+    // ---------------------------------------------------------------- orphan subsidy holds
+
+    private static StaleSubsidyHold Stale(Guid subOrderId) => new(subOrderId, Guid.NewGuid(), 10_000m, DateTimeOffset.UtcNow.AddHours(-2));
+
+    [Fact]
+    public async Task An_old_hold_with_no_sub_order_is_released()
+    {
+        var orphan = Guid.NewGuid();
+        _wallet.Setup(w => w.ListStaleSubsidyHoldsAsync(30, 50, It.IsAny<CancellationToken>())).ReturnsAsync(new[] { Stale(orphan) });
+        _wallet.Setup(w => w.ReleasePlatformSubsidyAsync(orphan, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(WalletCallOutcome.Ok(false));
+
+        var released = await Create(protocol: 2).ReleaseOrphanSubsidiesAsync(default);
+
+        released.Should().Be(1);
+        _wallet.Verify(w => w.ReleasePlatformSubsidyAsync(orphan, It.Is<string>(reason => reason.Contains("Orphan")), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task An_old_hold_that_belongs_to_a_saved_sub_order_is_left_alone()
+    {
+        var sub = NewSubOrder(protocol: 2);
+        _wallet.Setup(w => w.ListStaleSubsidyHoldsAsync(30, 50, It.IsAny<CancellationToken>())).ReturnsAsync(new[] { Stale(sub.Id) });
+
+        var released = await Create(protocol: 2).ReleaseOrphanSubsidiesAsync(default);
+
+        released.Should().Be(0);
+        _wallet.Verify(w => w.ReleasePlatformSubsidyAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task When_wallet_cannot_answer_nothing_is_released()
+    {
+        _wallet.Setup(w => w.ListStaleSubsidyHoldsAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<StaleSubsidyHold>?)null);
+
+        var released = await Create(protocol: 2).ReleaseOrphanSubsidiesAsync(default);
+
+        released.Should().Be(0);
+        _wallet.Verify(w => w.ReleasePlatformSubsidyAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_release_that_fails_is_not_counted_and_is_tried_again_by_the_next_run()
+    {
+        var orphan = Guid.NewGuid();
+        _wallet.Setup(w => w.ListStaleSubsidyHoldsAsync(30, 50, It.IsAny<CancellationToken>())).ReturnsAsync(new[] { Stale(orphan) });
+        _wallet.Setup(w => w.ReleasePlatformSubsidyAsync(orphan, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(WalletCallOutcome.Transient("WALLET_UNAVAILABLE", "down"));
+        var service = Create(protocol: 2);
+
+        (await service.ReleaseOrphanSubsidiesAsync(default)).Should().Be(0);
+        (await service.ReleaseOrphanSubsidiesAsync(default)).Should().Be(0);
+
+        _wallet.Verify(w => w.ReleasePlatformSubsidyAsync(orphan, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task The_worker_pass_includes_the_orphan_release()
+    {
+        var orphan = Guid.NewGuid();
+        _wallet.Setup(w => w.ListStaleSubsidyHoldsAsync(30, 50, It.IsAny<CancellationToken>())).ReturnsAsync(new[] { Stale(orphan) });
+        _wallet.Setup(w => w.ReleasePlatformSubsidyAsync(orphan, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(WalletCallOutcome.Ok(false));
+
+        await Create(protocol: 2).RunPendingWorkAsync(50, default);
+
+        _wallet.Verify(w => w.ReleasePlatformSubsidyAsync(orphan, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

@@ -197,6 +197,7 @@ public sealed class SettlementService : ISettlementService
         }
 
         await ReleaseCancelledSubsidiesAsync(batchSize, cancellationToken);
+        await ReleaseOrphanSubsidiesAsync(cancellationToken);
         return completed;
     }
 
@@ -245,6 +246,41 @@ public sealed class SettlementService : ISettlementService
         {
             await _db.SaveChangesAsync(ct);
         }
+    }
+
+    /// <summary>How long a subsidy hold must have been held before it can be an orphan. The order is saved seconds after the hold, so this is generous.</summary>
+    public static readonly TimeSpan OrphanSubsidyAge = TimeSpan.FromMinutes(30);
+
+    /// <summary>
+    /// A hold whose sub-order was never saved (the process stopped after Wallet reserved the subsidy and before the order was stored) would
+    /// keep budget reserved forever. Wallet lists the old holds; only a hold whose sub-order does not exist here is released. A hold that
+    /// belongs to a saved sub-order is never touched by this method: the cancelled-order path and the payout own it.
+    /// </summary>
+    public async Task<int> ReleaseOrphanSubsidiesAsync(CancellationToken ct)
+    {
+        var stale = await _wallet.ListStaleSubsidyHoldsAsync((int)OrphanSubsidyAge.TotalMinutes, 50, ct);
+        if (stale is null || stale.Count == 0)
+        {
+            return 0;
+        }
+
+        var released = 0;
+        foreach (var hold in stale)
+        {
+            if (await _db.SubOrders.AnyAsync(item => item.Id == hold.SubOrderId, ct))
+            {
+                continue;
+            }
+
+            _logger.LogWarning("[Settlement] Subsidy hold of sub-order '{SubOrderId}' ({Amount}) has no sub-order after {Minutes} minutes; releasing it.",
+                hold.SubOrderId, hold.Amount, (int)OrphanSubsidyAge.TotalMinutes);
+            if (await ReleaseSubsidyAsync(hold.SubOrderId, "Orphan hold: no sub-order was saved for it", ct))
+            {
+                released++;
+            }
+        }
+
+        return released;
     }
 
     // ------------------------------------------------------------------ internals

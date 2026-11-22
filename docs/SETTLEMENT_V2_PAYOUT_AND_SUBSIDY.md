@@ -54,6 +54,9 @@ Wallet owns the budget (second admin approves; per-order cap, daily and total li
 * Wallet unreachable: 503 `SUBSIDY_UNAVAILABLE` (fail closed).
 * Payment fails definitively or the order cannot be saved: the held subsidies are released.
 * Cancelled or refunded before payout: the worker releases it (`SubsidyState` Held -> Released). A used subsidy cannot be released.
+* Process stopped after the hold and before the order was saved: the worker asks Wallet for holds still held after 30 minutes
+  (`GET /api/v1/internal/wallets/subsidy-holds/stale`) and releases only those whose sub-order does not exist in Commerce. A hold that
+  belongs to a saved sub-order is never released by this check. If Wallet cannot answer, nothing is released and the next minute retries.
 
 ## Configuration
 
@@ -82,5 +85,5 @@ the V1 payout routes; falls back to `LegacyCommerceCreditsEnabled` when unset, w
 
 * Refunds after the payout are out of scope (task T30, handled manually).
 * A process kill in the short window between a successful subsidy hold and saving the order leaves a held reservation for a sub-order that does
-  not exist. It stays visible in the budget (reserved amount) and can be released by finance.
+  not exist. The worker releases it after 30 minutes (see the budget section); until then it shows in the reserved amount of the budget.
 * The fee and shipping allocations are records in `OrderSettlements`; there is no platform wallet. Moving that money out is a finance process.

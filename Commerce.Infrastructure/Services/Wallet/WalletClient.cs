@@ -1,6 +1,7 @@
 namespace Commerce.Infrastructure.Services.Wallet;
 
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -390,6 +391,45 @@ public sealed class WalletClient : IWalletClient
             new { reason },
             $"subsidy release of sub-order '{subOrderId}'",
             cancellationToken);
+
+    public async Task<IReadOnlyList<StaleSubsidyHold>?> ListStaleSubsidyHoldsAsync(int olderThanMinutes, int limit, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var response = await _httpClient.GetAsync($"api/v1/internal/wallets/subsidy-holds/stale?olderThanMinutes={olderThanMinutes}&limit={limit}", cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("[REST Wallet Client] The list of stale subsidy holds failed with status {StatusCode}.", (int)response.StatusCode);
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data)) root = data;
+            if (root.ValueKind != JsonValueKind.Array) return null;
+
+            var result = new List<StaleSubsidyHold>();
+            foreach (var item in root.EnumerateArray())
+            {
+                result.Add(new StaleSubsidyHold(
+                    item.GetProperty("subOrderId").GetGuid(),
+                    item.GetProperty("orderId").GetGuid(),
+                    item.GetProperty("amount").GetDecimal(),
+                    item.GetProperty("heldSince").GetDateTimeOffset()));
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[REST Wallet Client] The list of stale subsidy holds could not be read.");
+            return null;
+        }
+    }
 
     /// <summary>
     /// Posts to an internal Wallet route and reports the outcome without ever throwing: a Wallet answer of 4xx is a permanent refusal,

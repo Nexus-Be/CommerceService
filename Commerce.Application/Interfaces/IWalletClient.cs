@@ -84,7 +84,16 @@ public interface IWalletClient
 
     /// <summary>Gives a held subsidy back. POST /api/v1/internal/wallets/sub-orders/{subOrderId}/subsidy-release</summary>
     Task<WalletCallOutcome> ReleasePlatformSubsidyAsync(Guid subOrderId, string reason, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Subsidy holds still held after <paramref name="olderThanMinutes"/>, oldest first. Null when Wallet could not answer (never an empty list by mistake).
+    /// GET /api/v1/internal/wallets/subsidy-holds/stale
+    /// </summary>
+    Task<IReadOnlyList<StaleSubsidyHold>?> ListStaleSubsidyHoldsAsync(int olderThanMinutes, int limit, CancellationToken cancellationToken = default);
 }
+
+/// <summary>A subsidy reservation that Wallet still holds long after it was taken.</summary>
+public sealed record StaleSubsidyHold(Guid SubOrderId, Guid OrderId, decimal Amount, DateTimeOffset HeldSince);
 
 /// <summary>The full allocation of one payout, exactly as stored in the settlement snapshot.</summary>
 public sealed record WalletSettlementRequest(
