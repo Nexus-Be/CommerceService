@@ -18,6 +18,9 @@ public static class DependencyInjection
         services.AddSingleton<IVoucherCalculationEngine, VoucherCalculationEngine>();
         services.AddScoped<IVoucherLifecycleService, VoucherLifecycleService>();
         services.AddScoped<ISettlementService, Commerce.Application.Services.Settlement.SettlementService>();
+        services.AddSingleton<IDeliveryFailurePolicy>(sp => new Commerce.Application.Services.Delivery.ConfiguredDeliveryFailurePolicy(
+            sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()));
+        services.AddScoped<Commerce.Application.Services.Delivery.BuyerRefusalPenaltyService>();
         services.AddScoped<IVoucherDiscountCalculator, VoucherDiscountCalculator>();
         services.AddScoped<IDiscountService, DiscountService>();
         return services;

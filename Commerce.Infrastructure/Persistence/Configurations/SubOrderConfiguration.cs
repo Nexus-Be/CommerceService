@@ -28,6 +28,11 @@ public class SubOrderConfiguration : IEntityTypeConfiguration<SubOrder>
         builder.Property(x => x.PlatformFeePercent).HasPrecision(9, 4);
         builder.Property(x => x.SettlementProtocolVersion).HasDefaultValue(1);
         builder.Property(x => x.SubsidyState).HasDefaultValue(Commerce.Domain.Enums.SubsidyState.None);
+        builder.Property(x => x.DeliveryFailureCodes).HasMaxLength(500);
+        builder.Property(x => x.LastDeliveryFailureReason).HasMaxLength(500);
+        builder.Property(x => x.ReturnClassification).HasMaxLength(32);
+        builder.Property(x => x.BuyerRefusalPenaltyStatus).HasDefaultValue(Commerce.Domain.Enums.BuyerRefusalPenaltyStatus.None);
+        builder.Property(x => x.BuyerRefusalPenaltyAttempts).HasDefaultValue(0);
         builder.Property(x => x.CarrierCode).HasMaxLength(50);
         builder.Property(x => x.TrackingCode).HasMaxLength(100);
         builder.HasIndex(x => x.TrackingCode);

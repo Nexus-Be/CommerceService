@@ -52,6 +52,17 @@ public class SubOrder : BaseEntity<Guid>
     public DateTimeOffset? EstimatedDeliveryAt { get; set; }
     public bool ShipmentPendingCreation { get; set; } = false;
     public bool IsEscrowSettled { get; set; } = false;
+
+    /// <summary>Carrier reason code of every failed delivery attempt, in order, comma separated; "-" stands for an attempt that came without a code.</summary>
+    public string? DeliveryFailureCodes { get; set; }
+    /// <summary>The carrier's free text for the last failed delivery attempt, exactly as received.</summary>
+    public string? LastDeliveryFailureReason { get; set; }
+    public DateTimeOffset? LastDeliveryFailureAt { get; set; }
+    /// <summary>"BuyerRefused" or "Unknown", decided when the parcel came back while the rules were enabled; null otherwise.</summary>
+    public string? ReturnClassification { get; set; }
+    public BuyerRefusalPenaltyStatus BuyerRefusalPenaltyStatus { get; set; } = BuyerRefusalPenaltyStatus.None;
+    public int BuyerRefusalPenaltyAttempts { get; set; }
+    public DateTimeOffset? BuyerRefusalPenaltyAppliedAt { get; set; }
     public long RowVersion { get; set; }
 
     // Navigation

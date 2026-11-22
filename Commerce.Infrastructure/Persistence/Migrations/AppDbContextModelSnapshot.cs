@@ -1215,6 +1215,34 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("CancelledAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTimeOffset?>("BuyerRefusalPenaltyAppliedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("BuyerRefusalPenaltyAttempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("BuyerRefusalPenaltyStatus")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("DeliveryFailureCodes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset?>("LastDeliveryFailureAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastDeliveryFailureReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ReturnClassification")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
                     b.Property<string>("CarrierCode")
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");

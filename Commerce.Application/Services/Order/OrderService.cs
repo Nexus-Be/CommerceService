@@ -13,6 +13,7 @@ using Microsoft.Extensions.Logging;
 using Commerce.Application.Common;
 using Commerce.Application.Common.Models;
 using Commerce.Application.Interfaces;
+using Commerce.Application.Services.Delivery;
 using Commerce.Application.Services.Discount;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
@@ -32,6 +33,7 @@ public sealed class OrderService : IOrderService
     private readonly IVoucherLifecycleService? _voucherLifecycleService;
     private readonly INotificationSettings? _notificationSettings;
     private readonly ISettlementService? _settlementService;
+    private readonly IDeliveryFailurePolicy? _deliveryFailurePolicy;
 
     public OrderService(
         ICommerceDbContext dbContext,
@@ -55,8 +57,10 @@ public sealed class OrderService : IOrderService
         IVoucherDiscountCalculator? voucherCalculator = null,
         IVoucherLifecycleService? voucherLifecycleService = null,
         INotificationSettings? notificationSettings = null,
-        ISettlementService? settlementService = null)
+        ISettlementService? settlementService = null,
+        IDeliveryFailurePolicy? deliveryFailurePolicy = null)
     {
+        _deliveryFailurePolicy = deliveryFailurePolicy;
         _notificationSettings = notificationSettings;
         _settlementService = settlementService;
         _dbContext = dbContext;
@@ -2956,6 +2960,12 @@ public sealed class OrderService : IOrderService
             // T024 [US4]: Retain Shipped status, log history with reason/location
             so.UpdatedAt = timestamp;
 
+            // Keep the carrier's reason for every failed attempt, exactly as sent. An attempt without a code is kept as "no code" so it is
+            // never mistaken for an earlier attempt's reason when the parcel finally comes back.
+            so.DeliveryFailureCodes = DeliveryFailureClassifier.Append(so.DeliveryFailureCodes, request.ReasonCode);
+            so.LastDeliveryFailureReason = string.IsNullOrWhiteSpace(request.Reason) ? null : (request.Reason.Length > 500 ? request.Reason[..500] : request.Reason);
+            so.LastDeliveryFailureAt = timestamp;
+
             _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
             {
                 Id = Guid.NewGuid(),
@@ -2973,6 +2983,18 @@ public sealed class OrderService : IOrderService
             so.Status = SubOrderStatus.Cancelled;
             so.CancelledAt = timestamp;
             so.UpdatedAt = timestamp;
+
+            // Was it a refusal? Decided now, with the table in force now, so approving a table later never penalises an older return.
+            // Without an approved table nothing is classified and nobody is penalised; the evidence above is kept either way.
+            if (_deliveryFailurePolicy is { Enabled: true } failurePolicy && so.BuyerRefusalPenaltyStatus == BuyerRefusalPenaltyStatus.None)
+            {
+                so.ReturnClassification = DeliveryFailureClassifier.Classify(so.DeliveryFailureCodes, request.ReasonCode, failurePolicy);
+                if (so.ReturnClassification == DeliveryFailureClassifier.BuyerRefused)
+                {
+                    so.BuyerRefusalPenaltyStatus = BuyerRefusalPenaltyStatus.Pending;
+                    _logger.LogInformation("[OrderService] SubOrder '{SubOrderId}' came back as a buyer refusal (table {Table}); the penalty is queued.", so.Id, failurePolicy.TableVersion);
+                }
+            }
 
             _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
             {

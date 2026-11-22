@@ -62,6 +62,21 @@ public sealed class PaymentTimeoutWorker : BackgroundService
 
         var now = DateTimeOffset.UtcNow;
 
+        // Reputation penalties owed by buyers who refused a delivery are retried here until User confirms them. A failure of this step
+        // must never stop the payment timeouts below.
+        var refusalPenalties = scope.ServiceProvider.GetService<Commerce.Application.Services.Delivery.BuyerRefusalPenaltyService>();
+        if (refusalPenalties != null)
+        {
+            try
+            {
+                await refusalPenalties.RetryPendingAsync(50, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "[PaymentTimeoutWorker] Retrying the pending buyer-refusal penalties failed.");
+            }
+        }
+
         var expiredOrders = await dbContext.Orders
             .Include(o => o.SubOrders)
             .Where(o => o.Status == OrderStatus.PendingPayment && o.PaymentDeadlineAt < now)
