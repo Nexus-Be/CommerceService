@@ -151,16 +151,17 @@ public sealed class WalletClient : IWalletClient
     }
 
     /// <summary>
-    /// Tự động hoàn tiền SubOrder vào ví Buyer qua WalletService (RefundCredit).
+    /// Refunds a sub-order to the buyer's wallet (RefundCredit).
     /// POST /api/v1/wallets/sub-orders/{subOrderId}/refund
-    /// S2S Route: Không yêu cầu identity header; neo idempotency trên subOrderId.
+    /// S2S route: no identity header. The body carries the parent order id, which the wallet requires (it checks the payment and takes the
+    /// money out of the parent escrow). The wallet keeps one refund per sub-order id; a repeated call answers the existing transaction.
     /// </summary>
-    public async Task<bool> RefundSubOrderPaymentAsync(
+    public async Task<WalletRefundResult> RefundSubOrderPaymentAsync(
         Guid subOrderId,
+        Guid parentOrderId,
         string userId,
         decimal amount,
         string reason,
-        string? idempotencyKey = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -172,24 +173,26 @@ public sealed class WalletClient : IWalletClient
                 {
                     userId,
                     amount,
-                    reason
+                    reason,
+                    parentOrderId
                 })
             };
 
             var response = await _httpClient.SendAsync(request, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogInformation("[REST Wallet Client] SubOrder '{SubOrderId}' refund succeeded for User '{UserId}', Amount: {Amount}.", subOrderId, userId, amount);
-                return true;
+                var (transactionId, replayed) = ParseRefundTransaction(body);
+                _logger.LogInformation("[REST Wallet Client] SubOrder '{SubOrderId}' refund succeeded for User '{UserId}', Amount: {Amount}, Transaction: {TransactionId}, Replayed: {Replayed}.", subOrderId, userId, amount, transactionId, replayed);
+                return WalletRefundResult.Success(transactionId, replayed);
             }
 
             var statusCode = (int)response.StatusCode;
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            var (errorCode, errorMessage) = ParseProblemDetails(errorBody, statusCode);
+            var (errorCode, errorMessage) = ParseProblemDetails(body, statusCode);
 
             if (statusCode == 503 || errorCode == "FEATURE_DISABLED")
             {
-                _logger.LogError("[REST Wallet Client] SubOrder '{SubOrderId}' refund failed with 503 FEATURE_DISABLED. Wallet feature flag 'LegacyCommerceCreditsEnabled' may be disabled: {ErrorBody}", subOrderId, errorBody);
+                _logger.LogError("[REST Wallet Client] SubOrder '{SubOrderId}' refund failed with 503 FEATURE_DISABLED. The wallet release flag 'OrderRefundEnabled' is off, so the refund stays pending: {ErrorBody}", subOrderId, body);
             }
             else if (statusCode == 409)
             {
@@ -199,12 +202,32 @@ public sealed class WalletClient : IWalletClient
             {
                 _logger.LogWarning("[REST Wallet Client] SubOrder '{SubOrderId}' refund failed with status {StatusCode} ({ErrorCode}): {ErrorMessage}", subOrderId, statusCode, errorCode, errorMessage);
             }
-            return false;
+            return WalletRefundResult.Failure(errorCode);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[REST Wallet Client] Error during refund for SubOrder '{SubOrderId}'.", subOrderId);
-            return false;
+            return WalletRefundResult.Failure("WALLET_UNREACHABLE");
+        }
+    }
+
+    /// <summary>Reads the refund transaction id and the replay marker from the wallet's answer (plain or wrapped in "data").</summary>
+    private static (Guid? TransactionId, bool Replayed) ParseRefundTransaction(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return (null, false);
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object) root = data;
+            if (root.ValueKind != JsonValueKind.Object) return (null, false);
+            Guid? id = root.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.String && Guid.TryParse(idElement.GetString(), out var parsed) ? parsed : null;
+            var replayed = root.TryGetProperty("replayed", out var flag) && flag.ValueKind == JsonValueKind.True;
+            return (id, replayed);
+        }
+        catch (JsonException)
+        {
+            return (null, false);
         }
     }
 

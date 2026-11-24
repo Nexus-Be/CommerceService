@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Commerce.Application.Interfaces;
+using Commerce.Application.Services.Order;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
 
@@ -307,7 +308,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                         CancellationId = cancellationId,
                         RefundType = RefundType.Full,
                         Amount = refundAmount,
-                        Status = refundSuccess ? RefundStatus.Completed : RefundStatus.Requested,
+                        Status = refundSuccess ? RefundStatus.Completed : RefundStatus.WalletPending,
                         ReasonCode = "SellerExpired",
                         ReasonNote = "Seller response deadline expired after 24 hours.",
                         ActorRole = OrderActorRole.System,
@@ -531,6 +532,16 @@ public sealed class PaymentTimeoutWorker : BackgroundService
         await ReconcileUnsettledEscrowsAsync(dbContext, walletClient, ct, settlementService);
     }
 
+    /// <summary>
+    /// A refund is retried only after this long since it was created or last touched, and a worker that picks one up holds it for the same
+    /// time: the person or flow that decided it may still be waiting for the wallet's answer.
+    /// </summary>
+    internal static readonly TimeSpan RefundRetryLease = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Retries refunds that were decided but not yet confirmed by the wallet (<see cref="RefundStatus.WalletPending"/>). A refund that is
+    /// only waiting for a decision (<see cref="RefundStatus.Requested"/>, e.g. a buyer's request) is never touched here.
+    /// </summary>
     internal async Task ReconcilePendingRefundsAsync(
         ICommerceDbContext dbContext,
         IWalletClient? walletClient,
@@ -540,39 +551,41 @@ public sealed class PaymentTimeoutWorker : BackgroundService
 
         try
         {
+            var cutoff = DateTimeOffset.UtcNow - RefundRetryLease;
             var pendingRefunds = await dbContext.OrderRefunds
-                .Where(r => r.Status == RefundStatus.Requested)
+                .Where(r => r.Status == RefundStatus.WalletPending && !r.IsDeleted && r.UpdatedAt <= cutoff)
                 .OrderBy(r => r.RequestedAt)
                 .Take(50)
                 .ToListAsync(ct);
 
             if (pendingRefunds.Count == 0) return;
 
-            _logger.LogInformation("[PaymentTimeoutWorker] Found {Count} pending requested refunds to reconcile.", pendingRefunds.Count);
+            _logger.LogInformation("[PaymentTimeoutWorker] Found {Count} decided refunds waiting for the wallet.", pendingRefunds.Count);
 
             int reconciledCount = 0;
-            var now = DateTimeOffset.UtcNow;
 
             foreach (var refund in pendingRefunds)
             {
                 try
                 {
-                    bool succeeded = false;
+                    // Only one worker (or the approving request) takes a refund: the claim succeeds for a single caller.
+                    if (!await TryClaimRefundAsync(dbContext, refund, ct)) continue;
+
+                    WalletRefundResult result = WalletRefundResult.Failure("REFUND_TARGET_NOT_FOUND");
+                    SubOrder? refundedSubOrder = null;
 
                     if (refund.SubOrderId.HasValue)
                     {
-                        var subOrder = await dbContext.SubOrders
-                            .AsNoTracking()
-                            .FirstOrDefaultAsync(s => s.Id == refund.SubOrderId.Value, ct);
+                        refundedSubOrder = await dbContext.SubOrders.FirstOrDefaultAsync(s => s.Id == refund.SubOrderId.Value, ct);
 
-                        if (subOrder != null)
+                        if (refundedSubOrder != null)
                         {
-                            succeeded = await walletClient.RefundSubOrderPaymentAsync(
-                                subOrder.Id,
-                                subOrder.BuyerId.ToString(),
+                            result = await walletClient.RefundSubOrderPaymentAsync(
+                                refundedSubOrder.Id,
+                                refundedSubOrder.OrderId,
+                                refundedSubOrder.BuyerId.ToString(),
                                 refund.Amount,
                                 refund.ReasonNote ?? "Reconciliation refund retry",
-                                $"refund-retry-{refund.Id}",
                                 ct);
                         }
                     }
@@ -584,22 +597,45 @@ public sealed class PaymentTimeoutWorker : BackgroundService
 
                         if (order != null)
                         {
-                            succeeded = await walletClient.RefundOrderPaymentAsync(
+                            var refunded = await walletClient.RefundOrderPaymentAsync(
                                 order.Id,
                                 order.BuyerId.ToString(),
                                 refund.Amount,
                                 refund.ReasonNote ?? "Reconciliation refund retry",
-                                $"refund-retry-{refund.Id}",
+                                null,
                                 ct);
+                            result = refunded ? WalletRefundResult.Success() : WalletRefundResult.Failure("WALLET_REFUND_FAILED");
                         }
                     }
 
-                    if (succeeded)
+                    if (await RefundOutcome.ApplyAsync(dbContext, refund, result, ct))
                     {
-                        refund.Status = RefundStatus.Completed;
-                        refund.CompletedAt = now;
+                        // A buyer's request that was approved is finished the same way the approving request finishes it.
+                        if (refund.ReasonCode == "BUYER_REQUEST" && refundedSubOrder != null && refundedSubOrder.Status != SubOrderStatus.Refunded)
+                        {
+                            var now = DateTimeOffset.UtcNow;
+                            var fromStatus = refundedSubOrder.Status;
+                            refundedSubOrder.Status = SubOrderStatus.Refunded;
+                            refundedSubOrder.CompletedAt = now;
+                            dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+                            {
+                                Id = Guid.NewGuid(),
+                                SubOrderId = refundedSubOrder.Id,
+                                FromStatus = fromStatus,
+                                ToStatus = SubOrderStatus.Refunded,
+                                ActorRole = OrderActorRole.System,
+                                Reason = "Approved refund confirmed by the wallet.",
+                                CreatedAt = now
+                            });
+                        }
                         reconciledCount++;
                     }
+                    else if (refund.Status == RefundStatus.WalletPending)
+                    {
+                        refund.FailureCode = result.ErrorCode ?? "WALLET_REFUND_FAILED";
+                    }
+
+                    await dbContext.SaveChangesAsync(ct);
                 }
                 catch (Exception ex)
                 {
@@ -609,7 +645,6 @@ public sealed class PaymentTimeoutWorker : BackgroundService
 
             if (reconciledCount > 0)
             {
-                await dbContext.SaveChangesAsync(ct);
                 _logger.LogInformation("[PaymentTimeoutWorker] Successfully reconciled {Count}/{Total} pending refunds.", reconciledCount, pendingRefunds.Count);
             }
         }
@@ -617,6 +652,33 @@ public sealed class PaymentTimeoutWorker : BackgroundService
         {
             _logger.LogError(ex, "[PaymentTimeoutWorker] Error during pending refunds reconciliation sweep.");
         }
+    }
+
+    /// <summary>
+    /// Takes a refund for this worker with a conditional update: it succeeds only if the refund is still waiting for the wallet and nobody
+    /// touched it since it was read (the touch time is the lease). Relational providers do it atomically in the database; a provider that
+    /// cannot run set-based updates (the in-memory one used by unit tests) falls back to a plain write.
+    /// </summary>
+    internal static async Task<bool> TryClaimRefundAsync(ICommerceDbContext dbContext, OrderRefund refund, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (dbContext.Database.IsRelational())
+        {
+            var seen = refund.UpdatedAt;
+            var claimed = await dbContext.OrderRefunds
+                .Where(r => r.Id == refund.Id && r.Status == RefundStatus.WalletPending && r.UpdatedAt == seen)
+                .ExecuteUpdateAsync(set => set.SetProperty(r => r.UpdatedAt, now), ct);
+            if (claimed == 1)
+            {
+                refund.UpdatedAt = now;
+                return true;
+            }
+            return false;
+        }
+
+        refund.UpdatedAt = now;
+        await dbContext.SaveChangesAsync(ct);
+        return true;
     }
 
     internal async Task ReconcileUnsettledEscrowsAsync(

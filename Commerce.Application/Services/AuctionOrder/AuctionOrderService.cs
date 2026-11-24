@@ -649,7 +649,7 @@ public class AuctionOrderService : IAuctionOrderService
                 CancellationId = cancellation.Id,
                 RefundType = RefundType.Full,
                 Amount = refundAmount.Value,
-                Status = refundSuccess ? RefundStatus.Completed : RefundStatus.Requested,
+                Status = refundSuccess ? RefundStatus.Completed : RefundStatus.WalletPending,
                 ReasonCode = "SellerRejected",
                 ReasonNote = request.ReasonNote,
                 ActorRole = OrderActorRole.Seller,

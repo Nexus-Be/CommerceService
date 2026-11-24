@@ -875,7 +875,7 @@ public class OrderServiceTests
         // Assert: OrderRefund record
         var refund = await dbContext.OrderRefunds.FirstOrDefaultAsync(r => r.SubOrderId == subOrderId);
         refund.Should().NotBeNull();
-        refund!.Status.Should().Be(RefundStatus.Requested);
+        refund!.Status.Should().Be(RefundStatus.WalletPending);
         refund.ReasonCode.Should().Be(expectedRefundReason);
         refund.Amount.Should().Be(85000m);
     }

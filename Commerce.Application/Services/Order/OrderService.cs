@@ -1708,7 +1708,7 @@ public sealed class OrderService : IOrderService
                     CancellationId = cancellationId,
                     RefundType = RefundType.Full,
                     Amount = so.TotalAmount,
-                    Status = RefundStatus.Requested,
+                    Status = RefundStatus.WalletPending,
                     ReasonCode = "SELLER_CANCELLED",
                     ReasonNote = request.ReasonText ?? "Seller cancelled order.",
                     ActorRole = OrderActorRole.Seller,
@@ -1716,20 +1716,18 @@ public sealed class OrderService : IOrderService
                     RequestedAt = DateTimeOffset.UtcNow
                 };
 
+                // The decision is recorded before the wallet is asked: a crash or a refusal leaves a pending refund that the worker retries.
+                _dbContext.OrderRefunds.Add(refund);
+                await _dbContext.SaveChangesAsync(ct);
+
                 try
                 {
-                    var refundSucceeded = await _walletClient.RefundSubOrderPaymentAsync(
-                        so.Id,
-                        so.BuyerId.ToString(),
-                        so.TotalAmount,
-                        request.ReasonText ?? "Seller cancelled order.",
-                        idempotencyKey: $"refund-suborder-cancel-{so.Id}",
-                        cancellationToken: ct);
+                    var walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+                        so.Id, so.OrderId, so.BuyerId.ToString(), so.TotalAmount, request.ReasonText ?? "Seller cancelled order.", ct);
+                    var refundSucceeded = await RefundOutcome.ApplyAsync(_dbContext, refund, walletResult, ct);
 
                     if (refundSucceeded)
                     {
-                        refund.Status = RefundStatus.Completed;
-                        refund.CompletedAt = DateTimeOffset.UtcNow;
                         _logger.LogInformation("SubOrder '{SubOrderId}' refund on cancel succeeded via WalletClient. Amount: {Amount}", so.Id, so.TotalAmount);
                     }
                 }
@@ -1737,8 +1735,6 @@ public sealed class OrderService : IOrderService
                 {
                     _logger.LogError(ex, "Failed to automatically refund wallet balance on cancel for SubOrder '{SubOrderId}'.", so.Id);
                 }
-
-                _dbContext.OrderRefunds.Add(refund);
             }
             else if (so.PaymentMethod == PaymentMethod.Cod)
             {
@@ -1762,7 +1758,7 @@ public sealed class OrderService : IOrderService
                 CancellationId = null,
                 RefundType = RefundType.Full,
                 Amount = refundAmount,
-                Status = RefundStatus.Requested,
+                Status = RefundStatus.WalletPending,
                 ReasonCode = "BUYER_CANCELLED",
                 ReasonNote = request.ReasonText ?? "Buyer cancelled order before shipping.",
                 ActorRole = OrderActorRole.Buyer,
@@ -1882,7 +1878,7 @@ public sealed class OrderService : IOrderService
                 CancellationId = cancellationId,
                 RefundType = RefundType.Full,
                 Amount = refundAmount,
-                Status = RefundStatus.Requested,
+                Status = RefundStatus.WalletPending,
                 ReasonCode = "BUYER_CANCELLED",
                 ReasonNote = request.ReasonNote ?? "Buyer cancelled sub-order before shipping.",
                 ActorRole = OrderActorRole.Buyer,
@@ -1890,20 +1886,18 @@ public sealed class OrderService : IOrderService
                 RequestedAt = now
             };
 
+            // The decision is recorded before the wallet is asked: a crash or a refusal leaves a pending refund that the worker retries.
+            _dbContext.OrderRefunds.Add(refund);
+            await _dbContext.SaveChangesAsync(ct);
+
             try
             {
-                var refundSucceeded = await _walletClient.RefundSubOrderPaymentAsync(
-                    subOrder.Id,
-                    subOrder.BuyerId.ToString(),
-                    refundAmount,
-                    request.ReasonNote ?? "Buyer cancelled sub-order before shipping.",
-                    idempotencyKey: $"refund-suborder-cancel-{subOrder.Id}",
-                    cancellationToken: ct);
+                var walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+                    subOrder.Id, subOrder.OrderId, subOrder.BuyerId.ToString(), refundAmount, request.ReasonNote ?? "Buyer cancelled sub-order before shipping.", ct);
+                var refundSucceeded = await RefundOutcome.ApplyAsync(_dbContext, refund, walletResult, ct);
 
                 if (refundSucceeded)
                 {
-                    refund.Status = RefundStatus.Completed;
-                    refund.CompletedAt = DateTimeOffset.UtcNow;
                     _logger.LogInformation("SubOrder '{SubOrderId}' refund on cancel succeeded via WalletClient. Amount: {Amount}", subOrder.Id, refundAmount);
                 }
             }
@@ -1912,7 +1906,6 @@ public sealed class OrderService : IOrderService
                 _logger.LogError(ex, "Failed to automatically refund wallet balance on cancel for SubOrder '{SubOrderId}'.", subOrder.Id);
             }
 
-            _dbContext.OrderRefunds.Add(refund);
         }
         else if (subOrder.PaymentMethod == PaymentMethod.Cod)
         {
@@ -2193,7 +2186,7 @@ public sealed class OrderService : IOrderService
                 CancellationId = cancellationId,
                 RefundType = RefundType.Full,
                 Amount = so.TotalAmount,
-                Status = RefundStatus.Requested,
+                Status = RefundStatus.WalletPending,
                 ReasonCode = "SELLER_REJECTED",
                 ReasonNote = request.ReasonText ?? "Shop rejected sub-order after payment.",
                 ActorRole = OrderActorRole.Seller,
@@ -2201,20 +2194,18 @@ public sealed class OrderService : IOrderService
                 RequestedAt = DateTimeOffset.UtcNow
             };
 
+            // The decision is recorded before the wallet is asked: a crash or a refusal leaves a pending refund that the worker retries.
+            _dbContext.OrderRefunds.Add(refund);
+            await _dbContext.SaveChangesAsync(ct);
+
             try
             {
-                var refundSucceeded = await _walletClient.RefundSubOrderPaymentAsync(
-                    so.Id,
-                    so.BuyerId.ToString(),
-                    so.TotalAmount,
-                    request.ReasonText ?? "Shop rejected sub-order after payment.",
-                    idempotencyKey: $"refund-suborder-{so.Id}",
-                    cancellationToken: ct);
+                var walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+                    so.Id, so.OrderId, so.BuyerId.ToString(), so.TotalAmount, request.ReasonText ?? "Shop rejected sub-order after payment.", ct);
+                var refundSucceeded = await RefundOutcome.ApplyAsync(_dbContext, refund, walletResult, ct);
 
                 if (refundSucceeded)
                 {
-                    refund.Status = RefundStatus.Completed;
-                    refund.CompletedAt = DateTimeOffset.UtcNow;
                     _logger.LogInformation("SubOrder '{SubOrderId}' refund succeeded automatically via WalletClient. Amount: {Amount}", so.Id, so.TotalAmount);
                 }
                 else
@@ -2227,7 +2218,6 @@ public sealed class OrderService : IOrderService
                 _logger.LogError(ex, "Failed to automatically refund wallet balance for SubOrder '{SubOrderId}'. Flagged as Requested.", so.Id);
             }
 
-            _dbContext.OrderRefunds.Add(refund);
         }
         else if (so.PaymentMethod == PaymentMethod.Cod)
         {
@@ -2680,7 +2670,7 @@ public sealed class OrderService : IOrderService
         }
 
         var hasPending = await _dbContext.OrderRefunds.AnyAsync(
-            r => r.SubOrderId == subOrderId && r.Status == RefundStatus.Requested && !r.IsDeleted,
+            r => r.SubOrderId == subOrderId && (r.Status == RefundStatus.Requested || r.Status == RefundStatus.WalletPending) && !r.IsDeleted,
             ct);
         if (hasPending)
         {
@@ -2753,6 +2743,11 @@ public sealed class OrderService : IOrderService
             return new DisputeRefundResponse("AlreadyRefunded", existing.Amount, existing.Id, "This dispute was already refunded.");
         }
 
+        if (existing is { Status: RefundStatus.Failed, FailureCode: RefundOutcome.AlreadyHeldByAnotherRefund })
+        {
+            return new DisputeRefundResponse("ManualProcessingRequired", 0m, existing.Id, "The wallet already holds a refund of this sub-order made for another request; check it manually.");
+        }
+
         if (so.Status is not (SubOrderStatus.Delivered or SubOrderStatus.Completed))
         {
             throw new CommerceDomainException("REFUND_NOT_ALLOWED", "Only a delivered sub-order can be refunded because of a dispute.", 409);
@@ -2782,6 +2777,13 @@ public sealed class OrderService : IOrderService
             return new DisputeRefundResponse("AlreadyRefunded", alreadyRefunded, null, "The sub-order is already fully refunded.");
         }
 
+        // The wallet keeps one refund per sub-order: a second credit for the rest would be refused (or taken for a replay of the first),
+        // so a sub-order that was already refunded in part is never completed automatically; a person decides what is still owed.
+        if (alreadyRefunded > 0)
+        {
+            return new DisputeRefundResponse("ManualProcessingRequired", alreadyRefunded, null, "The sub-order was already partly refunded; the rest must be handled manually.");
+        }
+
         var reason = string.IsNullOrWhiteSpace(note) ? "Dispute decided in favour of the buyer." : note.Trim();
         var refund = existing;
         if (refund == null)
@@ -2791,9 +2793,9 @@ public sealed class OrderService : IOrderService
                 Id = Guid.NewGuid(),
                 OrderId = so.OrderId,
                 SubOrderId = so.Id,
-                RefundType = alreadyRefunded > 0 ? RefundType.Partial : RefundType.Full,
+                RefundType = RefundType.Full,
                 Amount = amount,
-                Status = RefundStatus.Requested,
+                Status = RefundStatus.WalletPending,
                 ReasonCode = "DISPUTE_RESOLVED",
                 ReasonNote = reason,
                 ActorRole = OrderActorRole.System,
@@ -2805,29 +2807,41 @@ public sealed class OrderService : IOrderService
             await _dbContext.SaveChangesAsync(ct);
         }
 
-        bool succeeded;
+        // A refund left in the old waiting status by an earlier attempt has been decided (a dispute was resolved), so it is retried as such.
+        if (refund.Status == RefundStatus.Requested)
+        {
+            refund.Status = RefundStatus.WalletPending;
+            refund.UpdatedAt = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+        }
+
+        WalletRefundResult walletResult;
         try
         {
-            // One stable key per report and sub-order: a retry cannot move the money twice.
-            succeeded = await _walletClient.RefundSubOrderPaymentAsync(
-                so.Id, so.BuyerId.ToString(), refund.Amount, reason, idempotencyKey: $"refund-dispute-{reportId}-{so.Id}", cancellationToken: ct);
+            walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+                so.Id, so.OrderId, so.BuyerId.ToString(), refund.Amount, reason, ct);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Dispute refund for SubOrder '{SubOrderId}' (report '{ReportId}') could not reach the wallet.", so.Id, reportId);
-            succeeded = false;
+            walletResult = WalletRefundResult.Failure("WALLET_UNREACHABLE");
         }
 
+        var succeeded = await RefundOutcome.ApplyAsync(_dbContext, refund, walletResult, ct);
         if (!succeeded)
         {
-            refund.FailureCode = "WALLET_REFUND_FAILED";
+            if (refund.Status == RefundStatus.Failed && refund.FailureCode == RefundOutcome.AlreadyHeldByAnotherRefund)
+            {
+                await _dbContext.SaveChangesAsync(ct);
+                return new DisputeRefundResponse("ManualProcessingRequired", 0m, refund.Id, "The wallet already holds a refund of this sub-order made for another request; check it manually.");
+            }
+
+            // The decision stays recorded as pending, so the worker retries it; nothing is reported as refunded.
+            refund.FailureCode = walletResult.ErrorCode ?? "WALLET_REFUND_FAILED";
             await _dbContext.SaveChangesAsync(ct);
-            return new DisputeRefundResponse("Failed", refund.Amount, refund.Id, "The wallet did not confirm the refund. Nothing was recorded as refunded; try again.");
+            return new DisputeRefundResponse("Failed", refund.Amount, refund.Id, "The wallet did not confirm the refund yet. It stays pending and is retried; nothing was recorded as refunded.");
         }
 
-        refund.Status = RefundStatus.Completed;
-        refund.CompletedAt = DateTimeOffset.UtcNow;
-        refund.FailureCode = null;
         await _dbContext.SaveChangesAsync(ct);
         return new DisputeRefundResponse("Refunded", refund.Amount, refund.Id, null);
     }
@@ -3031,7 +3045,7 @@ public sealed class OrderService : IOrderService
                     CancellationId = cancellationId,
                     RefundType = RefundType.Full,
                     Amount = so.TotalAmount,
-                    Status = RefundStatus.Requested,
+                    Status = RefundStatus.WalletPending,
                     ReasonCode = "PACKAGE_RETURNED",
                     ReasonNote = request.Note ?? "Automated refund created due to package returned to sender.",
                     ActorRole = OrderActorRole.System,
@@ -3039,20 +3053,18 @@ public sealed class OrderService : IOrderService
                     RequestedAt = timestamp
                 };
 
+                // The decision is recorded before the wallet is asked: a crash or a refusal leaves a pending refund that the worker retries.
+                _dbContext.OrderRefunds.Add(refund);
+                await _dbContext.SaveChangesAsync(ct);
+
                 try
                 {
-                    var refundSucceeded = await _walletClient.RefundSubOrderPaymentAsync(
-                        so.Id,
-                        so.BuyerId.ToString(),
-                        so.TotalAmount,
-                        request.Note ?? "Refund for returned package.",
-                        idempotencyKey: $"refund-delivery-returned-{so.Id}",
-                        cancellationToken: ct);
+                    var walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+                        so.Id, so.OrderId, so.BuyerId.ToString(), so.TotalAmount, request.Note ?? "Refund for returned package.", ct);
+                    var refundSucceeded = await RefundOutcome.ApplyAsync(_dbContext, refund, walletResult, ct);
 
                     if (refundSucceeded)
                     {
-                        refund.Status = RefundStatus.Completed;
-                        refund.CompletedAt = DateTimeOffset.UtcNow;
                         _logger.LogInformation("SubOrder '{SubOrderId}' refund on return succeeded via WalletClient. Amount: {Amount}", so.Id, so.TotalAmount);
                     }
                     else
@@ -3064,8 +3076,6 @@ public sealed class OrderService : IOrderService
                 {
                     _logger.LogError(ex, "Failed to automatically refund wallet balance for returned SubOrder '{SubOrderId}'.", so.Id);
                 }
-
-                _dbContext.OrderRefunds.Add(refund);
             }
             else if (so.PaymentMethod == PaymentMethod.Cod)
             {
@@ -3143,7 +3153,7 @@ public sealed class OrderService : IOrderService
                     CancellationId = cancellationId,
                     RefundType = RefundType.Full,
                     Amount = so.TotalAmount,
-                    Status = RefundStatus.Requested,
+                    Status = RefundStatus.WalletPending,
                     ReasonCode = "DELIVERY_FAILED",
                     ReasonNote = $"Automated refund request created due to delivery carrier status: {status}.",
                     ActorRole = OrderActorRole.System,
@@ -3298,7 +3308,7 @@ public sealed class OrderService : IOrderService
                     CancellationId = cancellationId,
                     RefundType = RefundType.Full,
                     Amount = refundAmount,
-                    Status = RefundStatus.Requested,
+                    Status = RefundStatus.WalletPending,
                     ReasonCode = isReturned ? "PACKAGE_RETURNED" : "DELIVERY_FAILED",
                     ReasonNote = $"Automated refund request created due to delivery carrier status: {status}.",
                     ActorRole = OrderActorRole.System,
@@ -4044,44 +4054,69 @@ public sealed class OrderService : IOrderService
         var subOrder = refund.SubOrder
             ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", refund.SubOrderId ?? Guid.Empty);
 
-        var walletSuccess = await _walletClient.RefundSubOrderPaymentAsync(
-            subOrder.Id,
-            subOrder.BuyerId.ToString(),
-            refund.Amount,
-            request.Note ?? "Refund approved by seller",
-            null,
-            ct);
-
-        if (!walletSuccess)
-        {
-            throw new CommerceDomainException("WALLET_REFUND_FAILED", "Failed to process refund payment via wallet service.", 400);
-        }
-
+        // Approving is the decision. It is recorded first (the refund now waits for the wallet and is no longer "waiting for a decision"),
+        // so a failure or a crash leaves a pending refund that the worker retries instead of a request that looks undecided.
         var now = DateTimeOffset.UtcNow;
-        refund.Status = RefundStatus.Completed;
-        refund.CompletedAt = now;
+        refund.Status = RefundStatus.WalletPending;
+        refund.UpdatedAt = now;
         if (!string.IsNullOrWhiteSpace(request.Note))
         {
             refund.ReasonNote = string.IsNullOrWhiteSpace(refund.ReasonNote)
                 ? $"Note: {request.Note}"
                 : $"{refund.ReasonNote} | Note: {request.Note}";
         }
+        await _dbContext.SaveChangesAsync(ct);
 
-        var fromStatus = subOrder.Status;
-        subOrder.Status = SubOrderStatus.Refunded;
-        subOrder.CompletedAt = now;
+        var walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+            subOrder.Id,
+            subOrder.OrderId,
+            subOrder.BuyerId.ToString(),
+            refund.Amount,
+            request.Note ?? "Refund approved by seller",
+            ct);
 
-        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        var confirmed = await RefundOutcome.ApplyAsync(_dbContext, refund, walletResult, ct);
+        if (!confirmed)
         {
-            Id = Guid.NewGuid(),
-            SubOrderId = subOrder.Id,
-            FromStatus = fromStatus,
-            ToStatus = SubOrderStatus.Refunded,
-            ChangedBy = currentUserId,
-            ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Seller,
-            Reason = $"Refund approved. Note: {request.Note}",
-            CreatedAt = now
-        });
+            if (refund.Status != RefundStatus.Failed)
+            {
+                refund.FailureCode = walletResult.ErrorCode ?? "WALLET_REFUND_FAILED";
+            }
+            await _dbContext.SaveChangesAsync(ct);
+            // Nothing is reported as refunded: the answer carries the real status (WalletPending, retried automatically, or Failed).
+            return new RefundDetailResponse(
+                Id: refund.Id,
+                SubOrderId: subOrder.Id,
+                SubOrderNo: subOrder.SubOrderNo,
+                BuyerId: subOrder.BuyerId,
+                SellerId: subOrder.SellerId,
+                Amount: refund.Amount,
+                Reason: refund.ReasonNote ?? refund.ReasonCode,
+                Status: refund.Status.ToString(),
+                SellerNote: request.Note,
+                RejectReason: refund.FailureCode,
+                RequestedAt: refund.RequestedAt,
+                CompletedAt: null);
+        }
+
+        if (subOrder.Status != SubOrderStatus.Refunded)
+        {
+            var fromStatus = subOrder.Status;
+            subOrder.Status = SubOrderStatus.Refunded;
+            subOrder.CompletedAt = now;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = subOrder.Id,
+                FromStatus = fromStatus,
+                ToStatus = SubOrderStatus.Refunded,
+                ChangedBy = currentUserId,
+                ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Seller,
+                Reason = $"Refund approved. Note: {request.Note}",
+                CreatedAt = now
+            });
+        }
 
         await _dbContext.SaveChangesAsync(ct);
 

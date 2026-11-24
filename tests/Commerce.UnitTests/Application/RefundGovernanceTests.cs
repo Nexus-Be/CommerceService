@@ -235,8 +235,8 @@ public class RefundGovernanceTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         _mockWalletClient
-            .Setup(w => w.RefundSubOrderPaymentAsync(subOrder.Id, buyerId.ToString(), 150000m, It.IsAny<string>(), null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .Setup(w => w.RefundSubOrderPaymentAsync(subOrder.Id, It.IsAny<Guid>(), buyerId.ToString(), 150000m, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletRefundResult.Success());
 
         var request = new ApproveRefundRequest(Note: "Item accepted for return");
 

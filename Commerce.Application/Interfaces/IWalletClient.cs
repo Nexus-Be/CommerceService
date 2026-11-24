@@ -39,15 +39,18 @@ public interface IWalletClient
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Tự động hoàn tiền SubOrder vào ví Buyer qua WalletService (RefundCredit).
+    /// Refunds a sub-order to the buyer's wallet (RefundCredit).
     /// POST /api/v1/wallets/sub-orders/{subOrderId}/refund
+    /// The parent order id is mandatory: the wallet checks the payment and takes the money out of the parent escrow, and refuses the
+    /// call without it. The wallet keeps one refund per sub-order id, so there is no idempotency key; a repeated call answers the
+    /// existing transaction with <see cref="WalletRefundResult.Replayed"/> set.
     /// </summary>
-    Task<bool> RefundSubOrderPaymentAsync(
+    Task<WalletRefundResult> RefundSubOrderPaymentAsync(
         Guid subOrderId,
+        Guid parentOrderId,
         string userId,
         decimal amount,
         string reason,
-        string? idempotencyKey = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

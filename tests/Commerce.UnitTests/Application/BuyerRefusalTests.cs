@@ -42,7 +42,7 @@ public sealed class BuyerRefusalTests : IDisposable
         }).Build());
 
     private OrderService Orders(IDeliveryFailurePolicy? policy) => new(
-        _db, Mock.Of<IWalletClient>(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()) == Task.FromResult(true)),
+        _db, Mock.Of<IWalletClient>(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()) == Task.FromResult(WalletRefundResult.Success())),
         Mock.Of<IFulfillmentClient>(f => f.ReleaseSubOrderStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<CancellationToken>()) == Task.FromResult(true)
             && f.ReleaseSubOrderStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()) == Task.FromResult(true)),
         Mock.Of<ICatalogClient>(), _users.Object, _cache, NullLogger<OrderService>.Instance,

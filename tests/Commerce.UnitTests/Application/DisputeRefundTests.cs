@@ -32,8 +32,8 @@ public class DisputeRefundTests : IDisposable
     public DisputeRefundTests()
     {
         _wallet
-            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletRefundResult.Success());
     }
 
     public void Dispose() => _db.Dispose();
@@ -79,7 +79,7 @@ public class DisputeRefundTests : IDisposable
     }
 
     [Fact]
-    public async Task Refund_ForADeliveredWalletOrder_RefundsTheFullPaidAmountOnce_UnderAStableKey()
+    public async Task Refund_ForADeliveredWalletOrder_RefundsTheFullPaidAmountOnce_AndSendsTheParentOrderId()
     {
         var sub = await SeedAsync();
         var report = Guid.NewGuid();
@@ -88,8 +88,7 @@ public class DisputeRefundTests : IDisposable
 
         result.Status.Should().Be("Refunded");
         result.Amount.Should().Be(250000m);
-        _wallet.Verify(w => w.RefundSubOrderPaymentAsync(
-            sub.Id, sub.BuyerId.ToString(), 250000m, "Empty box", $"refund-dispute-{report}-{sub.Id}", It.IsAny<CancellationToken>()), Times.Once);
+        _wallet.Verify(w => w.RefundSubOrderPaymentAsync(sub.Id, sub.OrderId, sub.BuyerId.ToString(), 250000m, "Empty box", It.IsAny<CancellationToken>()), Times.Once);
         var saved = await _db.OrderRefunds.SingleAsync();
         saved.Status.Should().Be(RefundStatus.Completed);
         saved.RequestEventId.Should().Be(report);
@@ -109,7 +108,7 @@ public class DisputeRefundTests : IDisposable
         first.Status.Should().Be("Refunded");
         second.Status.Should().Be("AlreadyRefunded");
         second.Amount.Should().Be(250000m);
-        _wallet.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _wallet.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
         (await _db.OrderRefunds.CountAsync()).Should().Be(1);
     }
 
@@ -121,7 +120,7 @@ public class DisputeRefundTests : IDisposable
         var result = await CreateService().RefundSubOrderForDisputeAsync(sub.Id, Guid.NewGuid(), null);
 
         result.Status.Should().Be("ManualProcessingRequired");
-        _wallet.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _wallet.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         (await _db.OrderRefunds.CountAsync()).Should().Be(0);
     }
 
@@ -139,7 +138,7 @@ public class DisputeRefundTests : IDisposable
         var result = await CreateService().RefundSubOrderForDisputeAsync(sub.Id, Guid.NewGuid(), null);
 
         result.Status.Should().Be("ManualProcessingRequired");
-        _wallet.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _wallet.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -148,9 +147,9 @@ public class DisputeRefundTests : IDisposable
         var sub = await SeedAsync();
         var report = Guid.NewGuid();
         _wallet
-            .SetupSequence(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false)
-            .ReturnsAsync(true);
+            .SetupSequence(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletRefundResult.Failure())
+            .ReturnsAsync(WalletRefundResult.Success());
         var service = CreateService();
 
         var first = await service.RefundSubOrderForDisputeAsync(sub.Id, report, null);
@@ -161,6 +160,68 @@ public class DisputeRefundTests : IDisposable
         retry.Status.Should().Be("Refunded");
         (await _db.OrderRefunds.CountAsync()).Should().Be(1);
         (await _db.OrderRefunds.SingleAsync()).Status.Should().Be(RefundStatus.Completed);
+    }
+
+    [Fact]
+    public async Task Refund_AfterAPartialRefund_IsLeftToAPerson_AndTheWalletIsNotAsked()
+    {
+        // The wallet keeps one refund per sub-order, so the rest of a part-refunded sub-order is never completed automatically.
+        var sub = await SeedAsync();
+        _db.OrderRefunds.Add(new OrderRefund
+        {
+            Id = Guid.NewGuid(), OrderId = sub.OrderId, SubOrderId = sub.Id, RefundType = RefundType.Partial, Amount = 100000m,
+            Status = RefundStatus.Completed, ReasonCode = "SELLER_REJECTED", ActorRole = OrderActorRole.Seller, RequestedAt = DateTimeOffset.UtcNow
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await CreateService().RefundSubOrderForDisputeAsync(sub.Id, Guid.NewGuid(), null);
+
+        result.Status.Should().Be("ManualProcessingRequired");
+        _wallet.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        (await _db.OrderRefunds.CountAsync()).Should().Be(1);   // no second refund record was made
+    }
+
+    [Fact]
+    public async Task Refund_WhenTheWalletAnswersACreditThatBelongsToAnotherRefund_IsLeftToAPerson_AndNotMarkedRefunded()
+    {
+        var sub = await SeedAsync();
+        var transaction = Guid.NewGuid();
+        _db.OrderRefunds.Add(new OrderRefund
+        {
+            Id = Guid.NewGuid(), OrderId = sub.OrderId, SubOrderId = sub.Id, RefundType = RefundType.Full, Amount = 250000m,
+            Status = RefundStatus.WalletPending, ReasonCode = "BUYER_CANCELLED", ActorRole = OrderActorRole.Buyer, RefundTransactionId = transaction,
+            RequestedAt = DateTimeOffset.UtcNow
+        });
+        await _db.SaveChangesAsync();
+        _wallet
+            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletRefundResult.Success(transaction, true));
+        var report = Guid.NewGuid();
+        var service = CreateService();
+
+        var first = await service.RefundSubOrderForDisputeAsync(sub.Id, report, null);
+        var again = await service.RefundSubOrderForDisputeAsync(sub.Id, report, null);
+
+        first.Status.Should().Be("ManualProcessingRequired");
+        again.Status.Should().Be("ManualProcessingRequired");   // remembered: the wallet is not asked a second time
+        var dispute = await _db.OrderRefunds.SingleAsync(r => r.RequestEventId == report);
+        dispute.Status.Should().Be(RefundStatus.Failed);
+        dispute.FailureCode.Should().Be(RefundOutcome.AlreadyHeldByAnotherRefund);
+        _wallet.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Refund_StoresTheWalletTransactionOnTheRefund()
+    {
+        var sub = await SeedAsync();
+        var transaction = Guid.NewGuid();
+        _wallet
+            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletRefundResult.Success(transaction, false));
+
+        await CreateService().RefundSubOrderForDisputeAsync(sub.Id, Guid.NewGuid(), null);
+
+        (await _db.OrderRefunds.SingleAsync()).RefundTransactionId.Should().Be(transaction);
     }
 
     [Fact]

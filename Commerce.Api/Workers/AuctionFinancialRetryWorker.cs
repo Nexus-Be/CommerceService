@@ -20,7 +20,7 @@ public sealed class AuctionFinancialRetryWorker(
                 var wallet = scope.ServiceProvider.GetRequiredService<IWalletClient>();
                 var settlement = scope.ServiceProvider.GetService<ISettlementService>();
                 var refunds = await db.OrderRefunds.Include(r => r.AuctionOrder)
-                    .Where(r => r.AuctionOrderId != null && r.Status == RefundStatus.Requested && !r.IsDeleted)
+                    .Where(r => r.AuctionOrderId != null && r.Status == RefundStatus.WalletPending && !r.IsDeleted)
                     .OrderBy(r => r.RequestedAt).Take(50).ToListAsync(stoppingToken);
                 foreach (var refund in refunds)
                 {

@@ -83,11 +83,12 @@ public class OrderReconciliationTests : IDisposable
             SubOrderId = subOrderId,
             Amount = 150000m,
             RefundType = RefundType.Full,
-            Status = RefundStatus.Requested,
+            Status = RefundStatus.WalletPending,
             ReasonCode = "SELLER_REJECTED",
             ReasonNote = "Seller out of stock retry",
             ActorRole = OrderActorRole.System,
-            RequestedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
+            RequestedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
         };
 
         _dbContext.SubOrders.Add(subOrder);
@@ -95,8 +96,8 @@ public class OrderReconciliationTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         _mockWalletClient
-            .Setup(w => w.RefundSubOrderPaymentAsync(subOrderId, buyerId.ToString(), 150000m, It.IsAny<string>(), $"refund-retry-{refundId}", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .Setup(w => w.RefundSubOrderPaymentAsync(subOrderId, It.IsAny<Guid>(), buyerId.ToString(), 150000m, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletRefundResult.Success());
 
         var worker = CreateWorker();
 
@@ -108,13 +109,7 @@ public class OrderReconciliationTests : IDisposable
         updatedRefund!.Status.Should().Be(RefundStatus.Completed);
         updatedRefund.CompletedAt.Should().NotBeNull();
 
-        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
-            subOrderId,
-            buyerId.ToString(),
-            150000m,
-            It.IsAny<string>(),
-            $"refund-retry-{refundId}",
-            It.IsAny<CancellationToken>()), Times.Once);
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(subOrderId, It.IsAny<Guid>(), buyerId.ToString(), 150000m, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -141,11 +136,12 @@ public class OrderReconciliationTests : IDisposable
             SubOrderId = null,
             Amount = 300000m,
             RefundType = RefundType.Full,
-            Status = RefundStatus.Requested,
+            Status = RefundStatus.WalletPending,
             ReasonCode = "BUYER_CANCELLED",
             ReasonNote = "Buyer cancelled entire order",
             ActorRole = OrderActorRole.Buyer,
-            RequestedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
+            RequestedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
         };
 
         _dbContext.Orders.Add(order);
@@ -153,7 +149,7 @@ public class OrderReconciliationTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         _mockWalletClient
-            .Setup(w => w.RefundOrderPaymentAsync(orderId, buyerId.ToString(), 300000m, It.IsAny<string>(), $"refund-retry-{refundId}", It.IsAny<CancellationToken>()))
+            .Setup(w => w.RefundOrderPaymentAsync(orderId, buyerId.ToString(), 300000m, It.IsAny<string>(), null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var worker = CreateWorker();
@@ -171,12 +167,12 @@ public class OrderReconciliationTests : IDisposable
             buyerId.ToString(),
             300000m,
             It.IsAny<string>(),
-            $"refund-retry-{refundId}",
+            null,
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task ReconcilePendingRefundsAsync_ShouldKeepRequestedStatus_WhenWalletRefundFails()
+    public async Task ReconcilePendingRefundsAsync_ShouldKeepWalletPendingStatus_WhenWalletRefundFails()
     {
         // Arrange
         var buyerId = Guid.NewGuid();
@@ -205,10 +201,11 @@ public class OrderReconciliationTests : IDisposable
             SubOrderId = subOrderId,
             Amount = 150000m,
             RefundType = RefundType.Full,
-            Status = RefundStatus.Requested,
+            Status = RefundStatus.WalletPending,
             ReasonCode = "SELLER_REJECTED",
             ActorRole = OrderActorRole.System,
-            RequestedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
+            RequestedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
         };
 
         _dbContext.SubOrders.Add(subOrder);
@@ -216,8 +213,8 @@ public class OrderReconciliationTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         _mockWalletClient
-            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
+            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletRefundResult.Failure());
 
         var worker = CreateWorker();
 
@@ -226,7 +223,7 @@ public class OrderReconciliationTests : IDisposable
 
         // Assert
         var updatedRefund = await _dbContext.OrderRefunds.FindAsync(refundId);
-        updatedRefund!.Status.Should().Be(RefundStatus.Requested);
+        updatedRefund!.Status.Should().Be(RefundStatus.WalletPending);
         updatedRefund.CompletedAt.Should().BeNull();
     }
 
