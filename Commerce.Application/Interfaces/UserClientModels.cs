@@ -72,5 +72,6 @@ public sealed record BuyerAddressDto(
     int GhnDistrictId,
     string GhnWardCode,
     string FullAddressText,
-    bool IsDefault
+    bool IsDefault,
+    int? ProvinceId = null
 );

@@ -237,9 +237,82 @@ public sealed class UserClient : IUserClient
         var root = doc.RootElement;
         if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
         {
-            return JsonSerializer.Deserialize<BuyerAddressDto>(data.GetRawText(), JsonOptions);
+            root = data;
         }
 
-        return JsonSerializer.Deserialize<BuyerAddressDto>(rawBody, JsonOptions);
+        return root.ValueKind == JsonValueKind.Object ? MapAddress(root) : null;
+    }
+
+    /// <summary>
+    /// UserService answers with the address-book names (addressId, addressLine, wardName, districtName, provinceName, provinceId, districtId, wardCode);
+    /// the older Ghn-prefixed names are still read. Reading only the older names left the district and ward at 0, so an address-book address was refused.
+    /// </summary>
+    private static BuyerAddressDto MapAddress(JsonElement e)
+    {
+        string? Text(params string[] names)
+        {
+            foreach (var name in names)
+            {
+                foreach (var property in e.EnumerateObject())
+                {
+                    if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase) && property.Value.ValueKind == JsonValueKind.String)
+                    {
+                        return property.Value.GetString();
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        int? Number(params string[] names)
+        {
+            foreach (var name in names)
+            {
+                foreach (var property in e.EnumerateObject())
+                {
+                    if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase) && property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out var value))
+                    {
+                        return value;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        bool Flag(string name)
+        {
+            foreach (var property in e.EnumerateObject())
+            {
+                if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    return property.Value.ValueKind == JsonValueKind.True;
+                }
+            }
+
+            return false;
+        }
+
+        Guid id = Guid.TryParse(Text("addressId", "id"), out var parsed) ? parsed : Guid.Empty;
+        var street = Text("addressLine", "street") ?? string.Empty;
+        var ward = Text("wardName", "ward") ?? string.Empty;
+        var district = Text("districtName", "district") ?? string.Empty;
+        var province = Text("provinceName", "province") ?? string.Empty;
+        var full = Text("fullAddressText") ?? string.Join(", ", new[] { street, ward, district, province }.Where(x => !string.IsNullOrWhiteSpace(x)));
+
+        return new BuyerAddressDto(
+            Id: id,
+            RecipientName: Text("recipientName") ?? string.Empty,
+            Phone: Text("phone") ?? string.Empty,
+            Street: street,
+            Ward: ward,
+            District: district,
+            Province: province,
+            GhnDistrictId: Number("districtId", "ghnDistrictId") ?? 0,
+            GhnWardCode: Text("wardCode", "ghnWardCode") ?? string.Empty,
+            FullAddressText: full,
+            IsDefault: Flag("isDefault"),
+            ProvinceId: Number("provinceId"));
     }
 }

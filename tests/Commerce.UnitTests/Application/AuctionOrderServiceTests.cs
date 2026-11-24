@@ -17,7 +17,7 @@ public class AuctionOrderServiceTests
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IWalletClient> _walletClientMock = new();
-    private readonly Mock<IFulfillmentClient> _fulfillmentClientMock = new();
+    private readonly Mock<IFulfillmentClient> _fulfillmentClientMock = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<IAuctionClient> _auctionClientMock = new();
     private readonly Mock<ICatalogClient> _catalogClientMock = new();
     private readonly Mock<IUserClient> _userClientMock = new();
@@ -655,7 +655,7 @@ public class AuctionOrderServiceTests
                 DistrictName: "District 1",
                 WardName: "Ben Nghe",
                 GhnDistrictId: 1442,
-                GhnWardCode: "20101"
+                GhnWardCode: "20101", ProvinceId: 202
             ),
             ContactPhone: "0901234567"
         );
@@ -727,7 +727,7 @@ public class AuctionOrderServiceTests
                 DistrictName: "Hai Chau",
                 WardName: "Thach Thang",
                 GhnDistrictId: 1500,
-                GhnWardCode: "30101"
+                GhnWardCode: "30101", ProvinceId: 202
             ),
             ContactPhone: "0912345678"
         );
@@ -782,7 +782,7 @@ public class AuctionOrderServiceTests
                 DistrictName: "District 1",
                 WardName: "Ben Nghe",
                 GhnDistrictId: 1442,
-                GhnWardCode: "20101"
+                GhnWardCode: "20101", ProvinceId: 202
             ),
             ContactPhone: "0901234567"
         );
@@ -830,7 +830,7 @@ public class AuctionOrderServiceTests
                 DistrictName: "District 1",
                 WardName: "Ben Nghe",
                 GhnDistrictId: 1442,
-                GhnWardCode: "20101"
+                GhnWardCode: "20101", ProvinceId: 202
             ),
             ContactPhone: "0901234567"
         );

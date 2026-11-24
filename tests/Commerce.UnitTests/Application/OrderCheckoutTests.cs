@@ -26,7 +26,7 @@ public class OrderCheckoutTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IWalletClient> _mockWalletClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IUserClient> _mockUserClient = new();
     private readonly Mock<ILogger<OrderService>> _mockLogger = new();
@@ -154,7 +154,7 @@ public class OrderCheckoutTests : IDisposable
         // Act 1: Quote Checkout
         var quoteRequest = new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cartItemId },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567",
             PaymentMethod: PaymentMethod.Wallet
         );
@@ -225,7 +225,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cartItemId },
-            ShippingAddress: new ShippingAddressInput("Tran Van B", "0909999999", "456 Nguyen Hue", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Tran Van B", "0909999999", "456 Nguyen Hue", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0909999999",
             PaymentMethod: PaymentMethod.Cod
         ), CancellationToken.None);
@@ -286,7 +286,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -329,7 +329,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -377,7 +377,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -421,7 +421,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -454,7 +454,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -500,7 +500,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -537,7 +537,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteRequest = new CheckoutQuoteRequest(
             new List<Guid> { cart.Items.First().Id },
-            new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Phuong Ben Nghe", "Quan 1", "TP. Ho Chi Minh", 1442, "20101"),
+            new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Phuong Ben Nghe", "Quan 1", "TP. Ho Chi Minh", 1442, "20101", ProvinceId: 202),
             "0901234567",
             PaymentMethod.Wallet);
 
@@ -612,7 +612,7 @@ public class OrderCheckoutTests : IDisposable
 
         var request = new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         );
 
@@ -659,7 +659,7 @@ public class OrderCheckoutTests : IDisposable
 
         var request = new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567",
             VoucherCodes: new List<string> { "SHOP30K", "SYS10K" }
         );
@@ -705,7 +705,7 @@ public class OrderCheckoutTests : IDisposable
 
     private static CheckoutQuoteRequest PlatformFeeQuoteRequest(Guid cartItemId) => new(
         CartItemIds: new List<Guid> { cartItemId },
-        ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+        ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
         ContactPhone: "0901234567",
         PaymentMethod: PaymentMethod.Wallet);
 

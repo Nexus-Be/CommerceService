@@ -23,7 +23,7 @@ public class OrderAddressResolutionTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IWalletClient> _mockWalletClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IAuctionClient> _mockAuctionClient = new();
     private readonly Mock<IUserClient> _mockUserClient = new();
@@ -117,7 +117,7 @@ public class OrderAddressResolutionTests : IDisposable
             District: "Quan 1",
             Province: "TP.HCM",
             GhnDistrictId: 1442,
-            GhnWardCode: "20101",
+            GhnWardCode: "20101", ProvinceId: 202,
             FullAddressText: "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
             IsDefault: true
         );
@@ -152,7 +152,7 @@ public class OrderAddressResolutionTests : IDisposable
             District: "District 5",
             Province: "TP.HCM",
             GhnDistrictId: 1445,
-            GhnWardCode: "20501",
+            GhnWardCode: "20501", ProvinceId: 202,
             FullAddressText: "456 Tran Hung Dao, Ward 1, District 5, TP.HCM",
             IsDefault: true
         );
@@ -293,7 +293,7 @@ public class OrderAddressResolutionTests : IDisposable
             District: "Quan 5",
             Province: "TP.HCM",
             GhnDistrictId: 1446,
-            GhnWardCode: "20601",
+            GhnWardCode: "20601", ProvinceId: 202,
             FullAddressText: "789 Nguyen Trai, Phuong 3, Quan 5, TP.HCM",
             IsDefault: false
         );
@@ -310,5 +310,83 @@ public class OrderAddressResolutionTests : IDisposable
         response.ShippingFeeAmount.Should().Be(25000m);
         response.TotalAmount.Should().Be(925000m);
         _mockUserClient.Verify(u => u.GetBuyerAddressAsync(buyerId, addressId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ---- the GHN chain is checked on every way of giving an address
+    private static ShippingAddressInput Typed(int? provinceId) =>
+        new("Buyer", "0901234567", "12 Nguyen Hue", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: provinceId);
+
+    private async Task<CommerceDomainException> QuoteRefusedAsync(ShippingAddressInput address)
+    {
+        var (buyerId, cartItemId) = await SeedCartAsync();
+        var act = () => _orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(CartItemIds: new List<Guid> { cartItemId }, ShippingAddress: address));
+        var ex = await Assert.ThrowsAsync<CommerceDomainException>(act);
+        _mockFulfillmentClient.Verify(f => f.CalculateShopShippingFeeAsync(It.IsAny<ShopShippingQuoteRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        return ex;
+    }
+
+    [Fact]
+    public async Task A_typed_address_without_a_province_id_is_refused_before_any_fee_is_asked()
+    {
+        var ex = await QuoteRefusedAsync(Typed(provinceId: null));
+
+        Assert.Equal("INVALID_SHIPPING_ADDRESS", ex.ErrorCode);
+        Assert.Equal(400, ex.StatusCode);
+        _mockFulfillmentClient.Verify(f => f.ValidateLocationAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_typed_address_the_GHN_lists_reject_is_refused_before_any_fee_is_asked()
+    {
+        _mockFulfillmentClient
+            .Setup(f => f.ValidateLocationAsync(202, 1442, "20101", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(LocationCheckResult.Rejected());
+
+        var ex = await QuoteRefusedAsync(Typed(provinceId: 202));
+
+        Assert.Equal("INVALID_SHIPPING_ADDRESS", ex.ErrorCode);
+        Assert.Equal(400, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task With_no_trusted_GHN_source_the_quote_is_503_and_no_fee_is_asked()
+    {
+        _mockFulfillmentClient
+            .Setup(f => f.ValidateLocationAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(LocationCheckResult.SourceUnavailable());
+
+        var ex = await QuoteRefusedAsync(Typed(provinceId: 202));
+
+        Assert.Equal("LOCATION_SOURCE_UNAVAILABLE", ex.ErrorCode);
+        Assert.Equal(503, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task An_address_book_address_carries_its_province_id_into_the_check()
+    {
+        var (buyerId, cartItemId) = await SeedCartAsync();
+        var addressId = Guid.NewGuid();
+        _mockUserClient
+            .Setup(u => u.GetBuyerAddressAsync(buyerId, addressId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BuyerAddressDto(addressId, "A", "0901234567", "1 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", "x", true, ProvinceId: 202));
+
+        await _orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(CartItemIds: new List<Guid> { cartItemId }, AddressId: addressId));
+
+        _mockFulfillmentClient.Verify(f => f.ValidateLocationAsync(202, 1442, "20101", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task An_address_book_address_without_a_province_id_is_refused()
+    {
+        var (buyerId, cartItemId) = await SeedCartAsync();
+        var addressId = Guid.NewGuid();
+        _mockUserClient
+            .Setup(u => u.GetBuyerAddressAsync(buyerId, addressId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BuyerAddressDto(addressId, "A", "0901234567", "1 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", "x", true));
+
+        var ex = await Assert.ThrowsAsync<CommerceDomainException>(() =>
+            _orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(CartItemIds: new List<Guid> { cartItemId }, AddressId: addressId)));
+
+        Assert.Equal("INVALID_SHIPPING_ADDRESS", ex.ErrorCode);
     }
 }

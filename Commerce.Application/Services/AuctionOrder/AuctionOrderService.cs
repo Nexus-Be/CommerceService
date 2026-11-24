@@ -278,7 +278,8 @@ public class AuctionOrderService : IAuctionOrderService
                 DistrictName: address.District,
                 WardName: address.Ward,
                 GhnDistrictId: address.GhnDistrictId,
-                GhnWardCode: address.GhnWardCode
+                GhnWardCode: address.GhnWardCode,
+                ProvinceId: address.ProvinceId
             );
         }
         else if (request.ShippingAddress != null)
@@ -326,9 +327,13 @@ public class AuctionOrderService : IAuctionOrderService
                 DistrictName: defaultAddr.District,
                 WardName: defaultAddr.Ward,
                 GhnDistrictId: defaultAddr.GhnDistrictId,
-                GhnWardCode: defaultAddr.GhnWardCode
+                GhnWardCode: defaultAddr.GhnWardCode,
+                ProvinceId: defaultAddr.ProvinceId
             );
         }
+
+        // The chosen address is used only when the GHN lists confirm its province, district and ward.
+        await Common.ShippingChain.EnsureConfirmedAsync(_fulfillmentClient, resolvedShippingAddress.ProvinceId, resolvedShippingAddress.GhnDistrictId, resolvedShippingAddress.GhnWardCode, cancellationToken);
 
         var quoteRequest = new ShopShippingQuoteRequest(
             SellerId: auctionOrder.SellerId,
@@ -1284,6 +1289,18 @@ public class AuctionOrderService : IAuctionOrderService
         string? contactPhone,
         CancellationToken cancellationToken)
     {
+        var resolved = await ResolveAuctionShippingAddressUncheckedAsync(buyerId, addressId, rawAddress, contactPhone, cancellationToken);
+        await Common.ShippingChain.EnsureConfirmedAsync(_fulfillmentClient, resolved.Address.ProvinceId, resolved.Address.GhnDistrictId, resolved.Address.GhnWardCode, cancellationToken);
+        return resolved;
+    }
+
+    private async Task<(ShippingAddressDto Address, string ContactPhone)> ResolveAuctionShippingAddressUncheckedAsync(
+        Guid buyerId,
+        Guid? addressId,
+        ShippingAddressInput? rawAddress,
+        string? contactPhone,
+        CancellationToken cancellationToken)
+    {
         if (addressId.HasValue && addressId.Value != Guid.Empty)
         {
             var address = await _userClient.GetBuyerAddressAsync(buyerId, addressId.Value, cancellationToken);
@@ -1306,7 +1323,8 @@ public class AuctionOrderService : IAuctionOrderService
                 DistrictName: address.District,
                 WardName: address.Ward,
                 GhnDistrictId: address.GhnDistrictId,
-                GhnWardCode: address.GhnWardCode
+                GhnWardCode: address.GhnWardCode,
+                ProvinceId: address.ProvinceId
             );
             return (resolved, phone);
         }
@@ -1340,7 +1358,8 @@ public class AuctionOrderService : IAuctionOrderService
                 DistrictName: rawAddress.District,
                 WardName: rawAddress.Ward,
                 GhnDistrictId: rawAddress.GhnDistrictId.Value,
-                GhnWardCode: rawAddress.GhnWardCode
+                GhnWardCode: rawAddress.GhnWardCode,
+                ProvinceId: rawAddress.ProvinceId
             );
             return (resolved, phone);
         }
@@ -1365,7 +1384,8 @@ public class AuctionOrderService : IAuctionOrderService
             DistrictName: defaultAddr.District,
             WardName: defaultAddr.Ward,
             GhnDistrictId: defaultAddr.GhnDistrictId,
-            GhnWardCode: defaultAddr.GhnWardCode
+            GhnWardCode: defaultAddr.GhnWardCode,
+            ProvinceId: defaultAddr.ProvinceId
         );
         return (defaultResolved, defaultPhone);
     }

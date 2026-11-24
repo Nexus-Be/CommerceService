@@ -24,7 +24,7 @@ public class OrderAddressChangeTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IWalletClient> _mockWalletClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IAuctionClient> _mockAuctionClient = new();
     private readonly Mock<IUserClient> _mockUserClient = new();
@@ -123,7 +123,7 @@ public class OrderAddressChangeTests : IDisposable
             District: "District 1",
             Province: "HCM",
             GhnDistrictId: 1442,
-            GhnWardCode: "20101"
+            GhnWardCode: "20101", ProvinceId: 202
         );
 
         _mockFulfillmentClient
@@ -209,7 +209,7 @@ public class OrderAddressChangeTests : IDisposable
             District: "District 1",
             Province: "HCM",
             GhnDistrictId: 1442,
-            GhnWardCode: "20101"
+            GhnWardCode: "20101", ProvinceId: 202
         );
 
         _mockFulfillmentClient
@@ -289,7 +289,7 @@ public class OrderAddressChangeTests : IDisposable
             District: "District 1",
             Province: "HCM",
             GhnDistrictId: 1442,
-            GhnWardCode: "20101"
+            GhnWardCode: "20101", ProvinceId: 202
         );
 
         _mockFulfillmentClient
@@ -345,7 +345,7 @@ public class OrderAddressChangeTests : IDisposable
             District: "District 1",
             Province: "HCM",
             GhnDistrictId: 1442,
-            GhnWardCode: "20101"
+            GhnWardCode: "20101", ProvinceId: 202
         ));
 
         // Act
@@ -433,7 +433,7 @@ public class OrderAddressChangeTests : IDisposable
             District: "District 2",
             Province: "HCM",
             GhnDistrictId: 1443,
-            GhnWardCode: "20102"
+            GhnWardCode: "20102", ProvinceId: 202
         );
 
         _mockFulfillmentClient
@@ -494,7 +494,7 @@ public class OrderAddressChangeTests : IDisposable
             District: "District 2",
             Province: "HCM",
             GhnDistrictId: 1443,
-            GhnWardCode: "20102"
+            GhnWardCode: "20102", ProvinceId: 202
         );
 
         _mockFulfillmentClient

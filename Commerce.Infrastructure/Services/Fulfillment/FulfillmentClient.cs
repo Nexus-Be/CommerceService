@@ -383,7 +383,34 @@ public sealed class FulfillmentClient : IFulfillmentClient
     private static bool IsWarehouseMissing(string? body) => string.Equals(ReadErrorCode(body), "WAREHOUSE_NOT_FOUND", StringComparison.Ordinal);
 
     /// <summary>The seller has a warehouse but it has no origin district, so no fee can be quoted and no pickup arranged.</summary>
-    private static bool IsWarehouseIncomplete(string? body) => string.Equals(ReadErrorCode(body), "INVALID_FROM_DISTRICT", StringComparison.Ordinal);
+    private static bool IsWarehouseIncomplete(string? body) =>
+        ReadErrorCode(body) is "INVALID_FROM_DISTRICT" or "WAREHOUSE_ADDRESS_INCOMPLETE";
+
+    public async Task<LocationCheckResult> ValidateLocationAsync(int provinceId, int districtId, string wardCode, CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await _httpClient.PostAsJsonAsync("api/v1/internal/shipping/locations/validate", new { provinceId, districtId, wardCode }, JsonOptions, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                return LocationCheckResult.Confirmed();
+            }
+
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (response.StatusCode == HttpStatusCode.BadRequest && string.Equals(ReadErrorCode(body), "VAL_INVALID_LOCATION", StringComparison.Ordinal))
+            {
+                return LocationCheckResult.Rejected();
+            }
+
+            _logger.LogWarning("[REST Fulfillment Client] Location check answered {StatusCode}; the address is not used until the GHN lists can be read.", (int)response.StatusCode);
+            return LocationCheckResult.SourceUnavailable();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "[REST Fulfillment Client] Location check could not be completed.");
+            return LocationCheckResult.SourceUnavailable();
+        }
+    }
 
     public async Task<decimal> CalculateShopShippingFeeAsync(ShopShippingQuoteRequest request, CancellationToken ct = default)
     {

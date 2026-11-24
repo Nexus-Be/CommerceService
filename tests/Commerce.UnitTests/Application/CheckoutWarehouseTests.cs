@@ -27,7 +27,7 @@ using Xunit;
 public sealed class CheckoutWarehouseTests : IDisposable
 {
     private readonly TestCommerceDbContext _db = TestDbContextFactory.CreateInMemoryDbContext();
-    private readonly Mock<IFulfillmentClient> _fulfillment = new();
+    private readonly Mock<IFulfillmentClient> _fulfillment = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _catalog = new();
     private readonly Guid _buyer = Guid.NewGuid();
     private readonly Guid _seller = Guid.NewGuid();
@@ -61,7 +61,7 @@ public sealed class CheckoutWarehouseTests : IDisposable
         var cart = await cartService.GetOrCreateActiveCartAsync(_buyer, CancellationToken.None);
         return new CheckoutQuoteRequest(
             cart.Items.Select(i => i.Id).ToList(),
-            new ShippingAddressInput("Buyer", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            new ShippingAddressInput("Buyer", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             "0901234567",
             PaymentMethod.Wallet);
     }

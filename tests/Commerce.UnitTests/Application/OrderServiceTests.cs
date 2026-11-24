@@ -24,7 +24,7 @@ public class OrderServiceTests
 {
     private readonly Mock<ICommerceDbContext> _mockDbContext = new();
     private readonly Mock<IWalletClient> _mockWalletClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IDistributedCache> _mockCache = new();
     private readonly Mock<ILogger<OrderService>> _mockLogger = new();
@@ -157,7 +157,7 @@ public class OrderServiceTests
             BuyerId = buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(
@@ -278,7 +278,7 @@ public class OrderServiceTests
             BuyerId = buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(
@@ -370,7 +370,7 @@ public class OrderServiceTests
             BuyerId = buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(
@@ -448,7 +448,7 @@ public class OrderServiceTests
             BuyerId = buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Receiver", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+                new ShippingAddressInput("Receiver", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(
@@ -648,7 +648,7 @@ public class OrderServiceTests
         dbContext.Orders.Add(order);
         await dbContext.SaveChangesAsync();
 
-        var mockFulfillment = new Mock<IFulfillmentClient>();
+        var mockFulfillment = FulfillmentMocks.WithConfirmedLocations();
         mockFulfillment
             .Setup(f => f.ReleaseSubOrderStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
@@ -1532,7 +1532,7 @@ public class OrderServiceTests
 
         var request = new CheckoutQuoteRequest(
             new List<Guid> { cart.Items.First().Id },
-            new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+            new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
             "0901234567"
         );
 
@@ -1562,7 +1562,7 @@ public class OrderServiceTests
             BuyerId = buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(
@@ -1657,7 +1657,7 @@ public class OrderServiceTests
             BuyerId = buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(

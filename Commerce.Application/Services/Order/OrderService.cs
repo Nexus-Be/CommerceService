@@ -215,7 +215,23 @@ public sealed class OrderService : IOrderService
         return 0.0m;
     }
 
+    /// <summary>
+    /// Resolves the address of a quote, a re-quote or an address change, then requires its province, district and ward to be confirmed by the
+    /// GHN lists. Every way of giving an address (typed in, address book, default address) ends here, so none of them skips the check.
+    /// </summary>
     private async Task<(ShippingAddressInput Address, string ContactPhone)> ResolveShippingAddressAsync(
+        Guid buyerId,
+        Guid? addressId,
+        ShippingAddressInput? rawAddress,
+        string? contactPhone,
+        CancellationToken ct)
+    {
+        var resolved = await ResolveShippingAddressUncheckedAsync(buyerId, addressId, rawAddress, contactPhone, ct);
+        await Common.ShippingChain.EnsureConfirmedAsync(_fulfillmentClient, resolved.Address.ProvinceId, resolved.Address.GhnDistrictId, resolved.Address.GhnWardCode, ct);
+        return resolved;
+    }
+
+    private async Task<(ShippingAddressInput Address, string ContactPhone)> ResolveShippingAddressUncheckedAsync(
         Guid buyerId,
         Guid? addressId,
         ShippingAddressInput? rawAddress,
@@ -244,7 +260,8 @@ public sealed class OrderService : IOrderService
                 District: address.District,
                 Province: address.Province,
                 GhnDistrictId: address.GhnDistrictId,
-                GhnWardCode: address.GhnWardCode
+                GhnWardCode: address.GhnWardCode,
+                ProvinceId: address.ProvinceId
             );
             return (resolved, phone);
         }
@@ -293,7 +310,8 @@ public sealed class OrderService : IOrderService
             District: defaultAddr.District,
             Province: defaultAddr.Province,
             GhnDistrictId: defaultAddr.GhnDistrictId,
-            GhnWardCode: defaultAddr.GhnWardCode
+            GhnWardCode: defaultAddr.GhnWardCode,
+            ProvinceId: defaultAddr.ProvinceId
         );
         return (defaultResolved, defaultPhone);
     }
@@ -962,7 +980,8 @@ public sealed class OrderService : IOrderService
                 cachedQuote.Request.ShippingAddress?.Province ?? string.Empty,
                 cachedQuote.Request.ShippingAddress?.GhnDistrictId ?? 0,
                 cachedQuote.Request.ShippingAddress?.GhnWardCode ?? "",
-                effectiveFullAddress
+                effectiveFullAddress,
+                provinceId: cachedQuote.Request.ShippingAddress?.ProvinceId
             );
 
             decimal shopItemsAmount = 0m;
@@ -3780,6 +3799,7 @@ public sealed class OrderService : IOrderService
             Ward = resolvedAddress.Ward,
             District = resolvedAddress.District,
             Province = resolvedAddress.Province,
+            ProvinceId = resolvedAddress.ProvinceId,
             GhnDistrictId = resolvedAddress.GhnDistrictId ?? 0,
             GhnWardCode = resolvedAddress.GhnWardCode,
             FullAddressText = fullAddressText
@@ -3902,6 +3922,7 @@ public sealed class OrderService : IOrderService
                 Ward = resolvedAddress.Ward,
                 District = resolvedAddress.District,
                 Province = resolvedAddress.Province,
+                ProvinceId = resolvedAddress.ProvinceId,
                 GhnDistrictId = resolvedAddress.GhnDistrictId ?? 0,
                 GhnWardCode = resolvedAddress.GhnWardCode,
                 FullAddressText = fullAddressText

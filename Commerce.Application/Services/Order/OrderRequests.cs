@@ -12,7 +12,8 @@ public sealed record ShippingAddressInput(
     string? District = null,
     string Province = "",
     int? GhnDistrictId = null,
-    string? GhnWardCode = null)
+    string? GhnWardCode = null,
+    int? ProvinceId = null)
 {
     public string FullAddressText => string.Join(", ", new[] { Street, Ward, District, Province }.Where(s => !string.IsNullOrWhiteSpace(s)));
 }

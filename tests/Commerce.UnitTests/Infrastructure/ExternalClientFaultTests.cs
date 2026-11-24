@@ -26,7 +26,7 @@ public class ExternalClientFaultTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<IWalletClient> _mockWalletClient = new();
     private readonly Mock<ILogger<OrderService>> _mockOrderLogger = new();
     private readonly IDistributedCache _cache;
@@ -154,7 +154,7 @@ public class ExternalClientFaultTests : IDisposable
 
         var quoteRequest = new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { item.Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         );
 
@@ -221,7 +221,7 @@ public class ExternalClientFaultTests : IDisposable
 
         var quoteRequest = new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { item.Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         );
 

@@ -272,6 +272,7 @@ Commerce Service áp dụng **Quy trình Thanh toán 2 Bước (Two-Phase Checko
       "ward": "Ben Nghe Ward",
       "district": "District 1",
       "province": "Ho Chi Minh City",
+      "provinceId": 202,
       "ghnDistrictId": 1442,
       "ghnWardCode": "20101"
     },
@@ -1105,6 +1106,7 @@ export interface ShippingAddressInput {
   ward: string;
   district?: string | null;
   province?: string;
+  provinceId?: number | null;   // required: the GHN province id
   ghnDistrictId?: number | null;
   ghnWardCode?: string | null;
 }
@@ -1197,6 +1199,7 @@ export interface ShippingAddressSnapshot {
   ward: string;
   district: string;
   province: string;
+  provinceId?: number | null;   // null for an order placed before the province id was kept
   ghnDistrictId: number;
   ghnWardCode: string;
   fullAddressText: string;
@@ -1735,3 +1738,10 @@ Với bước đặt đơn, câu trả lời bị mất (mạng, 5xx không có 
 ## Bổ sung: mã vận đơn trong chi tiết đơn con (B1)
 
 `GET /api/v1/sub-orders/{subOrderId}` và các đơn con trong `GET /api/v1/orders/{id}` có thêm `carrierCode`, `trackingCode` và `shipmentPendingCreation`. Đơn đã chấp nhận mà `trackingCode` rỗng nghĩa là vận đơn chưa tạo được: seller dùng nút tạo lại vận đơn.
+
+## Dia chi giao hang duoc xac minh voi GHN (24/11/2026)
+Moi dia chi dung de bao gia, dat don, doi dia chi nhan va don dau gia (nhap tay, tu so dia chi, dia chi mac dinh) phai co du `provinceId`, `ghnDistrictId`, `ghnWardCode` va duoc danh sach GHN xac nhan la thuoc cung mot chuoi (Commerce hoi Fulfillment `internal/shipping/locations/validate`). Ket qua tinh phi cua GHN khong duoc coi la bang chung: GHN tinh theo phuong va bo qua quan khong khop.
+- Thieu ma tinh, quan hoac phuong, hoac bo ma khong khop: `400 INVALID_SHIPPING_ADDRESS`.
+- Khong co nguon GHN dang tin cay: `503 LOCATION_SOURCE_UNAVAILABLE`, khong bao gia va khong doi gi.
+- Viec xac minh lam luc tao bao gia; luc dat don khong goi GHN lai (bao gia da chua dia chi da xac minh), nen mot loi 503 khong the lam mat bao gia khi chua co don.
+- Dia chi tu so dia chi cua UserService duoc doc theo ten truong thuc te (`addressId`, `addressLine`, `wardName`, `districtName`, `provinceName`, `provinceId`, `districtId`, `wardCode`); truoc day chi doc ten tien to `ghn` nen mot dia chi lay tu so dia chi bi tu choi.
