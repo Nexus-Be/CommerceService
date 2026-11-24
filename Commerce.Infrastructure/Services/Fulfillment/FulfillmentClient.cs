@@ -436,6 +436,26 @@ public sealed class FulfillmentClient : IFulfillmentClient
                 throw new CommerceDomainException("SHIPPING_QUOTE_FAILED", "Invalid shipping destination address or items payload for carrier calculation.", 400);
             }
 
+            // Fulfillment is up but the shipping carrier cannot be used: say so with the carrier's own code (not configured, unavailable,
+            // timed out) instead of the generic "Fulfillment is unreachable", and never blame the buyer's address for it.
+            if (response.StatusCode is HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout)
+            {
+                var carrierBody = await response.Content.ReadAsStringAsync(ct);
+                var carrierCode = ReadErrorCode(carrierBody);
+                var carrierMessage = carrierCode switch
+                {
+                    "SHIPPING_CARRIER_NOT_CONFIGURED" => "The shipping carrier is not configured, so the shipping fee cannot be calculated.",
+                    "SHIPPING_CARRIER_UNAVAILABLE" => "The shipping carrier is temporarily unavailable, so the shipping fee cannot be calculated.",
+                    "SHIPPING_CARRIER_TIMEOUT" => "The shipping carrier did not answer in time, so the shipping fee cannot be calculated.",
+                    _ => null
+                };
+                if (carrierMessage is not null)
+                {
+                    _logger.LogWarning("[REST Fulfillment Client] Shipping quote for Seller '{SellerId}' failed because of the carrier: {Code}.", request.SellerId, carrierCode);
+                    throw new CommerceDomainException(carrierCode!, carrierMessage, 503);
+                }
+            }
+
             _logger.LogWarning("[REST Fulfillment Client] Shipping quote returned status {StatusCode} for Seller '{SellerId}'.", response.StatusCode, request.SellerId);
             throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Fulfillment service is temporarily unreachable for shipping fee calculation.", 503);
         }

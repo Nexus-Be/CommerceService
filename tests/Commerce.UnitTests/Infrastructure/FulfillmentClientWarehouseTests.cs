@@ -32,6 +32,34 @@ public class FulfillmentClientWarehouseTests
         return new FulfillmentClient(http, NullLogger<FulfillmentClient>.Instance, new ConfigurationBuilder().Build());
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "SHIPPING_CARRIER_NOT_CONFIGURED")]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "SHIPPING_CARRIER_UNAVAILABLE")]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "SHIPPING_CARRIER_TIMEOUT")]
+    [InlineData(HttpStatusCode.GatewayTimeout, "SHIPPING_CARRIER_TIMEOUT")]
+    public async Task A_carrier_failure_keeps_its_own_code_and_is_not_reported_as_an_unreachable_fulfillment(HttpStatusCode status, string code)
+    {
+        var client = CreateClient(status, "{\"errorCode\":\"" + code + "\",\"message\":\"carrier\"}");
+
+        var act = () => client.CalculateShopShippingFeeAsync(Quote());
+
+        var thrown = (await act.Should().ThrowAsync<CommerceDomainException>()).Which;
+        thrown.ErrorCode.Should().Be(code);
+        thrown.StatusCode.Should().Be(503);
+    }
+
+    [Fact]
+    public async Task A_bad_address_still_reports_the_quote_failure_and_an_unknown_503_stays_generic()
+    {
+        var badAddress = CreateClient(HttpStatusCode.BadRequest, "{\"errorCode\":\"SHIPPING_QUOTE_FAILED\"}");
+        (await ((Func<Task>)(() => badAddress.CalculateShopShippingFeeAsync(Quote()))).Should().ThrowAsync<CommerceDomainException>())
+            .Which.ErrorCode.Should().Be("SHIPPING_QUOTE_FAILED");
+
+        var unknown = CreateClient(HttpStatusCode.ServiceUnavailable, "{\"errorCode\":\"SOMETHING_ELSE\"}");
+        (await ((Func<Task>)(() => unknown.CalculateShopShippingFeeAsync(Quote()))).Should().ThrowAsync<CommerceDomainException>())
+            .Which.ErrorCode.Should().Be("FULFILLMENT_SERVICE_UNAVAILABLE");
+    }
+
     private const string MissingWarehouse = "{\"title\":\"Not found\",\"status\":404,\"errorCode\":\"WAREHOUSE_NOT_FOUND\"}";
 
     private static ShopShippingQuoteRequest Quote() =>
