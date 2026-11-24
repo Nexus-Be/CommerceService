@@ -90,7 +90,7 @@ public static class DependencyInjection
         services.AddHttpClient<IFulfillmentClient, FulfillmentClient>(client =>
         {
             client.BaseAddress = new Uri(fulfillmentBaseUrl.TrimEnd('/') + "/");
-            client.Timeout = TimeSpan.FromSeconds(10);
+            client.Timeout = Services.Fulfillment.FulfillmentTimeout.Resolve(configuration);
 
             var internalServiceKey = ResolveInternalServiceKey(configuration);
             if (!string.IsNullOrWhiteSpace(internalServiceKey))
