@@ -547,12 +547,14 @@ public sealed class FulfillmentClient : IFulfillmentClient
         }
     }
 
+    // The service-to-service route (shipment found by sub-order id). The public /api/v1/shipments/{id}/cancel needs a signed-in owner and answered
+    // 403 to Commerce, so the carrier order was never cancelled.
     public async Task<bool> CancelShipmentAsync(Guid subOrderId, string reason = "SubOrderCancelled", CancellationToken ct = default)
     {
         try
         {
             var payload = new { reason };
-            var response = await _httpClient.PostAsJsonAsync($"api/v1/shipments/{subOrderId}/cancel", payload, JsonOptions, ct);
+            var response = await _httpClient.PostAsJsonAsync($"api/v1/internal/shipments/order/{subOrderId}/cancel", payload, JsonOptions, ct);
             if (response.IsSuccessStatusCode)
             {
                 _logger.LogInformation("[REST Fulfillment Client] Carrier shipment cancelled successfully for SubOrder '{SubOrderId}'.", subOrderId);
