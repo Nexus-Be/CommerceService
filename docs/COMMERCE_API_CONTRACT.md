@@ -1724,12 +1724,12 @@ export interface ReviewEligibilityDto {
 
 ## Bổ sung: kho của seller khi báo phí, đặt đơn và tạo vận đơn (SP-05)
 
-Mỗi shop giao từ kho riêng của mình. Khi kho thiếu, `POST /api/v1/checkouts/quote` và `POST /api/v1/checkouts` (đặt đơn) trả lỗi 422 chuyển tiếp từ Fulfillment, **không trừ tiền**:
+Mỗi shop giao từ kho riêng của mình. Khi kho thiếu, `POST /api/v1/checkouts/quote` (và báo giá lại) trả lỗi 422 chuyển tiếp từ Fulfillment, **không trừ tiền**:
 
 | Mã lỗi | HTTP | Ý nghĩa |
 |---|---|---|
 | `SELLER_WAREHOUSE_MISSING` | 422 | Seller của một sản phẩm trong giỏ chưa có kho đang hoạt động |
-| `SELLER_WAREHOUSE_INCOMPLETE` | 422 | Kho có nhưng thiếu quận hoặc phường lấy hàng |
+| `SELLER_WAREHOUSE_INCOMPLETE` | 422 | Kho có nhưng thiếu quận, phường hoặc mã tỉnh đã được xác nhận với GHN (kho cũ chưa có mã tỉnh phải được lưu lại) |
 
 `POST /api/v1/sub-orders/{subOrderId}/shipments/retry` (seller) cũng trả hai mã trên khi kho chưa dùng được, ngoài `SHIPMENT_ALREADY_EXISTS` (400), `INVALID_STATUS` (400) và `FULFILLMENT_SERVICE_UNAVAILABLE` (503).
 
