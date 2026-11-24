@@ -13,9 +13,16 @@ public enum LocationCheckOutcome
     SourceUnavailable,
 }
 
-public sealed record LocationCheckResult(LocationCheckOutcome Outcome, string? Message = null)
+public sealed record LocationCheckResult(
+    LocationCheckOutcome Outcome,
+    string? Message = null,
+    string? ProvinceName = null,
+    string? DistrictName = null,
+    string? WardName = null)
 {
-    public static LocationCheckResult Confirmed() => new(LocationCheckOutcome.Confirmed);
+    /// <summary>The chain is confirmed; the names are the ones the GHN lists gave for the three codes (null when the answer carried none).</summary>
+    public static LocationCheckResult Confirmed(string? provinceName = null, string? districtName = null, string? wardName = null) =>
+        new(LocationCheckOutcome.Confirmed, null, provinceName, districtName, wardName);
     public static LocationCheckResult Rejected(string? message = null) => new(LocationCheckOutcome.Rejected, message);
     public static LocationCheckResult SourceUnavailable() => new(LocationCheckOutcome.SourceUnavailable);
 }

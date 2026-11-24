@@ -58,6 +58,13 @@ public class AuctionOrderService : IAuctionOrderService
         AuctionSettlementRequest request,
         CancellationToken cancellationToken = default)
     {
+        // The delivery address is given by the buyer in the submit step, where the GHN lists confirm it. A settlement that carries one is refused
+        // before anything else (also a repeated request), so no unconfirmed address can reach an order through this route.
+        if (request.ShippingAddress != null)
+        {
+            throw new CommerceDomainException("SETTLEMENT_SHIPPING_ADDRESS_NOT_ACCEPTED", "A settlement does not carry a shipping address; the buyer submits it afterwards.", 400);
+        }
+
         var depositAmount = request.DepositAmount ?? 0m;
         var sourceText = request.Source?.Trim().ToUpperInvariant() ?? "WINNER";
         if (sourceText is not ("WINNER" or "SECOND_CHANCE" or "BUY_NOW"))
@@ -137,12 +144,6 @@ public class AuctionOrderService : IAuctionOrderService
         var orderId = Guid.NewGuid();
         var orderNo = $"AO-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString()[..6].ToUpperInvariant()}";
 
-        string? shippingAddressJson = null;
-        if (request.ShippingAddress != null)
-        {
-            shippingAddressJson = JsonSerializer.Serialize(request.ShippingAddress, JsonOptions);
-        }
-
         var auctionOrder = new AuctionOrder
         {
             PlatformFeePercent = DefaultPlatformFeeRate * 100m,
@@ -163,8 +164,8 @@ public class AuctionOrderService : IAuctionOrderService
             DepositId = request.DepositId,
             RemainingAmount = remainingAmount,
             OrderSource = source,
-            ShippingAddress = shippingAddressJson,
-            ContactPhone = request.ContactPhone ?? request.ShippingAddress?.PhoneNumber,
+            ShippingAddress = null,
+            ContactPhone = request.ContactPhone,
             ShippingFeeAmount = null,
             TotalAmount = null,
             SellerReceiveAmount = sellerReceiveAmount,
@@ -333,7 +334,13 @@ public class AuctionOrderService : IAuctionOrderService
         }
 
         // The chosen address is used only when the GHN lists confirm its province, district and ward.
-        await Common.ShippingChain.EnsureConfirmedAsync(_fulfillmentClient, resolvedShippingAddress.ProvinceId, resolvedShippingAddress.GhnDistrictId, resolvedShippingAddress.GhnWardCode, cancellationToken);
+        var confirmedAddress = await Common.ShippingChain.EnsureConfirmedAsync(_fulfillmentClient, resolvedShippingAddress.ProvinceId, resolvedShippingAddress.GhnDistrictId, resolvedShippingAddress.GhnWardCode, cancellationToken);
+        resolvedShippingAddress = resolvedShippingAddress with
+        {
+            ProvinceName = confirmedAddress.ProvinceName ?? resolvedShippingAddress.ProvinceName,
+            DistrictName = confirmedAddress.DistrictName ?? resolvedShippingAddress.DistrictName,
+            WardName = confirmedAddress.WardName ?? resolvedShippingAddress.WardName,
+        };
 
         var quoteRequest = new ShopShippingQuoteRequest(
             SellerId: auctionOrder.SellerId,
@@ -1064,7 +1071,7 @@ public class AuctionOrderService : IAuctionOrderService
         {
             try
             {
-                addressSnapshot = JsonSerializer.Deserialize<ShippingAddressSnapshot>(ao.ShippingAddress, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                addressSnapshot = AuctionAddressSnapshot.TryRead(ao.ShippingAddress)
                     ?? new ShippingAddressSnapshot
                     {
                         ReceiverName = "Auction Winner",
@@ -1290,8 +1297,14 @@ public class AuctionOrderService : IAuctionOrderService
         CancellationToken cancellationToken)
     {
         var resolved = await ResolveAuctionShippingAddressUncheckedAsync(buyerId, addressId, rawAddress, contactPhone, cancellationToken);
-        await Common.ShippingChain.EnsureConfirmedAsync(_fulfillmentClient, resolved.Address.ProvinceId, resolved.Address.GhnDistrictId, resolved.Address.GhnWardCode, cancellationToken);
-        return resolved;
+        var confirmed = await Common.ShippingChain.EnsureConfirmedAsync(_fulfillmentClient, resolved.Address.ProvinceId, resolved.Address.GhnDistrictId, resolved.Address.GhnWardCode, cancellationToken);
+        var named = resolved.Address with
+        {
+            ProvinceName = confirmed.ProvinceName ?? resolved.Address.ProvinceName,
+            DistrictName = confirmed.DistrictName ?? resolved.Address.DistrictName,
+            WardName = confirmed.WardName ?? resolved.Address.WardName,
+        };
+        return (named, resolved.ContactPhone);
     }
 
     private async Task<(ShippingAddressDto Address, string ContactPhone)> ResolveAuctionShippingAddressUncheckedAsync(

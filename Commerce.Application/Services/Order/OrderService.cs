@@ -227,8 +227,15 @@ public sealed class OrderService : IOrderService
         CancellationToken ct)
     {
         var resolved = await ResolveShippingAddressUncheckedAsync(buyerId, addressId, rawAddress, contactPhone, ct);
-        await Common.ShippingChain.EnsureConfirmedAsync(_fulfillmentClient, resolved.Address.ProvinceId, resolved.Address.GhnDistrictId, resolved.Address.GhnWardCode, ct);
-        return resolved;
+        var confirmed = await Common.ShippingChain.EnsureConfirmedAsync(_fulfillmentClient, resolved.Address.ProvinceId, resolved.Address.GhnDistrictId, resolved.Address.GhnWardCode, ct);
+        // What is cached with the quote, kept on the order and shown to the carrier carries the names of the confirmed codes, not the typed text.
+        var named = resolved.Address with
+        {
+            Province = confirmed.ProvinceName ?? resolved.Address.Province,
+            District = confirmed.DistrictName ?? resolved.Address.District,
+            Ward = confirmed.WardName ?? resolved.Address.Ward,
+        };
+        return (named, resolved.ContactPhone);
     }
 
     private async Task<(ShippingAddressInput Address, string ContactPhone)> ResolveShippingAddressUncheckedAsync(
@@ -2620,7 +2627,7 @@ public sealed class OrderService : IOrderService
             {
                 try
                 {
-                    addressSnapshot = JsonSerializer.Deserialize<ShippingAddressSnapshot>(ao.ShippingAddress, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    addressSnapshot = Commerce.Application.Services.AuctionOrder.AuctionAddressSnapshot.TryRead(ao.ShippingAddress)
                         ?? new ShippingAddressSnapshot(
                             receiverName: "Auction Winner",
                             contactPhone: ao.ContactPhone ?? "",

@@ -383,6 +383,8 @@ public sealed class FulfillmentClient : IFulfillmentClient
     private static bool IsWarehouseMissing(string? body) => string.Equals(ReadErrorCode(body), "WAREHOUSE_NOT_FOUND", StringComparison.Ordinal);
 
     /// <summary>The seller has a warehouse but it has no origin district, so no fee can be quoted and no pickup arranged.</summary>
+    private sealed record LocationAnswer(string? ProvinceName, string? DistrictName, string? WardName);
+
     private static bool IsWarehouseIncomplete(string? body) =>
         ReadErrorCode(body) is "INVALID_FROM_DISTRICT" or "WAREHOUSE_ADDRESS_INCOMPLETE";
 
@@ -393,7 +395,15 @@ public sealed class FulfillmentClient : IFulfillmentClient
             using var response = await _httpClient.PostAsJsonAsync("api/v1/internal/shipping/locations/validate", new { provinceId, districtId, wardCode }, JsonOptions, ct);
             if (response.IsSuccessStatusCode)
             {
-                return LocationCheckResult.Confirmed();
+                try
+                {
+                    var answer = await response.Content.ReadFromJsonAsync<LocationAnswer>(JsonOptions, ct);
+                    return LocationCheckResult.Confirmed(answer?.ProvinceName, answer?.DistrictName, answer?.WardName);
+                }
+                catch (JsonException)
+                {
+                    return LocationCheckResult.Confirmed();
+                }
             }
 
             var body = await response.Content.ReadAsStringAsync(ct);

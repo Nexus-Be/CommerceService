@@ -13,7 +13,7 @@ using Commerce.Domain.Exceptions;
 /// </summary>
 public static class ShippingChain
 {
-    public static async Task EnsureConfirmedAsync(
+    public static async Task<LocationCheckResult> EnsureConfirmedAsync(
         IFulfillmentClient fulfillment,
         int? provinceId,
         int? districtId,
@@ -29,7 +29,7 @@ public static class ShippingChain
         switch (check?.Outcome)
         {
             case LocationCheckOutcome.Confirmed:
-                return;
+                return check;
             case LocationCheckOutcome.Rejected:
                 throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", check.Message ?? "The province, district and ward of the shipping address do not match.", 400);
             default:
