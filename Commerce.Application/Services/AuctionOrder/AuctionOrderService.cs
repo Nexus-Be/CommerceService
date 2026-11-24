@@ -303,7 +303,7 @@ public class AuctionOrderService : IAuctionOrderService
                 throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
             }
 
-            resolvedShippingAddress = request.ShippingAddress with { PhoneNumber = resolvedPhone };
+            resolvedShippingAddress = request.ShippingAddress with { PhoneNumber = resolvedPhone, GhnWardCode = request.ShippingAddress.GhnWardCode.Trim() };
         }
         else
         {
@@ -1358,7 +1358,7 @@ public class AuctionOrderService : IAuctionOrderService
                 DistrictName: rawAddress.District,
                 WardName: rawAddress.Ward,
                 GhnDistrictId: rawAddress.GhnDistrictId.Value,
-                GhnWardCode: rawAddress.GhnWardCode,
+                GhnWardCode: rawAddress.GhnWardCode.Trim(),
                 ProvinceId: rawAddress.ProvinceId
             );
             return (resolved, phone);

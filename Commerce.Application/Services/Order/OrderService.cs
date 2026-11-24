@@ -287,7 +287,7 @@ public sealed class OrderService : IOrderService
                 throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
             }
 
-            return (rawAddress with { ContactPhone = phone }, phone);
+            return (rawAddress with { ContactPhone = phone, GhnWardCode = rawAddress.GhnWardCode!.Trim() }, phone);
         }
 
         var defaultAddr = await _userClient.GetBuyerDefaultAddressAsync(buyerId, ct);
