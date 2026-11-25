@@ -38,3 +38,17 @@ If the table is switched off after the decision the row stays `Pending` (visible
 * GHN's table of reason codes (which code is "the recipient refused"): take it from GHN sandbox/support, not from a guess.
 * The owner approves the codes and the penalty size, and decides how a wrongly penalised buyer gets it undone.
 * Auction orders that come back are not covered; this is for regular sub-orders.
+
+## Withdrawing a penalty (admin only)
+`POST /api/v1/admin/buyer-refusal-penalties/{subOrderId}/revoke` with `{ "reason": "..." }` (10 to 500 characters). Only an `admin` can call it; staff can record a complaint but cannot change a score.
+
+| Penalty before | What happens |
+|---|---|
+| `Pending` (User never confirmed it) | The sub-order moves to `RevokePending` and User is told. User records the withdrawal for the sub-order even though it took nothing, so a penalty that is still on its way is not applied. The final status is `Cancelled`. |
+| `Applied` | User gives back exactly the points the penalty log recorded (the score is limited to 0 to 100, so this can be less than the configured amount, even 0), once. The final status is `Revoked` (points given back) or `Cancelled` (nothing to give back). |
+| `RevokePending`, `Revoked`, `Cancelled` | Nothing changes and nothing is sent again; the first decision (admin, reason, time) stands. |
+| `None` | 409 `BUYER_REFUSAL_PENALTY_NOT_OWED`. |
+
+The decision (admin, reason, time) is stored in one conditional update before User is called. If User cannot be reached the answer is `202` with `RevokePending` and the worker repeats the call every pass, whether or not the penalty rules are still enabled. A penalty being sent by the worker at the moment of the withdrawal can never overwrite it: the worker only turns a sub-order from `Pending` to `Applied`, and User refuses a penalty for a sub-order it has already withdrawn.
+
+User side: `POST api/v1/internal/users/reputation-penalty-revoke`. It writes one `BuyerRefusalPenaltyRevoked` reputation log per sub-order (a unique index makes a second approval a no-op) and takes the same per-user lock as the penalty call. It does not use the positive-reward rules (the seven-day anti-farming rule), because it is not a reward.

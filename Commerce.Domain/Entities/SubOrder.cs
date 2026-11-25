@@ -63,6 +63,14 @@ public class SubOrder : BaseEntity<Guid>
     public BuyerRefusalPenaltyStatus BuyerRefusalPenaltyStatus { get; set; } = BuyerRefusalPenaltyStatus.None;
     public int BuyerRefusalPenaltyAttempts { get; set; }
     public DateTimeOffset? BuyerRefusalPenaltyAppliedAt { get; set; }
+    /// <summary>The admin who decided to withdraw the penalty.</summary>
+    public Guid? BuyerRefusalPenaltyRevokedBy { get; set; }
+    public string? BuyerRefusalPenaltyRevokeReason { get; set; }
+    public DateTimeOffset? BuyerRefusalPenaltyRevokeRequestedAt { get; set; }
+    /// <summary>When User confirmed the withdrawal.</summary>
+    public DateTimeOffset? BuyerRefusalPenaltyRevokedAt { get; set; }
+    /// <summary>The points User really gave back (0 when the penalty had taken none).</summary>
+    public int? BuyerRefusalPenaltyRestoredPoints { get; set; }
     public long RowVersion { get; set; }
 
     // Navigation

@@ -21,6 +21,11 @@ public interface IUserClient
         ReputationAdjustRequest request,
         CancellationToken ct = default);
 
+    /// <summary>Asks User to withdraw the refusal penalty of a sub-order. Null when User could not be reached or refused the call.</summary>
+    Task<PenaltyRevokeResponse?> RevokeBuyerRefusalPenaltyAsync(
+        PenaltyRevokeRequest request,
+        CancellationToken ct = default);
+
     Task<UserPenaltyResponse?> CreatePenaltyAsync(
         UserPenaltyRequest request,
         CancellationToken ct = default);

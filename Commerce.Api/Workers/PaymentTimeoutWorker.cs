@@ -71,6 +71,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
             try
             {
                 await refusalPenalties.RetryPendingAsync(50, ct);
+                await refusalPenalties.RetryRevocationsAsync(50, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

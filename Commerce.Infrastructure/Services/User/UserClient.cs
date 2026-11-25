@@ -136,6 +136,29 @@ public sealed class UserClient : IUserClient
         }
     }
 
+    public async Task<PenaltyRevokeResponse?> RevokeBuyerRefusalPenaltyAsync(
+        PenaltyRevokeRequest request,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await _httpClient.PostAsJsonAsync("api/v1/internal/users/reputation-penalty-revoke", request, JsonOptions, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                return await response.Content.ReadFromJsonAsync<PenaltyRevokeResponse>(JsonOptions, ct);
+            }
+
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogWarning("[REST UserClient] Withdrawing the refusal penalty of '{Reference}' failed: {Status} - {Error}", request.ReferenceId, response.StatusCode, errorBody);
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogError(ex, "[REST UserClient] Error connecting to UserService while withdrawing the refusal penalty of '{Reference}'.", request.ReferenceId);
+            return null;
+        }
+    }
+
     public async Task<UserPenaltyResponse?> CreatePenaltyAsync(
         UserPenaltyRequest request,
         CancellationToken ct = default)

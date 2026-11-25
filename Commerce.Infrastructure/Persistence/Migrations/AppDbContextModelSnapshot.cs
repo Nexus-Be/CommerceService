@@ -1228,6 +1228,22 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(0);
 
+                    b.Property<int?>("BuyerRefusalPenaltyRestoredPoints")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("BuyerRefusalPenaltyRevokeReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTimeOffset?>("BuyerRefusalPenaltyRevokeRequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("BuyerRefusalPenaltyRevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("BuyerRefusalPenaltyRevokedBy")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("DeliveryFailureCodes")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");

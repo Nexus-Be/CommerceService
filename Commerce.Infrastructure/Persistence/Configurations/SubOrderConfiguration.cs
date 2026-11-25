@@ -33,6 +33,7 @@ public class SubOrderConfiguration : IEntityTypeConfiguration<SubOrder>
         builder.Property(x => x.ReturnClassification).HasMaxLength(32);
         builder.Property(x => x.BuyerRefusalPenaltyStatus).HasDefaultValue(Commerce.Domain.Enums.BuyerRefusalPenaltyStatus.None);
         builder.Property(x => x.BuyerRefusalPenaltyAttempts).HasDefaultValue(0);
+        builder.Property(x => x.BuyerRefusalPenaltyRevokeReason).HasMaxLength(500);
         builder.Property(x => x.CarrierCode).HasMaxLength(50);
         builder.Property(x => x.TrackingCode).HasMaxLength(100);
         builder.HasIndex(x => x.TrackingCode);
