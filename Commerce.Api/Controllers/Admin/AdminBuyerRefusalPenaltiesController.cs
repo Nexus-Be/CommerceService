@@ -55,6 +55,13 @@ public class AdminBuyerRefusalPenaltiesController : ControllerBase
             return authError;
         }
 
+        // [RequireRole("admin")] lets staff through as well (the filter treats staff as an admin for every route), so the rule of this route
+        // is checked here: only an admin may change a score.
+        if (!this.IsAdmin())
+        {
+            return this.ErrorResult(StatusCodes.Status403Forbidden, "FORBIDDEN", "Only an admin can withdraw a buyer refusal penalty.");
+        }
+
         var result = await _penalties.RequestRevocationAsync(subOrderId, adminId, request.Reason, ct);
         return result.Confirmed ? Ok(result) : StatusCode(StatusCodes.Status202Accepted, result);
     }
