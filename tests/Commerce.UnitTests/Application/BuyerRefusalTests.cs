@@ -76,12 +76,13 @@ public sealed class BuyerRefusalTests : IDisposable
     // ------------------------------------------------------------------ classifier
 
     [Theory]
-    [InlineData("102,102,102", null, "BuyerRefused")]
+    [InlineData("102,102,102", "102", "BuyerRefused")]
+    [InlineData("102,102,102", null, "Unknown")]       // the return event carries no reason: the attempt history alone is not enough
     [InlineData("102", "102", "BuyerRefused")]
     [InlineData("", "102", "BuyerRefused")]            // the carrier sent the reason only with the return
-    [InlineData("102,-,102", null, "Unknown")]         // one attempt came without a reason
-    [InlineData("102,103,102", null, "Unknown")]       // a mixed history is not a clear refusal
-    [InlineData("103", null, "Unknown")]               // not in the table
+    [InlineData("102,-,102", "102", "Unknown")]       // one attempt came without a reason
+    [InlineData("102,103,102", "102", "Unknown")]     // a mixed history is not a clear refusal
+    [InlineData("103", "103", "Unknown")]               // not in the table
     [InlineData("102", "103", "Unknown")]              // the return says something else
     [InlineData("", null, "Unknown")]                  // no evidence at all
     [InlineData(null, null, "Unknown")]
@@ -156,7 +157,7 @@ public sealed class BuyerRefusalTests : IDisposable
         await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(30, "102"), default);
         await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(20, "102"), default);
 
-        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Returned(), default);
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Returned("102"), default);
 
         var saved = await Reload(sub.Id);
         saved.ReturnClassification.Should().Be("BuyerRefused");
@@ -175,7 +176,7 @@ public sealed class BuyerRefusalTests : IDisposable
         await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(30, first), default);
         await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(20, second), default);
 
-        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Returned(), default);
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Returned("102"), default);
 
         var saved = await Reload(sub.Id);
         saved.ReturnClassification.Should().Be("Unknown");
@@ -188,10 +189,25 @@ public sealed class BuyerRefusalTests : IDisposable
         var sub = await SeedShippedAsync();
         var service = Orders(Policy("102"));
         await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(30, "102"), default);
-        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Returned(), default);
-        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Returned(), default);
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Returned("102"), default);
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Returned("102"), default);
 
         (await Reload(sub.Id)).BuyerRefusalPenaltyStatus.Should().Be(BuyerRefusalPenaltyStatus.Pending);
+    }
+
+    [Fact]
+    public async Task A_return_without_a_reason_code_is_Unknown_even_when_every_attempt_has_an_approved_code()
+    {
+        var sub = await SeedShippedAsync();
+        var service = Orders(Policy("102"));
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(30, "102"), default);
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(20, "102"), default);
+
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Returned(), default);
+
+        var saved = await Reload(sub.Id);
+        saved.ReturnClassification.Should().Be("Unknown");
+        saved.BuyerRefusalPenaltyStatus.Should().Be(BuyerRefusalPenaltyStatus.None);
     }
 
     // ------------------------------------------------------------------ penalty delivery

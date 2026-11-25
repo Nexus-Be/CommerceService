@@ -14,8 +14,8 @@ When a sub-order is `Returned`, and only if the table is configured, Commerce cl
 
 | Evidence | Result |
 |---|---|
-| every failed attempt has a code in the table, and the return event's code (if any) is in the table | `BuyerRefused` |
-| any attempt without a code, any code outside the table, mixed reasons, or no evidence at all | `Unknown` (no penalty) |
+| the return event carries a code in the table, and every failed attempt has a code in the table | `BuyerRefused` |
+| a return event without a code, any attempt without a code, any code outside the table, mixed reasons, or no evidence at all | `Unknown` (no penalty) |
 
 `BuyerRefused` sets `BuyerRefusalPenaltyStatus = Pending` in the same save that records the return. Nothing is sent inside the request.
 A table approved later never penalises an older return.

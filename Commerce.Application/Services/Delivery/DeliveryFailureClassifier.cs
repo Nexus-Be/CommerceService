@@ -31,20 +31,16 @@ public static class DeliveryFailureClassifier
     }
 
     /// <summary>
-    /// BuyerRefused only when every recorded failed attempt carries an approved code, and the code on the return event (if the carrier sent one)
-    /// is approved too. A missing code on any attempt, a code outside the table, or no evidence at all gives Unknown.
+    /// BuyerRefused only when the return event itself carries an approved code and every recorded failed attempt carries an approved code too.
+    /// A return without a code, a missing code on any attempt, a code outside the table, or no evidence at all gives Unknown. The stored attempt
+    /// codes are the history of the whole sub-order and are not tied to the delivery that ended in this return, so they alone never justify a penalty.
     /// </summary>
     public static string Classify(string? storedAttemptCodes, string? returnedReasonCode, IDeliveryFailurePolicy policy)
     {
         var attempts = ParseAttempts(storedAttemptCodes);
         var returnedCode = string.IsNullOrWhiteSpace(returnedReasonCode) ? null : returnedReasonCode.Trim();
 
-        if (attempts.Count == 0 && returnedCode is null)
-        {
-            return Unknown;
-        }
-
-        if (returnedCode is not null && !policy.IsBuyerRefusedCode(returnedCode))
+        if (returnedCode is null || !policy.IsBuyerRefusedCode(returnedCode))
         {
             return Unknown;
         }
