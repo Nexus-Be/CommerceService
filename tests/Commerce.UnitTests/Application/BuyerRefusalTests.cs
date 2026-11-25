@@ -65,30 +65,66 @@ public sealed class BuyerRefusalTests : IDisposable
         return sub;
     }
 
-    private static UpdateDeliveryStatusRequest Failed(int minutesAgo, string? code, string? reason = null) =>
-        new("DeliveryAttemptFailed", DateTimeOffset.UtcNow.AddMinutes(-minutesAgo), "GHN", "T1", "failed", ReasonCode: code, Reason: reason);
+    private static UpdateDeliveryStatusRequest Failed(int minutesAgo, string? code, string? reason = null, string tracking = "T1", DateTimeOffset? eventTime = null) =>
+        new("DeliveryAttemptFailed", DateTimeOffset.UtcNow.AddMinutes(-minutesAgo), "GHN", tracking, "failed", ReasonCode: code, Reason: reason,
+            EventType: "switch_status", EventTime: eventTime ?? DateTimeOffset.UtcNow.AddMinutes(-minutesAgo));
 
-    private static UpdateDeliveryStatusRequest Returned(string? code = null) =>
-        new("Returned", DateTimeOffset.UtcNow, "GHN", "T1", "returned", ReasonCode: code);
+    private static UpdateDeliveryStatusRequest Returned(string? code = null, string? tracking = "T1", DateTimeOffset? eventTime = null) =>
+        new("Returned", DateTimeOffset.UtcNow, "GHN", tracking, "returned", ReasonCode: code, EventType: "switch_status", EventTime: eventTime ?? DateTimeOffset.UtcNow);
 
     private async Task<SubOrder> Reload(Guid id) => await _db.SubOrders.AsNoTracking().FirstAsync(item => item.Id == id);
 
     // ------------------------------------------------------------------ classifier
 
-    [Theory]
-    [InlineData("102,102,102", "102", "BuyerRefused")]
-    [InlineData("102,102,102", null, "Unknown")]       // the return event carries no reason: the attempt history alone is not enough
-    [InlineData("102", "102", "BuyerRefused")]
-    [InlineData("", "102", "BuyerRefused")]            // the carrier sent the reason only with the return
-    [InlineData("102,-,102", "102", "Unknown")]       // one attempt came without a reason
-    [InlineData("102,103,102", "102", "Unknown")]     // a mixed history is not a clear refusal
-    [InlineData("103", "103", "Unknown")]               // not in the table
-    [InlineData("102", "103", "Unknown")]              // the return says something else
-    [InlineData("", null, "Unknown")]                  // no evidence at all
-    [InlineData(null, null, "Unknown")]
-    public void Classification_needs_clear_and_consistent_evidence(string? attempts, string? returned, string expected)
+    private static readonly DateTimeOffset Now = new(2026, 11, 25, 12, 0, 0, TimeSpan.Zero);
+
+    private static DeliveryFailureAttempt Attempt(string? code, string? tracking = "T1", int minutesBeforeReturn = 30, bool noTime = false) => new()
     {
-        DeliveryFailureClassifier.Classify(attempts, returned, Policy("102")).Should().Be(expected);
+        Id = Guid.NewGuid(), SubOrderId = Guid.NewGuid(), TrackingCode = tracking, ReasonCode = code, EventType = "switch_status",
+        EventTime = noTime ? null : Now.AddMinutes(-minutesBeforeReturn)
+    };
+
+    [Theory]
+    [InlineData("102", null, "BuyerRefused")]                 // the return needs no code of its own: the carrier does not send one
+    [InlineData("102,102,102", null, "BuyerRefused")]
+    [InlineData("102", "102", "BuyerRefused")]                // a code on the return is fine if it is approved
+    [InlineData("102", "103", "Unknown")]                     // the return says something else
+    [InlineData("102,-", null, "Unknown")]                    // one attempt without a code
+    [InlineData("102,103", null, "Unknown")]                  // mixed reasons are not a clear refusal
+    [InlineData("103", null, "Unknown")]                      // not in the table
+    [InlineData("", null, "Unknown")]                         // no attempt of that parcel at all
+    public void Classification_needs_clear_and_consistent_evidence_of_the_same_parcel(string codes, string? returned, string expected)
+    {
+        var attempts = codes.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(code => Attempt(code == "-" ? null : code)).ToList();
+
+        DeliveryFailureClassifier.Classify(attempts, "T1", Now, returned, Policy("102")).Should().Be(expected);
+    }
+
+    [Fact]
+    public void Attempts_of_another_parcel_do_not_count_and_do_not_spoil_the_parcel_that_came_back()
+    {
+        var attempts = new[] { Attempt("102", tracking: "T1"), Attempt("999", tracking: "OLD-PARCEL"), Attempt(null, tracking: "OLD-PARCEL") };
+
+        DeliveryFailureClassifier.Classify(attempts, "T1", Now, null, Policy("102")).Should().Be("BuyerRefused");
+        DeliveryFailureClassifier.Classify(new[] { Attempt("102", tracking: "OLD-PARCEL") }, "T1", Now, null, Policy("102")).Should().Be("Unknown");   // refusals of another parcel prove nothing
+        DeliveryFailureClassifier.Classify(attempts, "t1", Now, null, Policy("102")).Should().Be("BuyerRefused");                                      // the tracking code is compared without case
+    }
+
+    [Theory]
+    [InlineData(null, true)]                                  // the return has no tracking code
+    [InlineData("  ", true)]
+    [InlineData("T1", false)]                                 // the return has no carrier time
+    public void A_return_without_a_tracking_code_or_a_carrier_time_is_Unknown(string? tracking, bool withTime)
+    {
+        DeliveryFailureClassifier.Classify(new[] { Attempt("102") }, tracking, withTime ? Now : null, null, Policy("102")).Should().Be("Unknown");
+    }
+
+    [Fact]
+    public void An_attempt_without_a_carrier_time_or_dated_after_the_return_is_Unknown()
+    {
+        DeliveryFailureClassifier.Classify(new[] { Attempt("102", noTime: true) }, "T1", Now, null, Policy("102")).Should().Be("Unknown");
+        DeliveryFailureClassifier.Classify(new[] { Attempt("102"), Attempt("102", minutesBeforeReturn: -5) }, "T1", Now, null, Policy("102")).Should().Be("Unknown");
+        DeliveryFailureClassifier.Classify(new[] { Attempt("102", minutesBeforeReturn: 0) }, "T1", Now, null, Policy("102")).Should().Be("BuyerRefused");   // the same instant is not after
     }
 
     [Fact]
@@ -196,7 +232,7 @@ public sealed class BuyerRefusalTests : IDisposable
     }
 
     [Fact]
-    public async Task A_return_without_a_reason_code_is_Unknown_even_when_every_attempt_has_an_approved_code()
+    public async Task A_return_without_a_reason_code_is_a_refusal_when_every_attempt_of_the_same_parcel_has_an_approved_code()
     {
         var sub = await SeedShippedAsync();
         var service = Orders(Policy("102"));
@@ -206,8 +242,65 @@ public sealed class BuyerRefusalTests : IDisposable
         await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Returned(), default);
 
         var saved = await Reload(sub.Id);
+        saved.ReturnClassification.Should().Be("BuyerRefused");
+        saved.BuyerRefusalPenaltyStatus.Should().Be(BuyerRefusalPenaltyStatus.Pending);
+    }
+
+    [Fact]
+    public async Task The_same_carrier_callback_sent_twice_is_one_attempt()
+    {
+        var sub = await SeedShippedAsync();
+        var service = Orders(Policy("102"));
+        var when = DateTimeOffset.UtcNow.AddMinutes(-20);
+
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(20, "102", eventTime: when), default);
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(20, "102", eventTime: when), default);
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(10, "102"), default);        // a different time is a different attempt
+
+        (await _db.DeliveryFailureAttempts.CountAsync(item => item.SubOrderId == sub.Id)).Should().Be(2);
+        (await Reload(sub.Id)).DeliveryFailureCodes.Should().Be("102,102");
+    }
+
+    [Fact]
+    public async Task A_return_of_another_parcel_than_the_one_that_failed_is_Unknown_and_costs_nothing()
+    {
+        var sub = await SeedShippedAsync();
+        var service = Orders(Policy("102"));
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(30, "102", tracking: "FIRST-PARCEL"), default);
+
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Returned(tracking: "SECOND-PARCEL"), default);
+
+        var saved = await Reload(sub.Id);
         saved.ReturnClassification.Should().Be("Unknown");
         saved.BuyerRefusalPenaltyStatus.Should().Be(BuyerRefusalPenaltyStatus.None);
+    }
+
+    [Fact]
+    public async Task A_failed_attempt_that_arrives_after_the_return_does_not_change_what_was_decided()
+    {
+        var sub = await SeedShippedAsync();
+        var service = Orders(Policy("102"));
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(30, "102"), default);
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Returned(), default);
+
+        // a late callback about an earlier attempt (carrier time before the return, received after it) is stored but the decision stands
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(25, "999"), default);
+
+        var saved = await Reload(sub.Id);
+        saved.ReturnClassification.Should().Be("BuyerRefused");
+        saved.BuyerRefusalPenaltyStatus.Should().Be(BuyerRefusalPenaltyStatus.Pending);
+    }
+
+    [Fact]
+    public async Task A_return_that_the_carrier_sent_without_its_own_time_is_Unknown()
+    {
+        var sub = await SeedShippedAsync();
+        var service = Orders(Policy("102"));
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, Failed(30, "102"), default);
+
+        await service.UpdateSubOrderDeliveryStatusAsync(sub.Id, new UpdateDeliveryStatusRequest("Returned", DateTimeOffset.UtcNow, "GHN", "T1", "returned"), default);
+
+        (await Reload(sub.Id)).ReturnClassification.Should().Be("Unknown");
     }
 
     // ------------------------------------------------------------------ penalty delivery

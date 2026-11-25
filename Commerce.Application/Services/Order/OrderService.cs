@@ -3000,11 +3000,31 @@ public sealed class OrderService : IOrderService
             // T024 [US4]: Retain Shipped status, log history with reason/location
             so.UpdatedAt = timestamp;
 
-            // Keep the carrier's reason for every failed attempt, exactly as sent. An attempt without a code is kept as "no code" so it is
-            // never mistaken for an earlier attempt's reason when the parcel finally comes back.
-            so.DeliveryFailureCodes = DeliveryFailureClassifier.Append(so.DeliveryFailureCodes, request.ReasonCode);
-            so.LastDeliveryFailureReason = string.IsNullOrWhiteSpace(request.Reason) ? null : (request.Reason.Length > 500 ? request.Reason[..500] : request.Reason);
-            so.LastDeliveryFailureAt = timestamp;
+            // Keep every failed attempt as its own row of its own parcel (tracking code and the carrier's time). A callback the carrier repeats has
+            // the same key and is stored once, so it is not counted twice either in the row list or in the legacy text below.
+            var attemptKey = DeliveryFailureAttempt.KeyOf(request.TrackingCode, request.EventType, request.EventTime);
+            var repeated = attemptKey != null
+                && await _dbContext.DeliveryFailureAttempts.AnyAsync(item => item.SubOrderId == so.Id && item.DedupeKey == attemptKey, ct);
+            if (!repeated)
+            {
+                _dbContext.DeliveryFailureAttempts.Add(new DeliveryFailureAttempt
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = so.Id,
+                    TrackingCode = string.IsNullOrWhiteSpace(request.TrackingCode) ? null : request.TrackingCode.Trim(),
+                    ReasonCode = string.IsNullOrWhiteSpace(request.ReasonCode) ? null : request.ReasonCode.Trim(),
+                    Reason = string.IsNullOrWhiteSpace(request.Reason) ? null : (request.Reason.Length > 500 ? request.Reason[..500] : request.Reason),
+                    EventType = string.IsNullOrWhiteSpace(request.EventType) ? null : request.EventType.Trim(),
+                    EventTime = request.EventTime,
+                    ReceivedAt = DateTimeOffset.UtcNow,
+                    DedupeKey = attemptKey
+                });
+
+                // The one-line history on the sub-order, kept for what already reads it. An attempt without a code is kept as "no code".
+                so.DeliveryFailureCodes = DeliveryFailureClassifier.Append(so.DeliveryFailureCodes, request.ReasonCode);
+                so.LastDeliveryFailureReason = string.IsNullOrWhiteSpace(request.Reason) ? null : (request.Reason.Length > 500 ? request.Reason[..500] : request.Reason);
+                so.LastDeliveryFailureAt = timestamp;
+            }
 
             _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
             {
@@ -3028,7 +3048,8 @@ public sealed class OrderService : IOrderService
             // Without an approved table nothing is classified and nobody is penalised; the evidence above is kept either way.
             if (_deliveryFailurePolicy is { Enabled: true } failurePolicy && so.BuyerRefusalPenaltyStatus == BuyerRefusalPenaltyStatus.None)
             {
-                so.ReturnClassification = DeliveryFailureClassifier.Classify(so.DeliveryFailureCodes, request.ReasonCode, failurePolicy);
+                var failedAttempts = await _dbContext.DeliveryFailureAttempts.AsNoTracking().Where(item => item.SubOrderId == so.Id).ToListAsync(ct);
+                so.ReturnClassification = DeliveryFailureClassifier.Classify(failedAttempts, request.TrackingCode, request.EventTime, request.ReasonCode, failurePolicy);
                 if (so.ReturnClassification == DeliveryFailureClassifier.BuyerRefused)
                 {
                     so.BuyerRefusalPenaltyStatus = BuyerRefusalPenaltyStatus.Pending;

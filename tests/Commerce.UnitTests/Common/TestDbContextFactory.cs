@@ -29,6 +29,7 @@ public class TestCommerceDbContext : DbContext, ICommerceDbContext
     public DbSet<OrderCancellation> OrderCancellations => Set<OrderCancellation>();
     public DbSet<OrderRefund> OrderRefunds => Set<OrderRefund>();
     public DbSet<RefundFundCase> RefundFundCases => Set<RefundFundCase>();
+    public DbSet<DeliveryFailureAttempt> DeliveryFailureAttempts => Set<DeliveryFailureAttempt>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<SettlementSnapshot> SettlementSnapshots => Set<SettlementSnapshot>();
     public DbSet<DailyOrderSequence> DailyOrderSequences => Set<DailyOrderSequence>();

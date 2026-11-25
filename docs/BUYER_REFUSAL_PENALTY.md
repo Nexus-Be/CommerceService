@@ -14,8 +14,12 @@ When a sub-order is `Returned`, and only if the table is configured, Commerce cl
 
 | Evidence | Result |
 |---|---|
-| the return event carries a code in the table, and every failed attempt has a code in the table | `BuyerRefused` |
-| a return event without a code, any attempt without a code, any code outside the table, mixed reasons, or no evidence at all | `Unknown` (no penalty) |
+| the return event names its tracking code and carries the carrier's own time; there is at least one failed attempt with the same tracking code; every such attempt has a carrier time that is not after the return and a reason code in the table; and the return's own code, if it has one, is in the table | `BuyerRefused` |
+| a return without a tracking code or carrier time, no failed attempt of that parcel, an attempt without a carrier time or dated after the return, an attempt without a code or with a code outside the table, or a return that carries a code outside the table | `Unknown` (no penalty) |
+
+The return does not need a reason code: the carrier sends reasons only with `delivery_fail` and a few other statuses, not with `returned`. Each failed attempt is stored as its own row of its own parcel (table `DeliveryFailureAttempts`: tracking code, reason code, the carrier's event type and time); a callback the carrier repeats (same tracking code, type and time) is one attempt. The tracking code stored on the sub-order is never used for the decision because it can change; attempts of another parcel of the same sub-order are ignored. The decision is taken once, when the return arrives: a failed attempt that reaches Commerce later is stored but does not change it. Fulfillment sends the carrier's own `Type` and `Time` (not the time of receipt) in `eventType` and `eventTime`.
+
+The buyer answers for the receiver the buyer named at checkout: a carrier code says what the receiver did, and the platform treats it as the buyer's refusal only under the rules above.
 
 `BuyerRefused` sets `BuyerRefusalPenaltyStatus = Pending` in the same save that records the return. Nothing is sent inside the request.
 A table approved later never penalises an older return.

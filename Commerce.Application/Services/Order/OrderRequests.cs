@@ -67,7 +67,9 @@ public sealed record UpdateDeliveryStatusRequest(
     string? ShipperName = null,
     string? ShipperPhone = null,
     string? ReasonCode = null,
-    string? Reason = null);
+    string? Reason = null,
+    string? EventType = null,
+    DateTimeOffset? EventTime = null);
 
 public sealed record CancelSubOrderRequest(
     CancellationReasonCode ReasonCode = CancellationReasonCode.BuyerChangedMind,
