@@ -123,7 +123,7 @@ public class ShippingChainTests
     public async Task The_client_asks_the_internal_route_and_reads_a_confirmed_answer()
     {
         HttpRequestMessage? seen = null;
-        var client = Client(new Handler(HttpStatusCode.OK, "{\"isValid\":true}", r => seen = r));
+        var client = Client(new Handler(HttpStatusCode.OK, "{\"isValid\":true,\"provinceName\":\"Hồ Chí Minh\",\"districtName\":\"Quận 1\",\"wardName\":\"Phường Bến Nghé\"}", r => seen = r));
 
         var result = await client.ValidateLocationAsync(202, 1442, "20101");
 

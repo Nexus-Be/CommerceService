@@ -395,15 +395,25 @@ public sealed class FulfillmentClient : IFulfillmentClient
             using var response = await _httpClient.PostAsJsonAsync("api/v1/internal/shipping/locations/validate", new { provinceId, districtId, wardCode }, JsonOptions, ct);
             if (response.IsSuccessStatusCode)
             {
+                // A 200 that does not name the province, district and ward breaks the contract: the order would keep the typed text, which is
+                // exactly what the confirmation is there to replace. It is treated as "cannot be confirmed" (503), never as confirmed.
+                LocationAnswer? answer = null;
                 try
                 {
-                    var answer = await response.Content.ReadFromJsonAsync<LocationAnswer>(JsonOptions, ct);
-                    return LocationCheckResult.Confirmed(answer?.ProvinceName, answer?.DistrictName, answer?.WardName);
+                    answer = await response.Content.ReadFromJsonAsync<LocationAnswer>(JsonOptions, ct);
                 }
                 catch (JsonException)
                 {
-                    return LocationCheckResult.Confirmed();
+                    // handled below with the other unusable answers
                 }
+
+                if (answer is null || string.IsNullOrWhiteSpace(answer.ProvinceName) || string.IsNullOrWhiteSpace(answer.DistrictName) || string.IsNullOrWhiteSpace(answer.WardName))
+                {
+                    _logger.LogWarning("[REST Fulfillment Client] Location check answered 200 without the province, district and ward names; the address is not used.");
+                    return LocationCheckResult.SourceUnavailable();
+                }
+
+                return LocationCheckResult.Confirmed(answer.ProvinceName.Trim(), answer.DistrictName.Trim(), answer.WardName.Trim());
             }
 
             var body = await response.Content.ReadAsStringAsync(ct);
