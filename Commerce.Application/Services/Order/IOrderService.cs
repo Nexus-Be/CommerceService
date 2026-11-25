@@ -114,7 +114,7 @@ public interface IOrderService
     /// a second call for the same report returns the first result. A sub-order whose money already went to the seller, or whose parent order
     /// was refunded separately, is not refunded automatically and is reported as ManualProcessingRequired.
     /// </summary>
-    Task<DisputeRefundResponse> RefundSubOrderForDisputeAsync(Guid subOrderId, Guid reportId, string? note, CancellationToken ct = default);
+    Task<SubOrderDisputeRefundResponse> RefundSubOrderForDisputeAsync(Guid subOrderId, Guid reportId, string? note, CancellationToken ct = default);
 
     Task<RefundDetailResponse> ApproveRefundAsync(Guid currentUserId, Guid refundId, ApproveRefundRequest request, bool isAdminOrStaff = false, CancellationToken ct = default);
 
@@ -126,4 +126,7 @@ public interface IOrderService
 
     /// <summary>Admin/Staff: Tra cứu danh sách đơn hàng con toàn sàn.</summary>
     Task<PagedData<SubOrderSummaryResponse>> ListAdminSubOrdersAsync(AdminSubOrderFilterRequest filter, CancellationToken ct = default);
+
+    /// <summary>Thực hiện giải ngân hoàn tiền ví và chuyển trạng thái SubOrder sang Refunded khi xử lý khiếu nại thành công (Internal S2S cho UserService).</summary>
+    Task<DisputeRefundResponse> DisputeRefundSubOrderAsync(Guid subOrderId, DisputeRefundRequest request, CancellationToken ct = default);
 }

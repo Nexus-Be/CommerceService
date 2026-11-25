@@ -19,7 +19,7 @@ public sealed record AuctionSettlementRequest(
     [Required] Guid AuctionId,
     [Required] Guid WinnerId,
     [Required] Guid SellerId,
-    [Required] Guid WinningBidId,
+    Guid? WinningBidId,
     [Required] Guid ProductId,
     Guid? SkuId,
     [Required, StringLength(255, MinimumLength = 1)] string ProductName,

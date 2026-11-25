@@ -187,7 +187,7 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
-                    b.Property<Guid>("WinningBidId")
+                    b.Property<Guid?>("WinningBidId")
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");

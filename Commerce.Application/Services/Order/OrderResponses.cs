@@ -256,7 +256,7 @@ public sealed record ChangeShippingAddressResponse(
 );
 
 /// <summary>Outcome of a dispute refund. Status is Refunded, AlreadyRefunded, ManualProcessingRequired or Failed (nothing moved, safe to retry).</summary>
-public sealed record DisputeRefundResponse(
+public sealed record SubOrderDisputeRefundResponse(
     string Status,
     decimal Amount,
     Guid? RefundId,
@@ -275,4 +275,12 @@ public sealed record RefundDetailResponse(
     string? RejectReason,
     DateTimeOffset RequestedAt,
     DateTimeOffset? CompletedAt
+);
+
+public sealed record DisputeRefundResponse(
+    Guid SubOrderId,
+    Guid RefundId,
+    decimal Amount,
+    string Status,
+    DateTimeOffset CompletedAt
 );

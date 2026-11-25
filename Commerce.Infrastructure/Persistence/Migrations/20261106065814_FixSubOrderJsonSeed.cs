@@ -28,6 +28,21 @@ namespace Commerce.Infrastructure.Persistence.Migrations
                 keyValue: new Guid("04000000-0000-0000-0000-000000000001"));
 
             migrationBuilder.DeleteData(
+                table: "DiscountCodeUsages",
+                keyColumn: "Id",
+                keyValue: new Guid("d2000000-0000-0000-0000-000000000001"));
+
+            migrationBuilder.DeleteData(
+                table: "OrderInvoices",
+                keyColumn: "Id",
+                keyValue: new Guid("05000000-0000-0000-0000-000000000001"));
+
+            migrationBuilder.DeleteData(
+                table: "OrderStatusHistories",
+                keyColumn: "Id",
+                keyValue: new Guid("04000000-0000-0000-0000-000000000001"));
+
+            migrationBuilder.DeleteData(
                 table: "SubOrderItems",
                 keyColumn: "Id",
                 keyValue: new Guid("03000000-0000-0000-0000-000000000001"));

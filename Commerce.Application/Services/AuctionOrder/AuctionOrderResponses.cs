@@ -18,7 +18,7 @@ public sealed record AuctionOrderDetailResponse(
     Guid AuctionId,
     Guid BuyerId,
     Guid SellerId,
-    Guid WinningBidId,
+    Guid? WinningBidId,
     Guid ProductId,
     Guid? SkuId,
     string ProductName,

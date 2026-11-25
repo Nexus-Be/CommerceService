@@ -1,0 +1,284 @@
+openapi: 3.0.3
+info:
+  title: CommerceService Remediation & Lifecycle Hardening Contract (SPEC-036)
+  version: 1.0.0
+  description: OpenAPI contract for Buy Now nullable WinningBidId settlement, internal dispute refund, and carrier delivery lifecycle status.
+paths:
+  /api/v1/auction-orders/settlement:
+    post:
+      summary: Ingest auction settlement from Auction Service (supports Buy Now with nullable WinningBidId)
+      tags:
+        - Auction Orders
+      parameters:
+        - name: X-Internal-Service-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuctionSettlementRequest'
+      responses:
+        '201':
+          description: Auction order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionSettlementResponse'
+        '200':
+          description: Idempotent duplicate settlement request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionSettlementResponse'
+        '400':
+          description: Validation error (e.g. missing WinningBidId when source is WINNER)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Settlement conflict with existing active order
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/internal/sub-orders/{subOrderId}/dispute-refund:
+    post:
+      summary: Service-to-service dispute resolution refund triggered by UserService
+      tags:
+        - Internal S2S Operations
+      parameters:
+        - name: subOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-Internal-Service-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DisputeRefundRequest'
+      responses:
+        '200':
+          description: Refund executed successfully and sub-order marked Refunded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisputeRefundResponse'
+        '400':
+          description: SubOrder not eligible for refund
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Unauthorized internal service key
+        '404':
+          description: SubOrder not found
+        '503':
+          description: Internal service secret not configured or wallet service unavailable
+
+  /api/v1/sub-orders/{subOrderId}/delivery-status:
+    post:
+      summary: Webhook callback from Fulfillment Service updating delivery lifecycle
+      tags:
+        - Logistics Webhooks
+      parameters:
+        - name: subOrderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: X-Internal-Service-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDeliveryStatusRequest'
+      responses:
+        '200':
+          description: Delivery status updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subOrderId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                  updatedAt:
+                    type: string
+                    format: date-time
+        '401':
+          description: Invalid internal service key
+        '404':
+          description: SubOrder not found
+
+components:
+  schemas:
+    AuctionSettlementRequest:
+      type: object
+      required:
+        - auctionId
+        - winnerId
+        - sellerId
+        - productId
+        - productName
+        - winningAmount
+        - paymentDeadlineAt
+      properties:
+        auctionId:
+          type: string
+          format: uuid
+        winnerId:
+          type: string
+          format: uuid
+        sellerId:
+          type: string
+          format: uuid
+        winningBidId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Required for WINNER and SECOND_CHANCE; nullable/omitted for BUY_NOW.
+        productId:
+          type: string
+          format: uuid
+        skuId:
+          type: string
+          format: uuid
+          nullable: true
+        productName:
+          type: string
+        winningAmount:
+          type: number
+          format: decimal
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+        depositAmount:
+          type: number
+          format: decimal
+          default: 0
+        source:
+          type: string
+          enum: [WINNER, SECOND_CHANCE, BUY_NOW]
+          default: WINNER
+
+    AuctionSettlementResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        orderNo:
+          type: string
+        auctionId:
+          type: string
+          format: uuid
+        buyerId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        paymentDeadlineAt:
+          type: string
+          format: date-time
+
+    DisputeRefundRequest:
+      type: object
+      required:
+        - disputeId
+        - refundAmount
+        - reason
+      properties:
+        disputeId:
+          type: string
+          format: uuid
+        refundAmount:
+          type: number
+          format: decimal
+        reason:
+          type: string
+        note:
+          type: string
+          nullable: true
+
+    DisputeRefundResponse:
+      type: object
+      properties:
+        subOrderId:
+          type: string
+          format: uuid
+        refundId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          format: decimal
+        status:
+          type: string
+        completedAt:
+          type: string
+          format: date-time
+
+    UpdateDeliveryStatusRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [ReadyToPick, Picking, Packed, HandedOver, InTransit, OutForDelivery, Shipped, Delivered, DeliveryAttemptFailed, DeliveryFailed, Returning, Returned]
+        deliveredAt:
+          type: string
+          format: date-time
+          nullable: true
+        carrierCode:
+          type: string
+          nullable: true
+        trackingCode:
+          type: string
+          nullable: true
+        note:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        errorCode:
+          type: string
+        detail:
+          type: string
+        traceId:
+          type: string

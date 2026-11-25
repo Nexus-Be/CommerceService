@@ -985,9 +985,9 @@ public class OrderLifecycleTests : IDisposable
             new UpdateDeliveryStatusRequest("Returning", DateTimeOffset.UtcNow, "GHN", "GHN-123", "Parcel is on its way back"),
             CancellationToken.None);
 
-        // Assert: accepted (no 400), recorded in the history, and nothing financial happened
+        // Assert: accepted (no 400), moves to Returning, recorded in the history, and nothing financial happened
         var updated = await _dbContext.SubOrders.Include(s => s.StatusHistories).FirstAsync(s => s.Id == subOrder.Id);
-        updated.Status.Should().Be(SubOrderStatus.Shipped);
+        updated.Status.Should().Be(SubOrderStatus.Returning);
         updated.CancelledAt.Should().BeNull();
         updated.StatusHistories.Should().ContainSingle(h => h.Reason != null && h.Reason.StartsWith("[Returning]"));
         (await _dbContext.OrderRefunds.CountAsync()).Should().Be(0);

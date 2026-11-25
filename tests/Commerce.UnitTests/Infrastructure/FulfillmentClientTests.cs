@@ -21,7 +21,9 @@ using Commerce.Infrastructure.Services.Fulfillment;
 
 public class FulfillmentClientTests
 {
-    private static (FulfillmentClient Client, Mock<HttpMessageHandler> Handler) CreateClientWithMockHandler(HttpResponseMessage response)
+    private static (FulfillmentClient Client, Mock<HttpMessageHandler> Handler) CreateClientWithMockHandler(
+        HttpResponseMessage response,
+        IConfiguration? configuration = null)
     {
         var mockHandler = new Mock<HttpMessageHandler>();
         mockHandler.Protected()
@@ -36,7 +38,7 @@ public class FulfillmentClientTests
             BaseAddress = new Uri("http://localhost:8006/")
         };
 
-        var client = new FulfillmentClient(httpClient, NullLogger<FulfillmentClient>.Instance);
+        var client = new FulfillmentClient(httpClient, NullLogger<FulfillmentClient>.Instance, configuration);
         return (client, mockHandler);
     }
 
@@ -483,5 +485,81 @@ public class FulfillmentClientTests
         var clientFactory = provider.GetRequiredService<IHttpClientFactory>();
         var client = clientFactory.CreateClient(nameof(IFulfillmentClient));
         client.BaseAddress.Should().Be(new Uri("http://localhost:8006/"));
+    }
+
+    [Fact]
+    public async Task ReserveStockAsync_ShouldThrow503_WhenFulfillmentAnswersServerErrorAndFailOpenIsFalse()
+    {
+        // Arrange (Fail-Closed governance: 5xx outage throws 503 FULFILLMENT_UNAVAILABLE)
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ASPNETCORE_ENVIRONMENT"] = "Production",
+            ["StockPolicy:FailOpen"] = "false"
+        }).Build();
+
+        var httpResponse = new HttpResponseMessage(HttpStatusCode.InternalServerError);
+        var (client, _) = CreateClientWithMockHandler(httpResponse, config);
+
+        var items = new List<StockReservationItem> { new(Guid.NewGuid(), 1, Guid.NewGuid()) };
+
+        // Act & Assert
+        var act = () => client.ReserveStockAsync(Guid.NewGuid(), items, ct: CancellationToken.None);
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Which.ErrorCode.Should().Be("FULFILLMENT_UNAVAILABLE");
+        ex.Which.StatusCode.Should().Be(503);
+    }
+
+    [Fact]
+    public async Task ReserveStockAsync_ShouldThrow503_WhenConnectionFailsAndEnvironmentIsNotDevelopment()
+    {
+        // Arrange (Fail-Closed governance)
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["ASPNETCORE_ENVIRONMENT"] = "Production",
+            ["StockPolicy:FailOpen"] = "false"
+        }).Build();
+
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new HttpRequestException("Connection refused"));
+
+        var httpClient = new HttpClient(mockHandler.Object)
+        {
+            BaseAddress = new Uri("http://localhost:8006/")
+        };
+
+        var client = new FulfillmentClient(httpClient, NullLogger<FulfillmentClient>.Instance, config);
+        var items = new List<StockReservationItem> { new(Guid.NewGuid(), 1, Guid.NewGuid()) };
+
+        // Act & Assert
+        var act = () => client.ReserveStockAsync(Guid.NewGuid(), items, ct: CancellationToken.None);
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Which.ErrorCode.Should().Be("FULFILLMENT_UNAVAILABLE");
+        ex.Which.StatusCode.Should().Be(503);
+    }
+
+    [Fact]
+    public async Task ReserveStockAsync_ShouldReturnTrue_WhenExplicitlyConfiguredFailOpen()
+    {
+        // Arrange (Explicit development override)
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["StockPolicy:FailOpen"] = "true"
+        }).Build();
+
+        var httpResponse = new HttpResponseMessage(HttpStatusCode.InternalServerError);
+        var (client, _) = CreateClientWithMockHandler(httpResponse, config);
+
+        var items = new List<StockReservationItem> { new(Guid.NewGuid(), 1, Guid.NewGuid()) };
+
+        // Act
+        var result = await client.ReserveStockAsync(Guid.NewGuid(), items, ct: CancellationToken.None);
+
+        // Assert
+        result.Should().BeTrue();
     }
 }

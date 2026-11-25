@@ -92,6 +92,25 @@ public class OrdersController : ControllerBase
         return Ok(eligibility);
     }
 
+    /// <summary>Thực hiện giải ngân hoàn tiền ví và chuyển SubOrder sang Refunded khi giải quyết khiếu nại thành công (Internal S2S cho UserService).</summary>
+    [HttpPost("/api/v1/internal/sub-orders/{subOrderId:guid}/dispute-refund")]
+    [AllowAnonymous]
+    public async Task<IActionResult> DisputeRefundSubOrder(
+        [FromRoute] Guid subOrderId,
+        [FromBody] DisputeRefundRequest request,
+        [FromServices] IConfiguration configuration,
+        CancellationToken ct)
+    {
+        var denied = InternalServiceKeyGuard.Check(Request, configuration);
+        if (denied is not null)
+        {
+            return denied;
+        }
+
+        var result = await _orderService.DisputeRefundSubOrderAsync(subOrderId, request, ct);
+        return Ok(result);
+    }
+
     /// <summary>R76: Tạo đơn hàng chính thức từ mã báo giá quoteId.</summary>
     [HttpPost]
     public async Task<IActionResult> CreateOrder([FromBody] CreateOrderRequest request, CancellationToken ct)
@@ -364,7 +383,7 @@ public class OrdersController : ControllerBase
     [Microsoft.AspNetCore.Authorization.AllowAnonymous]
     public async Task<IActionResult> RefundForDispute(
         [FromRoute] Guid subOrderId,
-        [FromBody] DisputeRefundRequest request,
+        [FromBody] SubOrderDisputeRefundRequest request,
         [FromServices] Microsoft.Extensions.Configuration.IConfiguration configuration,
         CancellationToken ct)
     {

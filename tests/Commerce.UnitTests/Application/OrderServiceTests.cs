@@ -814,13 +814,8 @@ public class OrderServiceTests
         updated.DeliveredAt.Should().BeCloseTo(webhookTime, TimeSpan.FromSeconds(1));
     }
 
-    [Theory]
-    [InlineData("DeliveryFailed", CancellationReasonCode.DeliveryFailed, "DELIVERY_FAILED")]
-    [InlineData("Returned", CancellationReasonCode.PackageReturned, "PACKAGE_RETURNED")]
-    public async Task UpdateSubOrderDeliveryStatusAsync_ShouldTransitionToCancelledAndCreateRefund_WhenDeliveryFailedOrReturnedAndPaid(
-        string webhookStatus,
-        CancellationReasonCode expectedReasonCode,
-        string expectedRefundReason)
+    [Fact]
+    public async Task UpdateSubOrderDeliveryStatusAsync_ShouldRetainShipped_WhenDeliveryFailed()
     {
         // Arrange
         using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
@@ -858,9 +853,62 @@ public class OrderServiceTests
         var webhookTime = DateTimeOffset.UtcNow;
 
         // Act
-        await service.UpdateSubOrderDeliveryStatusAsync(subOrderId, webhookStatus, webhookTime, CancellationToken.None);
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrderId, "DeliveryFailed", webhookTime, CancellationToken.None);
 
-        // Assert: Trạng thái SubOrder chuyển sang Cancelled
+        // Assert: Trạng thái SubOrder giữ nguyên Shipped (interim failure)
+        var updated = await dbContext.SubOrders.FirstAsync(s => s.Id == subOrderId);
+        updated.Status.Should().Be(SubOrderStatus.Shipped);
+
+        // Không tạo Cancellation hay Refund
+        var cancellation = await dbContext.OrderCancellations.FirstOrDefaultAsync(c => c.SubOrderId == subOrderId);
+        cancellation.Should().BeNull();
+
+        var refund = await dbContext.OrderRefunds.FirstOrDefaultAsync(r => r.SubOrderId == subOrderId);
+        refund.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateSubOrderDeliveryStatusAsync_ShouldTransitionToCancelledAndCreateRefund_WhenReturnedAndPaid()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var masterOrderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+        var paidAt = DateTimeOffset.UtcNow.AddHours(-2);
+
+        var subOrder = new Commerce.Domain.Entities.SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-FAIL-02",
+            OrderId = masterOrderId,
+            BuyerId = Guid.NewGuid(),
+            SellerId = Guid.NewGuid(),
+            Status = SubOrderStatus.Shipped,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            PaidAt = paidAt,
+            ContactPhone = "0901234567",
+            ItemsAmount = 85000m,
+            TotalAmount = 85000m,
+            SellerReceiveAmount = 85000m
+        };
+        dbContext.SubOrders.Add(subOrder);
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var webhookTime = DateTimeOffset.UtcNow;
+
+        // Act
+        await service.UpdateSubOrderDeliveryStatusAsync(subOrderId, "Returned", webhookTime, CancellationToken.None);
+
+        // Assert: Trạng thái SubOrder chuyển sang Cancelled khi hàng hoàn về kho
         var updated = await dbContext.SubOrders.FirstAsync(s => s.Id == subOrderId);
         updated.Status.Should().Be(SubOrderStatus.Cancelled);
         updated.CancelledAt.Should().BeCloseTo(webhookTime, TimeSpan.FromSeconds(1));
@@ -868,15 +916,15 @@ public class OrderServiceTests
         // Assert: OrderCancellation record
         var cancellation = await dbContext.OrderCancellations.FirstOrDefaultAsync(c => c.SubOrderId == subOrderId);
         cancellation.Should().NotBeNull();
-        cancellation!.ReasonCode.Should().Be(expectedReasonCode);
+        cancellation!.ReasonCode.Should().Be(CancellationReasonCode.PackageReturned);
         cancellation.WasPaid.Should().BeTrue();
-        cancellation.InventoryReleased.Should().Be(webhookStatus == "Returned");
+        cancellation.InventoryReleased.Should().BeTrue();
 
         // Assert: OrderRefund record
         var refund = await dbContext.OrderRefunds.FirstOrDefaultAsync(r => r.SubOrderId == subOrderId);
         refund.Should().NotBeNull();
         refund!.Status.Should().Be(RefundStatus.WalletPending);
-        refund.ReasonCode.Should().Be(expectedRefundReason);
+        refund.ReasonCode.Should().Be("PACKAGE_RETURNED");
         refund.Amount.Should().Be(85000m);
     }
 

@@ -18,8 +18,8 @@ public static class DeliveryStatusTransitions
         if (Is("ReadyToPick", "Picking", "Packed"))
             return current is SubOrderStatus.Paid or SubOrderStatus.Confirmed;
 
-        if (Is("HandedOver", "InTransit", "OutForDelivery", "Shipped", "DeliveryAttemptFailed"))
-            return current is SubOrderStatus.Confirmed or SubOrderStatus.Shipped;
+        if (Is("HandedOver", "InTransit", "OutForDelivery", "Shipped", "DeliveryAttemptFailed", "Returning"))
+            return current is SubOrderStatus.Confirmed or SubOrderStatus.Shipped or SubOrderStatus.Returning;
 
         if (Is("Delivered"))
             return current is SubOrderStatus.Confirmed or SubOrderStatus.Shipped;
@@ -29,7 +29,7 @@ public static class DeliveryStatusTransitions
             return current is SubOrderStatus.Confirmed or SubOrderStatus.Shipped;
 
         if (Is("Cancelled", "DeliveryFailed", "Returned"))
-            return current is SubOrderStatus.Confirmed or SubOrderStatus.Shipped or SubOrderStatus.Delivered;
+            return current is SubOrderStatus.Confirmed or SubOrderStatus.Shipped or SubOrderStatus.Delivered or SubOrderStatus.Returning;
 
         return true; // unknown statuses keep their existing handling
     }

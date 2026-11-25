@@ -166,7 +166,7 @@ public sealed class FulfillmentClient : IFulfillmentClient
             }
 
             var errorBody = await response.Content.ReadAsStringAsync(ct);
-            _logger.LogWarning("[REST Fulfillment Client] Stock reservation failed for Order '{OrderId}'. Status: {StatusCode}, Details: {Details}",
+            _logger.LogError("[REST Fulfillment Client] Stock reservation failed for Order '{OrderId}'. Status: {StatusCode}, Details: {Details}",
                 orderId, response.StatusCode, errorBody);
 
             // A 4xx answer is a business refusal (not enough stock, unknown SKU): always reject, never fail open.

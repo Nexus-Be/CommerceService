@@ -12,6 +12,7 @@ public class AuctionOrderConfiguration : IEntityTypeConfiguration<AuctionOrder>
         builder.Property(x => x.OrderNo).HasMaxLength(100).IsRequired();
         builder.HasIndex(x => x.OrderNo).IsUnique();
         builder.Property(x => x.ProductNameSnapshot).HasMaxLength(500).IsRequired();
+        builder.Property(x => x.WinningBidId).IsRequired(false);
         builder.Property(x => x.ImageUrlSnapshot).HasMaxLength(1000);
         builder.Property(x => x.SkuAttributesSnapshot).HasColumnType("jsonb");
         builder.Property(x => x.WinningAmount).HasPrecision(18, 2);

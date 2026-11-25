@@ -68,15 +68,18 @@ public class AuctionOrderService : IAuctionOrderService
         var depositAmount = request.DepositAmount ?? 0m;
         var sourceText = request.Source?.Trim().ToUpperInvariant() ?? "WINNER";
         if (sourceText is not ("WINNER" or "SECOND_CHANCE" or "BUY_NOW"))
-            throw new CommerceDomainException("VAL_INVALID_SETTLEMENT", "Auction settlement source must be WINNER, SECOND_CHANCE or BUY_NOW.", 400);
-        // A Buy Now settlement carries the total held by Auction (deposit plus goods hold) as DepositAmount, so the remaining amount is zero
-        // and the buyer only pays shipping; the checks below (whole VND, deposit not above the price) apply to it like to any other source.
+            throw new CommerceDomainException("VAL_INVALID_SETTLEMENT", "Auction settlement source must be WINNER, SECOND_CHANCE, or BUY_NOW.", 400);
         var source = sourceText switch
         {
             "SECOND_CHANCE" => AuctionOrderSource.SecondChance,
             "BUY_NOW" => AuctionOrderSource.BuyNow,
             _ => AuctionOrderSource.Winner
         };
+
+        if (source != AuctionOrderSource.BuyNow && (!request.WinningBidId.HasValue || request.WinningBidId == Guid.Empty))
+        {
+            throw new CommerceDomainException("VAL_INVALID_SETTLEMENT", "Winning bid ID is required for winner and second-chance settlements.", 400);
+        }
 
         if (request.WinningAmount <= 0 || depositAmount < 0)
         {
@@ -574,7 +577,7 @@ public class AuctionOrderService : IAuctionOrderService
             WinnerId: auctionOrder.BuyerId,
             Status: "SellerAccepted",
             EventId: Guid.NewGuid(),
-            OrderSource: auctionOrder.OrderSource.ToString().ToUpperInvariant(),
+            OrderSource: auctionOrder.OrderSource.ToWireValue(),
             OccurredAt: now
         );
 
@@ -715,7 +718,7 @@ public class AuctionOrderService : IAuctionOrderService
                 WinnerId: auctionOrder.BuyerId,
                 Status: "SellerRejected",
                 EventId: Guid.NewGuid(),
-                OrderSource: auctionOrder.OrderSource.ToString().ToUpperInvariant(),
+                OrderSource: auctionOrder.OrderSource.ToWireValue(),
                 OccurredAt: now
             );
 

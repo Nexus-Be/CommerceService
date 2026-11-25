@@ -1958,4 +1958,383 @@ public class AuctionOrderServiceTests
         (await _dbContext.AuctionOrders.FindAsync(unpaidOrder.Id))!.PayoutCompletedAt.Should().BeNull();
         _walletClientMock.Verify(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<System.Threading.CancellationToken>()), Times.Never);
     }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_WithBuyNowSource_CreatesOrderWithZeroRemainingAmount_AndStatusPendingPayment()
+    {
+        // Arrange
+        var auctionId = Guid.NewGuid();
+        var winnerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var winningBidId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var deadline = DateTimeOffset.UtcNow.AddHours(24);
+
+        var request = new AuctionSettlementRequest(
+            AuctionId: auctionId,
+            WinnerId: winnerId,
+            SellerId: sellerId,
+            WinningBidId: winningBidId,
+            ProductId: productId,
+            SkuId: null,
+            ProductName: "Buy Now Collector Item",
+            ProductImageUrl: "https://example.com/item.png",
+            SkuAttributes: "{\"edition\":\"limited\"}",
+            WinningAmount: 5000000m,
+            DepositAmount: 5000000m, // 100% held deposit
+            PaymentDeadlineAt: deadline,
+            Source: "BUY_NOW"
+        );
+
+        // Act
+        var result = await _service.ReceiveSettlementAsync(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.IsNewlyCreated.Should().BeTrue();
+        result.Response.AuctionId.Should().Be(auctionId);
+        result.Response.WinnerId.Should().Be(winnerId);
+        result.Response.OrderNo.Should().StartWith("AO-");
+        result.Response.Status.Should().Be("PendingPayment");
+
+        var savedOrder = await _dbContext.AuctionOrders.FindAsync(result.Response.OrderId);
+        savedOrder.Should().NotBeNull();
+        savedOrder!.WinningAmount.Should().Be(5000000m);
+        savedOrder.DepositAmount.Should().Be(5000000m);
+        savedOrder.RemainingAmount.Should().Be(0m); // 5,000,000 - 5,000,000 = 0
+        savedOrder.OrderSource.Should().Be(AuctionOrderSource.BuyNow);
+        savedOrder.PlatformFeeAmount.Should().Be(250000m); // 5% of 5,000,000
+        savedOrder.SellerReceiveAmount.Should().Be(4750000m); // 95% of 5,000,000
+        savedOrder.ShippingFeeAmount.Should().BeNull();
+        savedOrder.TotalAmount.Should().BeNull(); // Awaiting buyer shipping submission
+        savedOrder.Status.Should().Be(SubOrderStatus.PendingPayment);
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_WithBuyNowSource_WhenRepeatedIdentically_ReturnsExistingOrder_Idempotently()
+    {
+        // Arrange
+        var auctionId = Guid.NewGuid();
+        var winnerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var winningBidId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var deadline = DateTimeOffset.UtcNow.AddHours(24);
+
+        var request = new AuctionSettlementRequest(
+            AuctionId: auctionId,
+            WinnerId: winnerId,
+            SellerId: sellerId,
+            WinningBidId: winningBidId,
+            ProductId: productId,
+            SkuId: null,
+            ProductName: "Buy Now Item",
+            ProductImageUrl: null,
+            SkuAttributes: null,
+            WinningAmount: 3000000m,
+            DepositAmount: 3000000m,
+            PaymentDeadlineAt: deadline,
+            Source: "BUY_NOW"
+        );
+
+        var firstResult = await _service.ReceiveSettlementAsync(request);
+        firstResult.IsNewlyCreated.Should().BeTrue();
+
+        // Act
+        var secondResult = await _service.ReceiveSettlementAsync(request);
+
+        // Assert
+        secondResult.Should().NotBeNull();
+        secondResult.IsNewlyCreated.Should().BeFalse();
+        secondResult.Response.OrderId.Should().Be(firstResult.Response.OrderId);
+        secondResult.Response.OrderNo.Should().Be(firstResult.Response.OrderNo);
+    }
+
+    [Fact]
+    public async Task SubmitShippingAsync_ForBuyNowOrder_CalculatesTotalAmount_EqualToShippingFeeAmount()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+
+        var auctionOrder = new AuctionOrder
+        {
+            Id = orderId,
+            OrderNo = "AO-BUYNOW-0001",
+            AuctionId = Guid.NewGuid(),
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            WinningBidId = Guid.NewGuid(),
+            ProductId = productId,
+            SkuId = skuId,
+            ProductNameSnapshot = "Buy Now Collectible",
+            WinningAmount = 5000000m,
+            DepositAmount = 5000000m,
+            RemainingAmount = 0m, // 100% held deposit
+            SellerReceiveAmount = 4750000m,
+            PlatformFeeAmount = 250000m,
+            OrderSource = AuctionOrderSource.BuyNow,
+            Status = SubOrderStatus.PendingPayment,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddHours(20)
+        };
+        _dbContext.AuctionOrders.Add(auctionOrder);
+        await _dbContext.SaveChangesAsync();
+
+        _catalogClientMock
+            .Setup(c => c.GetSkuDetailsAsync(skuId, default))
+            .ReturnsAsync(new CatalogProductCheckResult(skuId, productId, sellerId, "SKU-001", 1000m, true, 10, null, 500));
+
+        _fulfillmentClientMock
+            .Setup(f => f.ValidateLocationAsync(202, 1442, "20101", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(LocationCheckResult.Confirmed("Ho Chi Minh", "District 1", "Ben Nghe"));
+
+        _fulfillmentClientMock
+            .Setup(f => f.CalculateShopShippingFeeAsync(It.IsAny<ShopShippingQuoteRequest>(), default))
+            .ReturnsAsync(35000m); // Carrier fee: 35,000 VND
+
+        var request = new SubmitAuctionShippingRequest(
+            ShippingAddress: new ShippingAddressDto(
+                FullName: "Tran Van B",
+                PhoneNumber: "0912345678",
+                AddressLine: "456 Nguyen Hue",
+                ProvinceName: "Ho Chi Minh",
+                DistrictName: "District 1",
+                WardName: "Ben Nghe",
+                GhnDistrictId: 1442,
+                GhnWardCode: "20101",
+                ProvinceId: 202
+            ),
+            ContactPhone: "0912345678"
+        );
+
+        // Act
+        var response = await _service.SubmitShippingAsync(orderId, buyerId, request);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.ShippingFeeAmount.Should().Be(35000m);
+        response.TotalAmount.Should().Be(35000m); // RemainingAmount (0) + ShippingFee (35,000) = 35,000
+
+        var updatedOrder = await _dbContext.AuctionOrders.FindAsync(orderId);
+        updatedOrder!.TotalAmount.Should().Be(35000m);
+        updatedOrder.ShippingFeeAmount.Should().Be(35000m);
+        updatedOrder.RemainingAmount.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task PayAuctionOrderAsync_ForBuyNowOrder_DebitsOnlyShippingFee_TransitionsToPaid_AndDispatchesCallbackWithBuyNowSource()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var auctionId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var transactionId = Guid.NewGuid();
+
+        var auctionOrder = new AuctionOrder
+        {
+            Id = orderId,
+            OrderNo = "AO-BUYNOW-PAY-01",
+            AuctionId = auctionId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            WinningBidId = Guid.NewGuid(),
+            ProductId = Guid.NewGuid(),
+            ProductNameSnapshot = "Rare Sculpture",
+            WinningAmount = 5000000m,
+            DepositAmount = 5000000m,
+            RemainingAmount = 0m,
+            ShippingAddress = "{\"fullName\":\"Tran Van B\"}",
+            ShippingFeeAmount = 35000m,
+            TotalAmount = 35000m, // Only shipping fee
+            SellerReceiveAmount = 4750000m,
+            PlatformFeeAmount = 250000m,
+            OrderSource = AuctionOrderSource.BuyNow,
+            Status = SubOrderStatus.PendingPayment,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddHours(12)
+        };
+        _dbContext.AuctionOrders.Add(auctionOrder);
+        await _dbContext.SaveChangesAsync();
+
+        _walletClientMock
+            .Setup(w => w.PayOrderAsync(orderId, buyerId, 35000m, null, default))
+            .ReturnsAsync(WalletPaymentResult.Success(transactionId.ToString()));
+
+        _auctionClientMock
+            .Setup(a => a.NotifyPaymentStatusAsync(auctionId, It.Is<AuctionPaymentStatusCallbackRequest>(r =>
+                r.OrderId == orderId &&
+                r.WinnerId == buyerId &&
+                r.Status == "Paid" &&
+                r.Amount == 5000000m &&
+                r.OrderSource == "BUY_NOW" && // Wire format must be BUY_NOW
+                r.PaidAt.HasValue &&
+                r.EventId.HasValue), default))
+            .ReturnsAsync(true);
+
+        // Act
+        var response = await _service.PayAuctionOrderAsync(orderId, buyerId);
+
+        // Assert
+        response.Should().NotBeNull();
+        response.Status.Should().Be("Paid");
+        response.WalletTransactionId.Should().Be(transactionId);
+
+        _walletClientMock.Verify(w => w.PayOrderAsync(orderId, buyerId, 35000m, null, default), Times.Once);
+        _auctionClientMock.Verify(a => a.NotifyPaymentStatusAsync(auctionId, It.Is<AuctionPaymentStatusCallbackRequest>(r =>
+            r.OrderSource == "BUY_NOW"), default), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_WhenAuctionClosedBelowReserveAndSellerApproved_ProcessesAsStandardWinnerSettlement()
+    {
+        // Arrange
+        var auctionId = Guid.NewGuid();
+        var winnerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var winningBidId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var deadline = DateTimeOffset.UtcNow.AddHours(24);
+
+        // When Seller approves below-reserve bid, AuctionService sends standard WINNER settlement
+        var request = new AuctionSettlementRequest(
+            AuctionId: auctionId,
+            WinnerId: winnerId,
+            SellerId: sellerId,
+            WinningBidId: winningBidId,
+            ProductId: productId,
+            SkuId: null,
+            ProductName: "Reserve Price Approved Art",
+            ProductImageUrl: null,
+            SkuAttributes: null,
+            WinningAmount: 8500000m,
+            DepositAmount: 850000m,
+            PaymentDeadlineAt: deadline,
+            Source: "WINNER"
+        );
+
+        // Act
+        var result = await _service.ReceiveSettlementAsync(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.IsNewlyCreated.Should().BeTrue();
+        result.Response.Status.Should().Be("PendingPayment");
+
+        var savedOrder = await _dbContext.AuctionOrders.FindAsync(result.Response.OrderId);
+        savedOrder.Should().NotBeNull();
+        savedOrder!.OrderSource.Should().Be(AuctionOrderSource.Winner);
+        savedOrder.WinningAmount.Should().Be(8500000m);
+        savedOrder.DepositAmount.Should().Be(850000m);
+        savedOrder.RemainingAmount.Should().Be(7650000m);
+        savedOrder.PlatformFeeAmount.Should().Be(425000m);
+        savedOrder.SellerReceiveAmount.Should().Be(8075000m);
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_BuyNowWithNullWinningBidId_CreatesOrderSuccessfully()
+    {
+        // Arrange
+        var auctionId = Guid.NewGuid();
+        var winnerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var deadline = DateTimeOffset.UtcNow.AddHours(24);
+
+        var request = new AuctionSettlementRequest(
+            AuctionId: auctionId,
+            WinnerId: winnerId,
+            SellerId: sellerId,
+            WinningBidId: null,
+            ProductId: productId,
+            SkuId: null,
+            ProductName: "Buy Now Laptop",
+            ProductImageUrl: null,
+            SkuAttributes: null,
+            WinningAmount: 20000000m,
+            DepositAmount: 20000000m,
+            PaymentDeadlineAt: deadline,
+            Source: "BUY_NOW"
+        );
+
+        // Act
+        var result = await _service.ReceiveSettlementAsync(request);
+
+        // Assert
+        result.Should().NotBeNull();
+        result.IsNewlyCreated.Should().BeTrue();
+        result.Response.Status.Should().Be("PendingPayment");
+
+        var savedOrder = await _dbContext.AuctionOrders.FindAsync(result.Response.OrderId);
+        savedOrder.Should().NotBeNull();
+        savedOrder!.WinningBidId.Should().BeNull();
+        savedOrder.OrderSource.Should().Be(AuctionOrderSource.BuyNow);
+        savedOrder.RemainingAmount.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_WinnerSourceWithNullWinningBidId_ThrowsValInvalidSettlement()
+    {
+        // Arrange
+        var request = new AuctionSettlementRequest(
+            AuctionId: Guid.NewGuid(),
+            WinnerId: Guid.NewGuid(),
+            SellerId: Guid.NewGuid(),
+            WinningBidId: null,
+            ProductId: Guid.NewGuid(),
+            SkuId: null,
+            ProductName: "Auction Item",
+            ProductImageUrl: null,
+            SkuAttributes: null,
+            WinningAmount: 5000000m,
+            DepositAmount: 500000m,
+            PaymentDeadlineAt: DateTimeOffset.UtcNow.AddHours(24),
+            Source: "WINNER"
+        );
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<CommerceDomainException>(() => _service.ReceiveSettlementAsync(request));
+        ex.ErrorCode.Should().Be("VAL_INVALID_SETTLEMENT");
+        ex.Message.Should().Contain("Winning bid ID is required for winner and second-chance settlements.");
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_BuyNowIdempotency_BothNullWinningBidId_ReturnsExistingOrder()
+    {
+        // Arrange
+        var auctionId = Guid.NewGuid();
+        var winnerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var deadline = DateTimeOffset.UtcNow.AddHours(24);
+
+        var request = new AuctionSettlementRequest(
+            AuctionId: auctionId,
+            WinnerId: winnerId,
+            SellerId: sellerId,
+            WinningBidId: null,
+            ProductId: productId,
+            SkuId: null,
+            ProductName: "Buy Now Laptop",
+            ProductImageUrl: null,
+            SkuAttributes: null,
+            WinningAmount: 15000000m,
+            DepositAmount: 15000000m,
+            PaymentDeadlineAt: deadline,
+            Source: "BUY_NOW"
+        );
+
+        // Act
+        var result1 = await _service.ReceiveSettlementAsync(request);
+        var result2 = await _service.ReceiveSettlementAsync(request);
+
+        // Assert
+        result1.IsNewlyCreated.Should().BeTrue();
+        result2.IsNewlyCreated.Should().BeFalse();
+        result2.Response.OrderId.Should().Be(result1.Response.OrderId);
+    }
 }

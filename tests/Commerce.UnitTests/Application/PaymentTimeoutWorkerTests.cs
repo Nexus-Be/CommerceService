@@ -634,4 +634,72 @@ public class PaymentTimeoutWorkerTests : IDisposable
         // Wallet settlement MUST be skipped for COD
         _mockWalletClient.Verify(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Fact]
+    public async Task ProcessExpiredOrdersAsync_WhenBuyNowOrderPaymentTimesOut_CancelsOrder_DispatchesCallbackWithBuyNowSource_AndNeverPenalizesBuyer()
+    {
+        // Arrange
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var auctionId = Guid.NewGuid();
+        var auctionOrderId = Guid.NewGuid();
+
+        var expiredBuyNowOrder = new AuctionOrder
+        {
+            Id = auctionOrderId,
+            OrderNo = "AO-BUYNOW-EXPIRED-01",
+            AuctionId = auctionId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            WinningBidId = Guid.NewGuid(),
+            ProductId = Guid.NewGuid(),
+            ProductNameSnapshot = "Buy Now Painting",
+            WinningAmount = 5000000m,
+            DepositAmount = 5000000m,
+            RemainingAmount = 0m,
+            SellerReceiveAmount = 4750000m,
+            PlatformFeeAmount = 250000m,
+            OrderSource = AuctionOrderSource.BuyNow,
+            Status = SubOrderStatus.PendingPayment,
+            PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(-10), // Expired
+            CreatedAt = DateTimeOffset.UtcNow.AddHours(-25)
+        };
+
+        _dbContext.AuctionOrders.Add(expiredBuyNowOrder);
+        await _dbContext.SaveChangesAsync();
+
+        _mockAuctionClient
+            .Setup(a => a.NotifyPaymentStatusAsync(auctionId, It.Is<AuctionPaymentStatusCallbackRequest>(r =>
+                r.OrderId == auctionOrderId &&
+                r.WinnerId == buyerId &&
+                r.Status == "PaymentTimedOut" &&
+                r.OrderSource == "BUY_NOW"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var worker = new PaymentTimeoutWorker(_mockServiceProvider.Object, NullLogger<PaymentTimeoutWorker>.Instance);
+
+        // Act
+        await worker.ProcessExpiredOrdersAsync(CancellationToken.None);
+
+        // Assert
+        var dbOrder = await _dbContext.AuctionOrders.FindAsync(auctionOrderId);
+        dbOrder!.Status.Should().Be(SubOrderStatus.Cancelled);
+        dbOrder.CancelledAt.Should().NotBeNull();
+
+        // Outbound callback dispatched with orderSource = "BUY_NOW"
+        _mockAuctionClient.Verify(a => a.NotifyPaymentStatusAsync(auctionId, It.Is<AuctionPaymentStatusCallbackRequest>(r =>
+            r.OrderId == auctionOrderId &&
+            r.WinnerId == buyerId &&
+            r.Status == "PaymentTimedOut" &&
+            r.OrderSource == "BUY_NOW"), It.IsAny<CancellationToken>()), Times.Once);
+
+        // Zero penalty calls to UserClient for buyer
+        _mockUserClient.Verify(u => u.CreatePenaltyAsync(
+            It.Is<UserPenaltyRequest>(p => p.UserId == buyerId),
+            It.IsAny<CancellationToken>()), Times.Never);
+        _mockUserClient.Verify(u => u.AdjustReputationAsync(
+            It.Is<ReputationAdjustRequest>(p => p.UserId == buyerId),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

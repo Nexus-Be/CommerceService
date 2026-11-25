@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using Commerce.Domain.Enums;
 
 public sealed record ShippingAddressInput(
@@ -81,7 +82,7 @@ public sealed record ChangeShippingAddressRequest(
     string? ContactPhone = null);
 
 /// <summary>Asks Commerce to refund a sub-order because a dispute was decided for the buyer. The amount is never sent: Commerce works it out.</summary>
-public sealed record DisputeRefundRequest(
+public sealed record SubOrderDisputeRefundRequest(
     Guid ReportId,
     string? Note = null);
 
@@ -110,3 +111,9 @@ public sealed record AdminSubOrderFilterRequest(
     DateTimeOffset? ToDate = null,
     int Page = 1,
     int PageSize = 20);
+
+public sealed record DisputeRefundRequest(
+    [Required] Guid DisputeId,
+    [Range(0.01, double.MaxValue)] decimal RefundAmount,
+    [Required, StringLength(255, MinimumLength = 1)] string Reason,
+    string? Note = null);

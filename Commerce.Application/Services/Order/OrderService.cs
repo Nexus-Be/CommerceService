@@ -2748,7 +2748,7 @@ public sealed class OrderService : IOrderService
         return UpdateSubOrderDeliveryStatusAsync(subOrderId, new UpdateDeliveryStatusRequest(status, deliveredAt), ct);
     }
 
-    public async Task<DisputeRefundResponse> RefundSubOrderForDisputeAsync(Guid subOrderId, Guid reportId, string? note, CancellationToken ct = default)
+    public async Task<SubOrderDisputeRefundResponse> RefundSubOrderForDisputeAsync(Guid subOrderId, Guid reportId, string? note, CancellationToken ct = default)
     {
         if (reportId == Guid.Empty)
         {
@@ -2766,12 +2766,12 @@ public sealed class OrderService : IOrderService
         var existing = refunds.FirstOrDefault(r => r.SubOrderId == subOrderId && r.RequestEventId == reportId);
         if (existing is { Status: RefundStatus.Completed })
         {
-            return new DisputeRefundResponse("AlreadyRefunded", existing.Amount, existing.Id, "This dispute was already refunded.");
+            return new SubOrderDisputeRefundResponse("AlreadyRefunded", existing.Amount, existing.Id, "This dispute was already refunded.");
         }
 
         if (existing is { Status: RefundStatus.Failed, FailureCode: RefundOutcome.AlreadyHeldByAnotherRefund })
         {
-            return new DisputeRefundResponse("ManualProcessingRequired", 0m, existing.Id, "The wallet already holds a refund of this sub-order made for another request; check it manually.");
+            return new SubOrderDisputeRefundResponse("ManualProcessingRequired", 0m, existing.Id, "The wallet already holds a refund of this sub-order made for another request; check it manually.");
         }
 
         if (so.Status is not (SubOrderStatus.Delivered or SubOrderStatus.Completed))
@@ -2781,33 +2781,33 @@ public sealed class OrderService : IOrderService
 
         if (!so.PaidAt.HasValue || so.PaymentMethod != PaymentMethod.Wallet)
         {
-            return new DisputeRefundResponse("ManualProcessingRequired", 0m, null, "The sub-order was not paid from the wallet, so no wallet refund can be made automatically.");
+            return new SubOrderDisputeRefundResponse("ManualProcessingRequired", 0m, null, "The sub-order was not paid from the wallet, so no wallet refund can be made automatically.");
         }
 
         // The money already went to the seller: refunding it needs a source of funds that does not exist yet (T30), so a person decides.
         if (so.IsEscrowSettled)
         {
-            return new DisputeRefundResponse("ManualProcessingRequired", 0m, null, "The seller was already paid for this sub-order; the refund must be handled manually.");
+            return new SubOrderDisputeRefundResponse("ManualProcessingRequired", 0m, null, "The seller was already paid for this sub-order; the refund must be handled manually.");
         }
 
         // The wallet accepts one refund credit per reference, and the parent order and the sub-order are different references.
         if (refunds.Any(r => r.SubOrderId == null && r.Status == RefundStatus.Completed))
         {
-            return new DisputeRefundResponse("ManualProcessingRequired", 0m, null, "The parent order was already refunded; the amount must be checked manually.");
+            return new SubOrderDisputeRefundResponse("ManualProcessingRequired", 0m, null, "The parent order was already refunded; the amount must be checked manually.");
         }
 
         var alreadyRefunded = refunds.Where(r => r.SubOrderId == subOrderId && r.Status == RefundStatus.Completed).Sum(r => r.Amount);
         var amount = so.TotalAmount - alreadyRefunded;
         if (amount <= 0)
         {
-            return new DisputeRefundResponse("AlreadyRefunded", alreadyRefunded, null, "The sub-order is already fully refunded.");
+            return new SubOrderDisputeRefundResponse("AlreadyRefunded", alreadyRefunded, null, "The sub-order is already fully refunded.");
         }
 
         // The wallet keeps one refund per sub-order: a second credit for the rest would be refused (or taken for a replay of the first),
         // so a sub-order that was already refunded in part is never completed automatically; a person decides what is still owed.
         if (alreadyRefunded > 0)
         {
-            return new DisputeRefundResponse("ManualProcessingRequired", alreadyRefunded, null, "The sub-order was already partly refunded; the rest must be handled manually.");
+            return new SubOrderDisputeRefundResponse("ManualProcessingRequired", alreadyRefunded, null, "The sub-order was already partly refunded; the rest must be handled manually.");
         }
 
         var reason = string.IsNullOrWhiteSpace(note) ? "Dispute decided in favour of the buyer." : note.Trim();
@@ -2859,17 +2859,17 @@ public sealed class OrderService : IOrderService
             if (refund.Status == RefundStatus.Failed && refund.FailureCode == RefundOutcome.AlreadyHeldByAnotherRefund)
             {
                 await _dbContext.SaveChangesAsync(ct);
-                return new DisputeRefundResponse("ManualProcessingRequired", 0m, refund.Id, "The wallet already holds a refund of this sub-order made for another request; check it manually.");
+                return new SubOrderDisputeRefundResponse("ManualProcessingRequired", 0m, refund.Id, "The wallet already holds a refund of this sub-order made for another request; check it manually.");
             }
 
             // The decision stays recorded as pending, so the worker retries it; nothing is reported as refunded.
             refund.FailureCode = walletResult.ErrorCode ?? "WALLET_REFUND_FAILED";
             await _dbContext.SaveChangesAsync(ct);
-            return new DisputeRefundResponse("Failed", refund.Amount, refund.Id, "The wallet did not confirm the refund yet. It stays pending and is retried; nothing was recorded as refunded.");
+            return new SubOrderDisputeRefundResponse("Failed", refund.Amount, refund.Id, "The wallet did not confirm the refund yet. It stays pending and is retried; nothing was recorded as refunded.");
         }
 
         await _dbContext.SaveChangesAsync(ct);
-        return new DisputeRefundResponse("Refunded", refund.Amount, refund.Id, null);
+        return new SubOrderDisputeRefundResponse("Refunded", refund.Amount, refund.Id, null);
     }
 
     public async Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, UpdateDeliveryStatusRequest request, CancellationToken ct = default)
@@ -2995,7 +2995,8 @@ public sealed class OrderService : IOrderService
                 }
             }
         }
-        else if (string.Equals(status, "DeliveryAttemptFailed", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(status, "DeliveryAttemptFailed", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "DeliveryFailed", StringComparison.OrdinalIgnoreCase))
         {
             // T024 [US4]: Retain Shipped status, log history with reason/location
             so.UpdatedAt = timestamp;
@@ -3032,6 +3033,23 @@ public sealed class OrderService : IOrderService
                 SubOrderId = so.Id,
                 FromStatus = previousStatus,
                 ToStatus = SubOrderStatus.Shipped,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
+        }
+        else if (string.Equals(status, "Returning", StringComparison.OrdinalIgnoreCase))
+        {
+            // SPEC-036 [US3]: In-flight package return transition
+            so.Status = SubOrderStatus.Returning;
+            so.UpdatedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Returning,
                 ActorRole = OrderActorRole.System,
                 Reason = formattedReason,
                 CreatedAt = timestamp
@@ -3081,6 +3099,29 @@ public sealed class OrderService : IOrderService
                 InventoryReleased = true
             };
             _dbContext.OrderCancellations.Add(cancellation);
+
+            // SPEC-036 [US4]: Penalize Buyer for delivery failure return (bom hàng) when the T17 queued penalty table is not active
+            if (_userClient != null && _deliveryFailurePolicy is not { Enabled: true })
+            {
+                try
+                {
+                    await _userClient.AdjustReputationAsync(new ReputationAdjustRequest(
+                        UserId: so.BuyerId,
+                        TargetRole: "Buyer",
+                        PartnerUserId: so.SellerId,
+                        ScoreDelta: -5,
+                        Reason: "PackageReturnedDeliveryFailed",
+                        ReferenceType: "Order",
+                        ReferenceId: so.SubOrderNo,
+                        Note: "Automated penalty for uncollected package returned to seller."
+                    ), ct);
+                    _logger.LogInformation("Buyer '{BuyerId}' penalized -5 reputation points for returned sub-order '{SubOrderNo}'.", so.BuyerId, so.SubOrderNo);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to adjust reputation for buyer '{BuyerId}' on returned sub-order '{SubOrderId}'.", so.BuyerId, so.Id);
+                }
+            }
 
             if (so.PaidAt.HasValue && so.PaymentMethod == PaymentMethod.Wallet)
             {
@@ -3309,7 +3350,8 @@ public sealed class OrderService : IOrderService
                 CreatedAt = timestamp
             });
         }
-        else if (string.Equals(status, "DeliveryAttemptFailed", StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(status, "DeliveryAttemptFailed", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(status, "DeliveryFailed", StringComparison.OrdinalIgnoreCase))
         {
             _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
             {
@@ -3322,8 +3364,23 @@ public sealed class OrderService : IOrderService
                 CreatedAt = timestamp
             });
         }
+        else if (string.Equals(status, "Returning", StringComparison.OrdinalIgnoreCase))
+        {
+            auctionOrder.Status = SubOrderStatus.Returning;
+            auctionOrder.UpdatedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                AuctionOrderId = auctionOrder.Id,
+                FromStatus = previousStatus,
+                ToStatus = SubOrderStatus.Returning,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
+        }
         else if (string.Equals(status, "Cancelled", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(status, "DeliveryFailed", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase))
         {
             var isReturned = string.Equals(status, "Returned", StringComparison.OrdinalIgnoreCase);
@@ -4388,5 +4445,93 @@ public sealed class OrderService : IOrderService
             .ToListAsync(ct);
 
         return new PagedData<SubOrderSummaryResponse>(items, PaginationMetadata.Create(page, pageSize, totalCount));
+    }
+
+    public async Task<DisputeRefundResponse> DisputeRefundSubOrderAsync(Guid subOrderId, DisputeRefundRequest request, CancellationToken ct = default)
+    {
+        var subOrder = await _dbContext.SubOrders
+            .Include(s => s.Refunds)
+            .FirstOrDefaultAsync(s => s.Id == subOrderId && !s.IsDeleted, ct)
+            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
+
+        if (subOrder.Status != SubOrderStatus.Delivered && subOrder.Status != SubOrderStatus.Completed)
+        {
+            throw new CommerceDomainException("INVALID_REFUND_STATUS", "Sub-order status is not eligible for dispute refund.", 400);
+        }
+
+        var now = DateTimeOffset.UtcNow;
+
+        var refund = subOrder.Refunds.FirstOrDefault(r => r.Status == RefundStatus.Requested && !r.IsDeleted);
+        if (refund != null)
+        {
+            refund.Status = RefundStatus.Completed;
+            refund.Amount = request.RefundAmount;
+            refund.ReasonCode = "DISPUTE_RESOLUTION";
+            refund.ReasonNote = string.IsNullOrWhiteSpace(request.Note)
+                ? request.Reason
+                : $"{request.Reason} | Note: {request.Note}";
+            refund.CompletedAt = now;
+            refund.UpdatedAt = now;
+        }
+        else
+        {
+            refund = new OrderRefund
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = subOrder.Id,
+                OrderId = subOrder.OrderId,
+                RefundType = RefundType.Full,
+                Amount = request.RefundAmount,
+                Status = RefundStatus.Completed,
+                ReasonCode = "DISPUTE_RESOLUTION",
+                ReasonNote = string.IsNullOrWhiteSpace(request.Note)
+                    ? request.Reason
+                    : $"{request.Reason} | Note: {request.Note}",
+                ActorRole = OrderActorRole.System,
+                RequestedBy = subOrder.BuyerId,
+                RequestedAt = now,
+                CompletedAt = now
+            };
+            _dbContext.OrderRefunds.Add(refund);
+        }
+
+        var walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+            subOrder.Id,
+            subOrder.OrderId,
+            subOrder.BuyerId.ToString(),
+            request.RefundAmount,
+            request.Reason,
+            ct);
+
+        if (!walletResult.Succeeded)
+        {
+            throw new CommerceDomainException("WALLET_REFUND_FAILED", "Failed to process refund payment via wallet service.", 400);
+        }
+
+        var fromStatus = subOrder.Status;
+        subOrder.Status = SubOrderStatus.Refunded;
+        subOrder.UpdatedAt = now;
+        subOrder.CompletedAt = now;
+
+        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            SubOrderId = subOrder.Id,
+            FromStatus = fromStatus,
+            ToStatus = SubOrderStatus.Refunded,
+            ChangedBy = null,
+            ActorRole = OrderActorRole.System,
+            Reason = $"Dispute refund: {request.Reason}",
+            CreatedAt = now
+        });
+
+        await _dbContext.SaveChangesAsync(ct);
+
+        return new DisputeRefundResponse(
+            SubOrderId: subOrder.Id,
+            RefundId: refund.Id,
+            Amount: refund.Amount,
+            Status: refund.Status.ToString(),
+            CompletedAt: now);
     }
 }
