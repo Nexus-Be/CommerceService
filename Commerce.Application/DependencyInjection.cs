@@ -21,6 +21,7 @@ public static class DependencyInjection
         services.AddSingleton<IDeliveryFailurePolicy>(sp => new Commerce.Application.Services.Delivery.ConfiguredDeliveryFailurePolicy(
             sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>()));
         services.AddScoped<Commerce.Application.Services.Delivery.BuyerRefusalPenaltyService>();
+        services.AddScoped<Commerce.Application.Services.RefundFund.RefundFundService>();
         services.AddScoped<IVoucherDiscountCalculator, VoucherDiscountCalculator>();
         services.AddScoped<IDiscountService, DiscountService>();
         return services;

@@ -23,6 +23,7 @@ public class AppDbContext : DbContext, ICommerceDbContext
     public DbSet<OrderInvoice> OrderInvoices => Set<OrderInvoice>();
     public DbSet<OrderCancellation> OrderCancellations => Set<OrderCancellation>();
     public DbSet<OrderRefund> OrderRefunds => Set<OrderRefund>();
+    public DbSet<RefundFundCase> RefundFundCases => Set<RefundFundCase>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
     public DbSet<SettlementSnapshot> SettlementSnapshots => Set<SettlementSnapshot>();
     public DbSet<DailyOrderSequence> DailyOrderSequences => Set<DailyOrderSequence>();

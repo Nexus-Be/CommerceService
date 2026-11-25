@@ -79,6 +79,20 @@ public sealed class PaymentTimeoutWorker : BackgroundService
             }
         }
 
+        // Refunds from the refund fund that were approved but not yet confirmed by the Wallet are repeated here.
+        var refundFund = scope.ServiceProvider.GetService<Commerce.Application.Services.RefundFund.RefundFundService>();
+        if (refundFund != null)
+        {
+            try
+            {
+                await refundFund.RetryPendingAsync(50, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "[PaymentTimeoutWorker] Retrying the pending refund fund cases failed.");
+            }
+        }
+
         var expiredOrders = await dbContext.Orders
             .Include(o => o.SubOrders)
             .Where(o => o.Status == OrderStatus.PendingPayment && o.PaymentDeadlineAt < now)

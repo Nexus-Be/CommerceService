@@ -45,6 +45,12 @@ public interface IWalletClient
     /// call without it. The wallet keeps one refund per sub-order id, so there is no idempotency key; a repeated call answers the
     /// existing transaction with <see cref="WalletRefundResult.Replayed"/> set.
     /// </summary>
+    /// <summary>
+    /// Asks the Wallet to refund a buyer from the refund fund for a sub-order already paid out to the seller. Null when the Wallet could not be
+    /// reached or is not ready (the caller repeats later); otherwise the Wallet's answer, which can be a refusal that will not change by itself.
+    /// </summary>
+    Task<RefundFundPayResponse?> PayRefundFundCaseAsync(RefundFundPayRequest request, CancellationToken ct = default);
+
     Task<WalletRefundResult> RefundSubOrderPaymentAsync(
         Guid subOrderId,
         Guid parentOrderId,

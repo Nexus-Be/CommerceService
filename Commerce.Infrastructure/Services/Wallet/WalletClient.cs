@@ -212,6 +212,57 @@ public sealed class WalletClient : IWalletClient
     }
 
     /// <summary>Reads the refund transaction id and the replay marker from the wallet's answer (plain or wrapped in "data").</summary>
+    public async Task<RefundFundPayResponse?> PayRefundFundCaseAsync(RefundFundPayRequest request, CancellationToken ct = default)
+    {
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Post, $"api/v1/internal/wallets/refund-fund/sub-orders/{request.SubOrderId}/payout")
+            {
+                Content = JsonContent.Create(new
+                {
+                    parentOrderId = request.ParentOrderId,
+                    buyerId = request.BuyerId.ToString(),
+                    amount = request.Amount,
+                    firstApproverId = request.FirstApproverId.ToString(),
+                    secondApproverId = request.SecondApproverId?.ToString()
+                })
+            };
+            using var response = await _httpClient.SendAsync(message, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var status = (int)response.StatusCode;
+            if (response.IsSuccessStatusCode)
+            {
+                using var document = JsonDocument.Parse(body);
+                var root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+                {
+                    root = data;
+                }
+
+                string? Text(string name) => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+                decimal Number(string name) => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number ? value.GetDecimal() : 0m;
+                var replayed = root.TryGetProperty("replayed", out var rep) && rep.ValueKind == JsonValueKind.True;
+                return new RefundFundPayResponse(Text("outcome") ?? "NeedsFinance", Text("reason"), Number("amount"), Number("sellerRecovered"), Number("sellerShortfall"), replayed, Text("buyerTransactionId"));
+            }
+
+            // 5xx, 408 and 429 (the fund being switched off included) are not decisions: the caller repeats later.
+            if (status >= 500 || status == 408 || status == 429)
+            {
+                _logger.LogWarning("[REST Wallet Client] Refund fund payout of sub-order '{SubOrderId}' is not ready ({Status}); it will be repeated.", request.SubOrderId, status);
+                return null;
+            }
+
+            var (errorCode, _) = ParseProblemDetails(body, status);
+            _logger.LogWarning("[REST Wallet Client] Refund fund payout of sub-order '{SubOrderId}' was refused: {ErrorCode}.", request.SubOrderId, errorCode);
+            return new RefundFundPayResponse("Rejected", string.IsNullOrWhiteSpace(errorCode) ? $"HTTP_{status}" : errorCode, request.Amount, 0m, 0m, false, null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogError(ex, "[REST Wallet Client] Could not reach the Wallet for the refund fund payout of sub-order '{SubOrderId}'.", request.SubOrderId);
+            return null;
+        }
+    }
+
     private static (Guid? TransactionId, bool Replayed) ParseRefundTransaction(string body)
     {
         if (string.IsNullOrWhiteSpace(body)) return (null, false);
