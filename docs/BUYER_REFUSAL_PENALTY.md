@@ -56,3 +56,14 @@ If the table is switched off after the decision the row stays `Pending` (visible
 The decision (admin, reason, time) is stored in one conditional update before User is called. If User cannot be reached the answer is `202` with `RevokePending` and the worker repeats the call every pass, whether or not the penalty rules are still enabled. A penalty being sent by the worker at the moment of the withdrawal can never overwrite it: the worker only turns a sub-order from `Pending` to `Applied`, and User refuses a penalty for a sub-order it has already withdrawn.
 
 User side: `POST api/v1/internal/users/reputation-penalty-revoke`. It writes one `BuyerRefusalPenaltyRevoked` reputation log per sub-order (a unique index makes a second approval a no-op) and takes the same per-user lock as the penalty call. It does not use the positive-reward rules (the seven-day anti-farming rule), because it is not a reward.
+
+## Configuration approved on 26/11/2026
+The project owner approved switching the penalty on in every environment with the table below (source: the GHN developer documentation, reason codes of `delivery_fail`):
+
+| Setting (environment variable) | Value |
+|---|---|
+| `DeliveryFailure__BuyerRefusedReasonCodes` | `GHN-DCD0A8,GHN-DCD1A5` (the receiver changed their mind; the receiver refused for lack of money) |
+| `DeliveryFailure__BuyerRefusalScoreDelta` | `-5` |
+| `DeliveryFailure__TableVersion` | `ghn-docs-2026-11-25` |
+
+The docker compose file of this service sets these as defaults (`DELIVERY_FAILURE_REFUSED_CODES`, `DELIVERY_FAILURE_SCORE_DELTA`, `DELIVERY_FAILURE_TABLE_VERSION` change them; an empty `DELIVERY_FAILURE_REFUSED_CODES` switches the penalty off). An environment that does not use this compose file (for example a hosted one) must set the three variables itself. Not in the table on purpose: refusals for damaged goods, a wrong product or a wrong COD amount (they may be the seller's fault), "did not order", and every "could not be reached" code.
