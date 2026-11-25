@@ -1181,6 +1181,72 @@ public class OrderServiceTests
     }
 
     [Fact]
+    public async Task SellerAcceptSubOrderAsync_WhenPickShiftProvided_ShouldPassPickShiftIdToFulfillment()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+
+        var order = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 250000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+
+        var subOrder = new SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-20261126-0002",
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            Status = SubOrderStatus.Paid,
+            PaymentMethod = PaymentMethod.Wallet,
+            ShippingAddress = new ShippingAddressSnapshot("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 220000m,
+            ShippingFeeAmount = 30000m,
+            TotalAmount = 250000m,
+            SellerReceiveAmount = 220000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            PaidAt = DateTimeOffset.UtcNow
+        };
+
+        dbContext.Orders.Add(order);
+        dbContext.SubOrders.Add(subOrder);
+        await dbContext.SaveChangesAsync();
+
+        ShipmentCreationRequest? capturedRequest = null;
+        _mockFulfillmentClient
+            .Setup(f => f.CreateShipmentAsync(It.IsAny<ShipmentCreationRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ShipmentCreationRequest, CancellationToken>((r, _) => capturedRequest = r)
+            .ReturnsAsync(new ShipmentCreationResult("GHN-PICK-123456", "GHN", "https://api.ghn.vn/print/label-123.pdf"));
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var request = new SellerAcceptOrderRequest(subOrderId, "Ready for pickup", PickShiftId: 4);
+
+        // Act
+        await service.SellerAcceptSubOrderAsync(sellerId, orderId, request, CancellationToken.None);
+
+        // Assert
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.PickShiftId.Should().Be(4);
+    }
+
+    [Fact]
     public async Task GetShipmentTrackingAsync_ShouldReturnRealTrackingCode_WithoutSyntheticFormatting()
     {
         // Arrange

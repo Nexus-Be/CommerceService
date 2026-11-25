@@ -46,7 +46,7 @@ public static class ShipmentRequestFactory
             Items: new[] { new ShipmentCreationItem(skuId, 1, order.ProductNameSnapshot, order.WinningAmount, weight) });
     }
 
-    public static ShipmentCreationRequest ForSubOrder(SubOrder subOrder)
+    public static ShipmentCreationRequest ForSubOrder(SubOrder subOrder, int? pickShiftId = null)
     {
         ArgumentNullException.ThrowIfNull(subOrder);
 
@@ -70,7 +70,8 @@ public static class ShipmentRequestFactory
             ToWardCode: string.IsNullOrWhiteSpace(address.GhnWardCode) ? null : address.GhnWardCode,
             // Commerce does not keep per-SKU weights for regular orders; Fulfillment then applies its own default.
             WeightInGrams: DefaultWeightInGrams,
-            Items: items);
+            Items: items,
+            PickShiftId: pickShiftId);
     }
 
     private static string JoinAddress(params string?[] parts) =>

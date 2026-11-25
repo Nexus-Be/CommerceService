@@ -945,4 +945,44 @@ public class OrderCheckoutTests : IDisposable
         (await _dbContext.SubOrders.SingleAsync(s => s.OrderId == order.OrderId)).SettlementProtocolVersion.Should().Be(1);
         settlement.Verify(s => s.HoldSubsidyAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Fact]
+    public async Task CreateOrderAsync_WhenExpectedShippingFeeMatches_Succeeds()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+        var service = CreateOrderService();
+
+        var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id), CancellationToken.None);
+        var actualFee = quote.Shops.Sum(s => s.ShippingFeeAmount);
+
+        var request = WalletCreateRequest(quote.QuoteId) with { ExpectedShippingFee = actualFee };
+        var order = await service.CreateOrderAsync(buyerId, request, CancellationToken.None);
+
+        order.Should().NotBeNull();
+        order.TotalAmount.Should().Be(quote.GrandTotal);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_WhenExpectedShippingFeeMismatches_Throws409Conflict()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+        var service = CreateOrderService();
+
+        var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id), CancellationToken.None);
+        var actualFee = quote.Shops.Sum(s => s.ShippingFeeAmount);
+
+        // FE sends a fee that differs from the server quote (e.g. stale fee)
+        var staleFee = actualFee + 10000m;
+        var request = WalletCreateRequest(quote.QuoteId) with { ExpectedShippingFee = staleFee };
+
+        var act = () => service.CreateOrderAsync(buyerId, request, CancellationToken.None);
+
+        var ex = (await act.Should().ThrowAsync<CommerceDomainException>()).Which;
+        ex.ErrorCode.Should().Be("SHIPPING_FEE_MISMATCH");
+        ex.StatusCode.Should().Be(409);
+    }
 }

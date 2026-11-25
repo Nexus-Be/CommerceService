@@ -807,6 +807,19 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("QUOTE_EXPIRED", "Checkout quote has expired, is invalid, or is currently being processed.");
         }
 
+        // PARITY GUARD: Ensure client shipping fee matches server-quoted fee before creating order
+        if (request.ExpectedShippingFee.HasValue)
+        {
+            var actualShippingFee = cachedQuote.Response.Shops.Sum(s => s.ShippingFeeAmount);
+            if (request.ExpectedShippingFee.Value != actualShippingFee)
+            {
+                throw new CommerceDomainException(
+                    "SHIPPING_FEE_MISMATCH",
+                    $"Shipping fee has changed from {request.ExpectedShippingFee.Value:N0} to {actualShippingFee:N0}. Please refresh your checkout quote.",
+                    409);
+            }
+        }
+
         // THẨM ĐỊNH QUYỀN MUA HÀNG VỚI USER SERVICE (INT-01 / BUYER PERMISSION GATE)
         if (_userClient != null)
         {
@@ -2055,7 +2068,7 @@ public sealed class OrderService : IOrderService
         // Tạo vận đơn GHN tự động qua Fulfillment Service (ORD-04 / T009)
         try
         {
-            var shipmentRequest = ShipmentRequestFactory.ForSubOrder(so);
+            var shipmentRequest = ShipmentRequestFactory.ForSubOrder(so, request.PickShiftId);
             var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(shipmentRequest, ct);
             if (shipmentResult != null && !string.IsNullOrWhiteSpace(shipmentResult.TrackingCode))
             {

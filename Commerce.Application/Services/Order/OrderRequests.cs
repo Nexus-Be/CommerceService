@@ -38,7 +38,8 @@ public sealed record CreateOrderRequest(
     PaymentMethod PaymentMethod,
     string ShippingAddress,
     string ContactPhone,
-    string? Note = null);
+    string? Note = null,
+    decimal? ExpectedShippingFee = null);
 
 public sealed record CancelOrderRequest(
     CancellationReasonCode ReasonCode = CancellationReasonCode.BuyerChangedMind,
@@ -46,7 +47,8 @@ public sealed record CancelOrderRequest(
 
 public sealed record SellerAcceptOrderRequest(
     Guid SubOrderId,
-    string? Note = null);
+    string? Note = null,
+    int? PickShiftId = null);
 
 public sealed record SellerRejectOrderRequest(
     Guid SubOrderId,
