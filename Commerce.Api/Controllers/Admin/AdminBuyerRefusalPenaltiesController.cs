@@ -10,7 +10,12 @@ using Commerce.Application.Services.Delivery;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
-public sealed record RevokeBuyerRefusalPenaltyRequest([property: Required, StringLength(500, MinimumLength = BuyerRefusalPenaltyService.MinReasonLength)] string Reason);
+public sealed class RevokeBuyerRefusalPenaltyRequest
+{
+    [Required(ErrorMessage = "A reason is required.")]
+    [StringLength(500, MinimumLength = BuyerRefusalPenaltyService.MinReasonLength, ErrorMessage = "The reason must be between 10 and 500 characters long.")]
+    public string Reason { get; init; } = string.Empty;
+}
 
 /// <summary>
 /// Withdrawing the reputation penalty of a buyer who refused a delivery. Only an admin decides; staff can record the complaint but cannot
