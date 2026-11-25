@@ -260,29 +260,52 @@ public sealed class RefundFundService
         await _db.SaveChangesAsync(ct);
     }
 
-    /// <summary>Changes the status only while it still is <paramref name="from"/>. True when this call made the change.</summary>
+    /// <summary>
+    /// Changes the status only while it still is <paramref name="from"/>. True when this call made the change. The row is read without
+    /// tracking and written back by one conditional update, so a copy that a context tracked earlier in the same request cannot make the
+    /// check read a stale status (the first QA run showed exactly that: the second approval left the case Pending although the Wallet had paid).
+    /// </summary>
     private async Task<bool> ChangeStatusAsync(Guid subOrderId, RefundFundCaseStatus from, RefundFundCaseStatus to, Action<RefundFundCase> apply, CancellationToken ct)
     {
-        var tracked = await _db.RefundFundCases.FirstOrDefaultAsync(item => item.SubOrderId == subOrderId, ct);
-        if (tracked is null || tracked.Status != from) return false;
+        var snapshot = await _db.RefundFundCases.AsNoTracking().FirstOrDefaultAsync(item => item.SubOrderId == subOrderId, ct);
+        if (snapshot is null || snapshot.Status != from) return false;
 
+        apply(snapshot);
+        var now = DateTimeOffset.UtcNow;
         if (_db.Database.IsRelational())
         {
-            // The status is part of the update's condition, so two callers cannot both win. Attempts and the other fields are written by the
-            // same statement through the tracked copy being compared with the database row.
             var updated = await _db.RefundFundCases
-                .Where(item => item.Id == tracked.Id && item.Status == from)
-                .ExecuteUpdateAsync(set => set.SetProperty(item => item.Status, to).SetProperty(item => item.UpdatedAt, DateTimeOffset.UtcNow), ct);
-            if (updated != 1) return false;
-            // The status is already changed in the database; only the other fields are saved through the tracked copy (its Status is untouched).
-            apply(tracked);
-            await _db.SaveChangesAsync(ct);
-            return true;
+                .Where(item => item.Id == snapshot.Id && item.Status == from)
+                .ExecuteUpdateAsync(set => set
+                    .SetProperty(item => item.Status, to)
+                    .SetProperty(item => item.UpdatedAt, now)
+                    .SetProperty(item => item.Attempts, snapshot.Attempts)
+                    .SetProperty(item => item.SecondApproverId, snapshot.SecondApproverId)
+                    .SetProperty(item => item.NeedsFinanceReason, snapshot.NeedsFinanceReason)
+                    .SetProperty(item => item.SellerRecovered, snapshot.SellerRecovered)
+                    .SetProperty(item => item.SellerShortfall, snapshot.SellerShortfall)
+                    .SetProperty(item => item.BuyerTransactionId, snapshot.BuyerTransactionId)
+                    .SetProperty(item => item.RefundedAt, snapshot.RefundedAt)
+                    .SetProperty(item => item.ResolvedBy, snapshot.ResolvedBy)
+                    .SetProperty(item => item.ResolutionNote, snapshot.ResolutionNote)
+                    .SetProperty(item => item.ResolvedAt, snapshot.ResolvedAt), ct);
+            return updated == 1;
         }
 
+        var tracked = await _db.RefundFundCases.FirstAsync(item => item.Id == snapshot.Id, ct);
+        if (tracked.Status != from) return false;
         tracked.Status = to;
-        tracked.UpdatedAt = DateTimeOffset.UtcNow;
-        apply(tracked);
+        tracked.UpdatedAt = now;
+        tracked.Attempts = snapshot.Attempts;
+        tracked.SecondApproverId = snapshot.SecondApproverId;
+        tracked.NeedsFinanceReason = snapshot.NeedsFinanceReason;
+        tracked.SellerRecovered = snapshot.SellerRecovered;
+        tracked.SellerShortfall = snapshot.SellerShortfall;
+        tracked.BuyerTransactionId = snapshot.BuyerTransactionId;
+        tracked.RefundedAt = snapshot.RefundedAt;
+        tracked.ResolvedBy = snapshot.ResolvedBy;
+        tracked.ResolutionNote = snapshot.ResolutionNote;
+        tracked.ResolvedAt = snapshot.ResolvedAt;
         await _db.SaveChangesAsync(ct);
         return true;
     }
