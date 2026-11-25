@@ -24,7 +24,7 @@ public class OrderAddressChangeTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IWalletClient> _mockWalletClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IAuctionClient> _mockAuctionClient = new();
     private readonly Mock<IUserClient> _mockUserClient = new();
@@ -123,12 +123,17 @@ public class OrderAddressChangeTests : IDisposable
             District: "District 1",
             Province: "HCM",
             GhnDistrictId: 1442,
-            GhnWardCode: "20101"
+            GhnWardCode: "20101", ProvinceId: 202
         );
 
         _mockFulfillmentClient
             .Setup(f => f.CalculateShopShippingFeeAsync(It.IsAny<ShopShippingQuoteRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(35000m); // Fee increases from 30000 to 35000 on pending payment
+
+        // GHN names the codes differently from what was typed: the order must keep the GHN names.
+        _mockFulfillmentClient
+            .Setup(f => f.ValidateLocationAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(LocationCheckResult.Confirmed("Hồ Chí Minh", "Quận 1", "Phường Bến Nghé"));
 
         var request = new ChangeShippingAddressRequest(ShippingAddress: newAddress);
 
@@ -145,6 +150,11 @@ public class OrderAddressChangeTests : IDisposable
         updatedSubOrder!.ShippingFeeAmount.Should().Be(35000m);
         updatedSubOrder.TotalAmount.Should().Be(135000m);
         updatedSubOrder.ShippingAddress.ReceiverName.Should().Be("New Receiver");
+        updatedSubOrder.ShippingAddress.Province.Should().Be("Hồ Chí Minh", "the order keeps the name GHN gave, not the typed one");
+        updatedSubOrder.ShippingAddress.District.Should().Be("Quận 1");
+        updatedSubOrder.ShippingAddress.Ward.Should().Be("Phường Bến Nghé");
+        updatedSubOrder.ShippingAddress.ProvinceId.Should().Be(202);
+        updatedSubOrder.ShippingAddress.FullAddressText.Should().Contain("Phường Bến Nghé").And.NotContain("Ward 1");
         updatedSubOrder.ContactPhone.Should().Be("0909999888");
 
         var updatedOrder = await _dbContext.Orders.FindAsync(order.Id);
@@ -209,7 +219,7 @@ public class OrderAddressChangeTests : IDisposable
             District: "District 1",
             Province: "HCM",
             GhnDistrictId: 1442,
-            GhnWardCode: "20101"
+            GhnWardCode: "20101", ProvinceId: 202
         );
 
         _mockFulfillmentClient
@@ -289,7 +299,7 @@ public class OrderAddressChangeTests : IDisposable
             District: "District 1",
             Province: "HCM",
             GhnDistrictId: 1442,
-            GhnWardCode: "20101"
+            GhnWardCode: "20101", ProvinceId: 202
         );
 
         _mockFulfillmentClient
@@ -345,7 +355,7 @@ public class OrderAddressChangeTests : IDisposable
             District: "District 1",
             Province: "HCM",
             GhnDistrictId: 1442,
-            GhnWardCode: "20101"
+            GhnWardCode: "20101", ProvinceId: 202
         ));
 
         // Act
@@ -433,12 +443,17 @@ public class OrderAddressChangeTests : IDisposable
             District: "District 2",
             Province: "HCM",
             GhnDistrictId: 1443,
-            GhnWardCode: "20102"
+            GhnWardCode: "20102", ProvinceId: 202
         );
 
         _mockFulfillmentClient
             .Setup(f => f.CalculateShopShippingFeeAsync(It.IsAny<ShopShippingQuoteRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(32000m);
+
+        // GHN names the codes differently from what was typed: the order must keep the GHN names.
+        _mockFulfillmentClient
+            .Setup(f => f.ValidateLocationAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(LocationCheckResult.Confirmed("Hồ Chí Minh", "Quận 1", "Phường Bến Nghé"));
 
         var request = new ChangeShippingAddressRequest(ShippingAddress: newAddress);
 
@@ -455,6 +470,11 @@ public class OrderAddressChangeTests : IDisposable
         updated!.ShippingFeeAmount.Should().Be(32000m);
         updated.TotalAmount.Should().Be(532000m);
         updated.ContactPhone.Should().Be("0908887777");
+        var stored = System.Text.Json.JsonSerializer.Deserialize<ShippingAddressDto>(updated.ShippingAddress!, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        stored.ProvinceName.Should().Be("Hồ Chí Minh", "the auction order keeps the names GHN gave");
+        stored.DistrictName.Should().Be("Quận 1");
+        stored.WardName.Should().Be("Phường Bến Nghé");
+        stored.ProvinceId.Should().Be(202);
     }
 
     [Fact]
@@ -494,7 +514,7 @@ public class OrderAddressChangeTests : IDisposable
             District: "District 2",
             Province: "HCM",
             GhnDistrictId: 1443,
-            GhnWardCode: "20102"
+            GhnWardCode: "20102", ProvinceId: 202
         );
 
         _mockFulfillmentClient

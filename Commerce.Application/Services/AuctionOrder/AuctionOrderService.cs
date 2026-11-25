@@ -1,4 +1,4 @@
-namespace Commerce.Application.Services.AuctionOrder;
+﻿namespace Commerce.Application.Services.AuctionOrder;
 
 using Commerce.Application.Common.Models;
 using Commerce.Application.Services.Order;
@@ -26,6 +26,7 @@ public class AuctionOrderService : IAuctionOrderService
     private readonly ICatalogClient _catalogClient;
     private readonly IUserClient _userClient;
     private readonly ILogger<AuctionOrderService> _logger;
+    private readonly ISettlementService? _settlementService;
     private const decimal DefaultPlatformFeeRate = 0.05m; // 5%
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -40,8 +41,10 @@ public class AuctionOrderService : IAuctionOrderService
         IAuctionClient auctionClient,
         ICatalogClient catalogClient,
         IUserClient userClient,
-        ILogger<AuctionOrderService> logger)
+        ILogger<AuctionOrderService> logger,
+        ISettlementService? settlementService = null)
     {
+        _settlementService = settlementService;
         _dbContext = dbContext;
         _walletClient = walletClient;
         _fulfillmentClient = fulfillmentClient;
@@ -55,6 +58,13 @@ public class AuctionOrderService : IAuctionOrderService
         AuctionSettlementRequest request,
         CancellationToken cancellationToken = default)
     {
+        // The delivery address is given by the buyer in the submit step, where the GHN lists confirm it. A settlement that carries one is refused
+        // before anything else (also a repeated request), so no unconfirmed address can reach an order through this route.
+        if (request.ShippingAddress != null)
+        {
+            throw new CommerceDomainException("SETTLEMENT_SHIPPING_ADDRESS_NOT_ACCEPTED", "A settlement does not carry a shipping address; the buyer submits it afterwards.", 400);
+        }
+
         var depositAmount = request.DepositAmount ?? 0m;
         var sourceText = request.Source?.Trim().ToUpperInvariant() ?? "WINNER";
         if (sourceText is not ("WINNER" or "SECOND_CHANCE" or "BUY_NOW"))
@@ -131,19 +141,16 @@ public class AuctionOrderService : IAuctionOrderService
 
         // Calculate financials
         var remainingAmount = request.WinningAmount - depositAmount;
-        var platformFeeAmount = Math.Round(request.WinningAmount * DefaultPlatformFeeRate, 2);
+        // One VND rounding rule for every new order: whole VND, halves away from zero (same as regular orders). The fee never carries cents.
+        var platformFeeAmount = Math.Round(request.WinningAmount * DefaultPlatformFeeRate, 0, MidpointRounding.AwayFromZero);
         var sellerReceiveAmount = request.WinningAmount - platformFeeAmount;
         var orderId = Guid.NewGuid();
         var orderNo = $"AO-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString()[..6].ToUpperInvariant()}";
 
-        string? shippingAddressJson = null;
-        if (request.ShippingAddress != null)
-        {
-            shippingAddressJson = JsonSerializer.Serialize(request.ShippingAddress, JsonOptions);
-        }
-
         var auctionOrder = new AuctionOrder
         {
+            PlatformFeePercent = DefaultPlatformFeeRate * 100m,
+            SettlementProtocolVersion = _settlementService?.NewOrderProtocolVersion ?? 1,
             Id = orderId,
             OrderNo = orderNo,
             AuctionId = request.AuctionId,
@@ -160,8 +167,8 @@ public class AuctionOrderService : IAuctionOrderService
             DepositId = request.DepositId,
             RemainingAmount = remainingAmount,
             OrderSource = source,
-            ShippingAddress = shippingAddressJson,
-            ContactPhone = request.ContactPhone ?? request.ShippingAddress?.PhoneNumber,
+            ShippingAddress = null,
+            ContactPhone = request.ContactPhone,
             ShippingFeeAmount = null,
             TotalAmount = null,
             SellerReceiveAmount = sellerReceiveAmount,
@@ -275,7 +282,8 @@ public class AuctionOrderService : IAuctionOrderService
                 DistrictName: address.District,
                 WardName: address.Ward,
                 GhnDistrictId: address.GhnDistrictId,
-                GhnWardCode: address.GhnWardCode
+                GhnWardCode: address.GhnWardCode,
+                ProvinceId: address.ProvinceId
             );
         }
         else if (request.ShippingAddress != null)
@@ -299,7 +307,7 @@ public class AuctionOrderService : IAuctionOrderService
                 throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
             }
 
-            resolvedShippingAddress = request.ShippingAddress with { PhoneNumber = resolvedPhone };
+            resolvedShippingAddress = request.ShippingAddress with { PhoneNumber = resolvedPhone, GhnWardCode = request.ShippingAddress.GhnWardCode.Trim() };
         }
         else
         {
@@ -323,9 +331,19 @@ public class AuctionOrderService : IAuctionOrderService
                 DistrictName: defaultAddr.District,
                 WardName: defaultAddr.Ward,
                 GhnDistrictId: defaultAddr.GhnDistrictId,
-                GhnWardCode: defaultAddr.GhnWardCode
+                GhnWardCode: defaultAddr.GhnWardCode,
+                ProvinceId: defaultAddr.ProvinceId
             );
         }
+
+        // The chosen address is used only when the GHN lists confirm its province, district and ward.
+        var confirmedAddress = await Common.ShippingChain.EnsureConfirmedAsync(_fulfillmentClient, resolvedShippingAddress.ProvinceId, resolvedShippingAddress.GhnDistrictId, resolvedShippingAddress.GhnWardCode, cancellationToken);
+        resolvedShippingAddress = resolvedShippingAddress with
+        {
+            ProvinceName = confirmedAddress.ProvinceName ?? resolvedShippingAddress.ProvinceName,
+            DistrictName = confirmedAddress.DistrictName ?? resolvedShippingAddress.DistrictName,
+            WardName = confirmedAddress.WardName ?? resolvedShippingAddress.WardName,
+        };
 
         var quoteRequest = new ShopShippingQuoteRequest(
             SellerId: auctionOrder.SellerId,
@@ -600,6 +618,13 @@ public class AuctionOrderService : IAuctionOrderService
             throw new CommerceDomainException("INVALID_STATUS", "Auction order cannot be rejected in its current status.", 400);
         }
 
+        // Before the buyer has paid there is nothing to reject: the auction side only accepts a seller decision for a paid order, so
+        // cancelling here would leave the buyer's locked money and the auction unchanged while the order shows as cancelled.
+        if (auctionOrder.Status == SubOrderStatus.PendingPayment)
+        {
+            throw new CommerceDomainException("ORDER_NOT_PAID", "The buyer has not paid this auction order yet, so it cannot be rejected.", 400);
+        }
+
         var now = DateTimeOffset.UtcNow;
         var previousStatus = auctionOrder.Status;
         auctionOrder.Status = SubOrderStatus.Cancelled;
@@ -639,7 +664,7 @@ public class AuctionOrderService : IAuctionOrderService
                 CancellationId = cancellation.Id,
                 RefundType = RefundType.Full,
                 Amount = refundAmount.Value,
-                Status = refundSuccess ? RefundStatus.Completed : RefundStatus.Requested,
+                Status = refundSuccess ? RefundStatus.Completed : RefundStatus.WalletPending,
                 ReasonCode = "SellerRejected",
                 ReasonNote = request.ReasonNote,
                 ActorRole = OrderActorRole.Seller,
@@ -752,18 +777,30 @@ public class AuctionOrderService : IAuctionOrderService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        // Escrow release payout to seller
+        // Escrow release payout to seller. The return value matters: the payout is complete (and PayoutCompletedAt is set) only when
+        // Wallet confirmed it. Otherwise the order stays unpaid and AuctionFinancialRetryWorker sends the same stored payload again.
         try
         {
-            await _walletClient.SettleSellerSubOrderAsync(
-                auctionOrder.Id,
-                auctionOrder.SellerId,
-                auctionOrder.SellerReceiveAmount,
-                null,
-                cancellationToken);
+            var paid = _settlementService != null
+                ? await _settlementService.SettleAuctionOrderAsync(auctionOrder, cancellationToken)
+                : await _walletClient.SettleSellerSubOrderAsync(
+                    auctionOrder.Id,
+                    auctionOrder.SellerId,
+                    auctionOrder.SellerReceiveAmount,
+                    null,
+                    cancellationToken);
 
-            _logger.LogInformation("[AuctionOrder] Escrow payout of {Amount} settled to Seller '{SellerId}' for Order '{OrderId}'.",
-                auctionOrder.SellerReceiveAmount, auctionOrder.SellerId, auctionOrder.Id);
+            if (paid)
+            {
+                auctionOrder.PayoutCompletedAt = DateTimeOffset.UtcNow;
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                _logger.LogInformation("[AuctionOrder] Escrow payout of {Amount} settled to Seller '{SellerId}' for Order '{OrderId}'.",
+                    auctionOrder.SellerReceiveAmount, auctionOrder.SellerId, auctionOrder.Id);
+            }
+            else
+            {
+                _logger.LogWarning("[AuctionOrder] Escrow payout for Order '{OrderId}' was not confirmed by Wallet. The retry worker will send it again.", auctionOrder.Id);
+            }
         }
         catch (Exception ex)
         {
@@ -1037,7 +1074,7 @@ public class AuctionOrderService : IAuctionOrderService
         {
             try
             {
-                addressSnapshot = JsonSerializer.Deserialize<ShippingAddressSnapshot>(ao.ShippingAddress, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                addressSnapshot = AuctionAddressSnapshot.TryRead(ao.ShippingAddress)
                     ?? new ShippingAddressSnapshot
                     {
                         ReceiverName = "Auction Winner",
@@ -1262,6 +1299,24 @@ public class AuctionOrderService : IAuctionOrderService
         string? contactPhone,
         CancellationToken cancellationToken)
     {
+        var resolved = await ResolveAuctionShippingAddressUncheckedAsync(buyerId, addressId, rawAddress, contactPhone, cancellationToken);
+        var confirmed = await Common.ShippingChain.EnsureConfirmedAsync(_fulfillmentClient, resolved.Address.ProvinceId, resolved.Address.GhnDistrictId, resolved.Address.GhnWardCode, cancellationToken);
+        var named = resolved.Address with
+        {
+            ProvinceName = confirmed.ProvinceName ?? resolved.Address.ProvinceName,
+            DistrictName = confirmed.DistrictName ?? resolved.Address.DistrictName,
+            WardName = confirmed.WardName ?? resolved.Address.WardName,
+        };
+        return (named, resolved.ContactPhone);
+    }
+
+    private async Task<(ShippingAddressDto Address, string ContactPhone)> ResolveAuctionShippingAddressUncheckedAsync(
+        Guid buyerId,
+        Guid? addressId,
+        ShippingAddressInput? rawAddress,
+        string? contactPhone,
+        CancellationToken cancellationToken)
+    {
         if (addressId.HasValue && addressId.Value != Guid.Empty)
         {
             var address = await _userClient.GetBuyerAddressAsync(buyerId, addressId.Value, cancellationToken);
@@ -1284,7 +1339,8 @@ public class AuctionOrderService : IAuctionOrderService
                 DistrictName: address.District,
                 WardName: address.Ward,
                 GhnDistrictId: address.GhnDistrictId,
-                GhnWardCode: address.GhnWardCode
+                GhnWardCode: address.GhnWardCode,
+                ProvinceId: address.ProvinceId
             );
             return (resolved, phone);
         }
@@ -1318,7 +1374,8 @@ public class AuctionOrderService : IAuctionOrderService
                 DistrictName: rawAddress.District,
                 WardName: rawAddress.Ward,
                 GhnDistrictId: rawAddress.GhnDistrictId.Value,
-                GhnWardCode: rawAddress.GhnWardCode
+                GhnWardCode: rawAddress.GhnWardCode.Trim(),
+                ProvinceId: rawAddress.ProvinceId
             );
             return (resolved, phone);
         }
@@ -1343,7 +1400,8 @@ public class AuctionOrderService : IAuctionOrderService
             DistrictName: defaultAddr.District,
             WardName: defaultAddr.Ward,
             GhnDistrictId: defaultAddr.GhnDistrictId,
-            GhnWardCode: defaultAddr.GhnWardCode
+            GhnWardCode: defaultAddr.GhnWardCode,
+            ProvinceId: defaultAddr.ProvinceId
         );
         return (defaultResolved, defaultPhone);
     }

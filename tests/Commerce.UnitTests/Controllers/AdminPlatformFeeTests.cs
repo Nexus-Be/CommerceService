@@ -2,6 +2,7 @@ namespace Commerce.UnitTests.Controllers;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
@@ -41,7 +42,7 @@ public class AdminPlatformFeeTests
 
     private AdminPlatformFeeController CreateController(Guid? userId = null, string? role = null)
     {
-        var controller = new AdminPlatformFeeController(_cache, _configuration, _mockLogger.Object);
+        var controller = new AdminPlatformFeeController(_cache, Commerce.UnitTests.Common.TestDbContextFactory.CreateInMemoryDbContext(), _configuration, _mockLogger.Object);
         var httpContext = new DefaultHttpContext();
 
         if (userId.HasValue)
@@ -180,6 +181,9 @@ public class AdminPlatformFeeTests
         var response = okResult.Value.Should().BeOfType<PlatformFeeResponse>().Subject;
         response.DefaultPercent.Should().Be(5.5m);
         response.UpdatedByRole.Should().Be("staff");
+        // The screen must say that this rate is the wallet-order fee and that COD is fixed at 0%.
+        response.AppliesTo.Should().Be("WalletOrders");
+        response.CodPercent.Should().Be(0m);
 
         // Assert Subsequent Get
         var getResult = await controller.GetPlatformFee(CancellationToken.None);
@@ -187,5 +191,60 @@ public class AdminPlatformFeeTests
         var getResponse = okGetResult.Value.Should().BeOfType<PlatformFeeResponse>().Subject;
         getResponse.DefaultPercent.Should().Be(5.5m);
         getResponse.UpdatedByRole.Should().Be("staff");
+    }
+
+    private AdminPlatformFeeController CreateControllerWith(IDistributedCache cache, Commerce.Application.Interfaces.ICommerceDbContext db)
+    {
+        var controller = new AdminPlatformFeeController(cache, db, _configuration, _mockLogger.Object);
+        var userId = Guid.NewGuid();
+        var httpContext = new DefaultHttpContext();
+        httpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, userId.ToString()),
+            new("sub", userId.ToString()),
+            new(ClaimTypes.Role, "admin"),
+            new("role", "admin")
+        }, "TestAuth"));
+        httpContext.Request.Headers["x-user-id"] = userId.ToString();
+        httpContext.Request.Headers["x-user-roles"] = "admin";
+        controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+        return controller;
+    }
+
+    [Fact]
+    public async Task UpdatePlatformFee_ShouldPersistRate_SoAColdCacheStillReturnsIt()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        var firstDb = Commerce.UnitTests.Common.TestDbContextFactory.CreateInMemoryDbContext(dbName);
+        var controller = CreateControllerWith(_cache, firstDb);
+
+        await controller.UpdatePlatformFee(new UpdatePlatformFeeRequest(7.5m), CancellationToken.None);
+
+        // Simulate a restart / flushed cache: new empty cache, same database.
+        var coldCache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
+        var secondDb = Commerce.UnitTests.Common.TestDbContextFactory.CreateInMemoryDbContext(dbName);
+        var coldController = CreateControllerWith(coldCache, secondDb);
+
+        var getResult = await coldController.GetPlatformFee(CancellationToken.None);
+        var response = ((OkObjectResult)getResult).Value.Should().BeOfType<PlatformFeeResponse>().Subject;
+        response.DefaultPercent.Should().Be(7.5m);
+    }
+
+    [Fact]
+    public async Task UpdatePlatformFee_ShouldUpdateTheSameStoredRow_AndAuditThePreviousValue()
+    {
+        var db = Commerce.UnitTests.Common.TestDbContextFactory.CreateInMemoryDbContext();
+        var controller = CreateControllerWith(_cache, db);
+
+        await controller.UpdatePlatformFee(new UpdatePlatformFeeRequest(3m), CancellationToken.None);
+        await controller.UpdatePlatformFee(new UpdatePlatformFeeRequest(4m), CancellationToken.None);
+
+        var rows = db.SystemSettings.Where(s => s.SettingKey == Commerce.Application.Services.Order.OrderService.PlatformFeeSettingKey).ToList();
+        rows.Should().ContainSingle();
+        rows[0].SettingValue.Should().Be("4");
+
+        var audits = db.AuditLogs.Where(a => a.Action == Commerce.Domain.Enums.AuditAction.PlatformFeeUpdate).ToList();
+        audits.Should().HaveCount(2);
+        audits.Should().Contain(a => a.OldValues != null && a.OldValues.Contains("3"));
     }
 }

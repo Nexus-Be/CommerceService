@@ -1,4 +1,4 @@
-namespace Commerce.UnitTests.Application;
+﻿namespace Commerce.UnitTests.Application;
 
 using System;
 using System.Collections.Generic;
@@ -24,7 +24,7 @@ public class OrderLifecycleTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IWalletClient> _mockWalletClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IUserClient> _mockUserClient = new();
     private readonly Mock<ILogger<OrderService>> _mockLogger = new();
@@ -64,8 +64,8 @@ public class OrderLifecycleTests : IDisposable
             .ReturnsAsync(new ShipmentCreationResult("GHN-TRACK-001", "GHN", "https://label.pdf"));
 
         _mockWalletClient
-            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletRefundResult.Success());
 
         _mockWalletClient
             .Setup(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -344,7 +344,7 @@ public class OrderLifecycleTests : IDisposable
             .Where(e => e.ErrorCode == "SUB_ORDER_CANNOT_BE_CANCELLED" && e.Message == "Sub-order cannot be cancelled once shipped or completed.");
 
         _mockFulfillmentClient.Verify(f => f.ReleaseSubOrderStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -402,13 +402,7 @@ public class OrderLifecycleTests : IDisposable
             It.Is<string>(r => r.Contains("Buyer cancelled")),
             It.IsAny<CancellationToken>()), Times.Once);
 
-        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
-            subOrder.Id,
-            buyerId.ToString(),
-            subOrder.TotalAmount,
-            It.IsAny<string>(),
-            It.Is<string>(k => k == $"refund-suborder-cancel-{subOrder.Id}"),
-            It.IsAny<CancellationToken>()), Times.Once);
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(subOrder.Id, subOrder.OrderId, buyerId.ToString(), subOrder.TotalAmount, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -604,13 +598,7 @@ public class OrderLifecycleTests : IDisposable
         refund!.Status.Should().Be(RefundStatus.Completed);
         refund.CompletedAt.Should().NotBeNull();
 
-        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
-            subOrder.Id,
-            buyerId.ToString(),
-            subOrder.TotalAmount,
-            It.IsAny<string>(),
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(subOrder.Id, subOrder.OrderId, buyerId.ToString(), subOrder.TotalAmount, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -981,6 +969,30 @@ public class OrderLifecycleTests : IDisposable
     // =========================================================================
     // US2: MILESTONE DELIVERY WEBHOOK & TIMELINE TESTS (T013, T014)
     // =========================================================================
+
+    [Fact]
+    public async Task UpdateDeliveryStatus_Returning_RecordsAMilestoneWithoutCancellingRefundingOrRestocking()
+    {
+        // Arrange: a paid wallet order whose parcel is with the carrier
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var (_, subOrder) = await SeedOrderWithSubOrderAsync(buyerId, sellerId, OrderStatus.Paid, SubOrderStatus.Shipped);
+        var service = CreateOrderService();
+
+        // Act
+        await service.UpdateSubOrderDeliveryStatusAsync(
+            subOrder.Id,
+            new UpdateDeliveryStatusRequest("Returning", DateTimeOffset.UtcNow, "GHN", "GHN-123", "Parcel is on its way back"),
+            CancellationToken.None);
+
+        // Assert: accepted (no 400), moves to Returning, recorded in the history, and nothing financial happened
+        var updated = await _dbContext.SubOrders.Include(s => s.StatusHistories).FirstAsync(s => s.Id == subOrder.Id);
+        updated.Status.Should().Be(SubOrderStatus.Returning);
+        updated.CancelledAt.Should().BeNull();
+        updated.StatusHistories.Should().ContainSingle(h => h.Reason != null && h.Reason.StartsWith("[Returning]"));
+        (await _dbContext.OrderRefunds.CountAsync()).Should().Be(0);
+        (await _dbContext.OrderCancellations.CountAsync()).Should().Be(0);
+    }
 
     [Fact]
     public async Task UpdateDeliveryStatus_ShouldAppendOrderStatusHistoryForMilestones()

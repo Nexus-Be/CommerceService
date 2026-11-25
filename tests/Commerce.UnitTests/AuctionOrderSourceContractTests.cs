@@ -1,4 +1,4 @@
-namespace Commerce.UnitTests;
+﻿namespace Commerce.UnitTests;
 
 using Commerce.Domain.Enums;
 using Xunit;

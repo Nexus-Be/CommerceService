@@ -28,7 +28,7 @@ public class EndToEndFlowTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IWalletClient> _mockWalletClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IUserClient> _mockUserClient = new();
     private readonly Mock<ILogger<CartService>> _mockCartLogger = new();
@@ -128,8 +128,8 @@ public class EndToEndFlowTests : IDisposable
             .ReturnsAsync(new WalletPaymentResult(true, TransactionId: Guid.NewGuid().ToString(), BalanceAfter: 1500000m));
 
         _mockWalletClient
-            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletRefundResult.Success());
 
         _mockWalletClient
             .Setup(w => w.RefundOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -221,7 +221,7 @@ public class EndToEndFlowTests : IDisposable
 
         var request = new CheckoutQuoteRequest(
             cartItemIds,
-            new ShippingAddressInput("Nguyen Van Buyer", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            new ShippingAddressInput("Nguyen Van Buyer", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             "0901234567",
             PaymentMethod.Wallet
         );
@@ -247,7 +247,7 @@ public class EndToEndFlowTests : IDisposable
 
         var quote = await orderService.QuoteCheckoutAsync(_buyerId, new CheckoutQuoteRequest(
             cart.Items.Select(i => i.Id).ToList(),
-            new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+            new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
             "0901234567",
             PaymentMethod.Wallet
         ), CancellationToken.None);
@@ -270,7 +270,7 @@ public class EndToEndFlowTests : IDisposable
         // Kịch bản B: Khách lấy lại quote mới (với giá 120k). Sau đó Catalog GIẢM GIÁ xuống 90k -> TỰ ÁP DỤNG & TẠO ĐƠN THÀNH CÔNG
         var newQuote = await orderService.QuoteCheckoutAsync(_buyerId, new CheckoutQuoteRequest(
             cart.Items.Select(i => i.Id).ToList(),
-            new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+            new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
             "0901234567",
             PaymentMethod.Wallet
         ), CancellationToken.None);
@@ -302,7 +302,7 @@ public class EndToEndFlowTests : IDisposable
 
         var quote = await orderService.QuoteCheckoutAsync(_buyerId, new CheckoutQuoteRequest(
             cart.Items.Select(i => i.Id).ToList(),
-            new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+            new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
             "0901234567",
             PaymentMethod.Wallet
         ), CancellationToken.None);
@@ -346,7 +346,7 @@ public class EndToEndFlowTests : IDisposable
             BuyerId = _buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(
@@ -743,7 +743,7 @@ public class EndToEndFlowTests : IDisposable
         // 3. Request Checkout Quote with Shopee 2-tier vouchers (1 voucher per shop + 1 system voucher)
         var quoteReq = new CheckoutQuoteRequest(
             CartItemIds: cartItemIds,
-            ShippingAddress: new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567",
             PaymentMethod: PaymentMethod.Wallet,
             VoucherCodes: new List<string> { "SHOP20K", "PROD10K", "SYS30K" }
@@ -848,7 +848,7 @@ public class EndToEndFlowTests : IDisposable
 
         var quoteReq = new CheckoutQuoteRequest(
             CartItemIds: cartItemIds,
-            ShippingAddress: new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Buyer", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567",
             PaymentMethod: PaymentMethod.Wallet,
             VoucherCodes: new List<string> { "PROD_A1", "SHOP_A1" }

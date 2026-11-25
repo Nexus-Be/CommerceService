@@ -21,7 +21,10 @@ public interface ICommerceDbContext
     DbSet<OrderInvoice> OrderInvoices { get; }
     DbSet<OrderCancellation> OrderCancellations { get; }
     DbSet<OrderRefund> OrderRefunds { get; }
+    DbSet<RefundFundCase> RefundFundCases { get; }
+    DbSet<DeliveryFailureAttempt> DeliveryFailureAttempts { get; }
     DbSet<SystemSetting> SystemSettings { get; }
+    DbSet<SettlementSnapshot> SettlementSnapshots { get; }
     DbSet<DailyOrderSequence> DailyOrderSequences { get; }
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<NotificationOutboxItem> NotificationOutbox { get; }

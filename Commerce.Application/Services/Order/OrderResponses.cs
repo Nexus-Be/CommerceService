@@ -1,4 +1,4 @@
-namespace Commerce.Application.Services.Order;
+﻿namespace Commerce.Application.Services.Order;
 
 using System;
 using System.Collections.Generic;
@@ -25,6 +25,12 @@ public sealed record ShopOrderQuote(
     decimal ShippingFeeAmount,
     decimal TotalAmount);
 
+/// <summary>One voucher that was applied to a quote, with what it took off and for which shop (null for a platform-wide voucher spread over shops).</summary>
+public sealed record AppliedVoucherDetail(string Code, string ScopeType, Guid? OwnerSellerId, decimal DiscountAmount);
+
+/// <summary>A voucher the buyer asked for that was left out, with a stable reason code (NOT_FOUND, NOT_ACTIVE, NOT_STARTED, EXPIRED, MIN_ORDER_NOT_MET, USAGE_LIMIT_REACHED, USER_LIMIT_REACHED, SCOPE_MISMATCH, EVALUATION_FAILED).</summary>
+public sealed record RejectedVoucherDetail(string Code, string ReasonCode);
+
 public sealed record CheckoutQuoteResponse(
     Guid QuoteId,
     decimal GrandTotal,
@@ -32,7 +38,9 @@ public sealed record CheckoutQuoteResponse(
     List<ShopOrderQuote> Shops,
     List<string> AppliedVouchers,
     List<string>? Warnings,
-    DateTimeOffset ExpiredAt);
+    DateTimeOffset ExpiredAt,
+    List<AppliedVoucherDetail>? AppliedVoucherDetails = null,
+    List<RejectedVoucherDetail>? RejectedVouchers = null);
 
 public sealed record PriceDropDto(
     Guid SkuId,
@@ -81,7 +89,10 @@ public sealed record SubOrderDetailResponse(
     decimal ShippingFeeAmount,
     decimal TotalAmount,
     DateTimeOffset CreatedAt,
-    List<SubOrderItemResponse> Items);
+    List<SubOrderItemResponse> Items,
+    string? CarrierCode = null,
+    string? TrackingCode = null,
+    bool ShipmentPendingCreation = false);
 
 public sealed record SubOrderShipmentInfo(
     Guid SubOrderId,
@@ -243,6 +254,13 @@ public sealed record ChangeShippingAddressResponse(
     decimal TotalAmount,
     DateTimeOffset UpdatedAt
 );
+
+/// <summary>Outcome of a dispute refund. Status is Refunded, AlreadyRefunded, ManualProcessingRequired or Failed (nothing moved, safe to retry).</summary>
+public sealed record SubOrderDisputeRefundResponse(
+    string Status,
+    decimal Amount,
+    Guid? RefundId,
+    string? Message);
 
 public sealed record RefundDetailResponse(
     Guid Id,

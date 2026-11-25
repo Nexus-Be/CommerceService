@@ -488,9 +488,9 @@ public class FulfillmentClientTests
     }
 
     [Fact]
-    public async Task ReserveStockAsync_ShouldReturnFalse_WhenFulfillmentFailsAndEnvironmentIsNotDevelopment()
+    public async Task ReserveStockAsync_ShouldThrow503_WhenFulfillmentAnswersServerErrorAndFailOpenIsFalse()
     {
-        // Arrange (Fail-Closed governance)
+        // Arrange (Fail-Closed governance: 5xx outage throws 503 FULFILLMENT_UNAVAILABLE)
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ASPNETCORE_ENVIRONMENT"] = "Production",
@@ -502,11 +502,11 @@ public class FulfillmentClientTests
 
         var items = new List<StockReservationItem> { new(Guid.NewGuid(), 1, Guid.NewGuid()) };
 
-        // Act
-        var result = await client.ReserveStockAsync(Guid.NewGuid(), items, ct: CancellationToken.None);
-
-        // Assert
-        result.Should().BeFalse();
+        // Act & Assert
+        var act = () => client.ReserveStockAsync(Guid.NewGuid(), items, ct: CancellationToken.None);
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Which.ErrorCode.Should().Be("FULFILLMENT_UNAVAILABLE");
+        ex.Which.StatusCode.Should().Be(503);
     }
 
     [Fact]
@@ -538,7 +538,7 @@ public class FulfillmentClientTests
         // Act & Assert
         var act = () => client.ReserveStockAsync(Guid.NewGuid(), items, ct: CancellationToken.None);
         var ex = await act.Should().ThrowAsync<CommerceDomainException>();
-        ex.Which.ErrorCode.Should().Be("STOCK_RESERVATION_FAILED");
+        ex.Which.ErrorCode.Should().Be("FULFILLMENT_UNAVAILABLE");
         ex.Which.StatusCode.Should().Be(503);
     }
 

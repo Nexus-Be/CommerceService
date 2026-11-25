@@ -22,7 +22,7 @@ public class OrderRequoteTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IWalletClient> _mockWalletClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IUserClient> _mockUserClient = new();
     private readonly Mock<ILogger<OrderService>> _mockLogger = new();
@@ -85,7 +85,7 @@ public class OrderRequoteTests : IDisposable
 
         var request = new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { Guid.NewGuid() },
-            ShippingAddress: new ShippingAddressInput("Buyer", "0901234567", "Old Street", "Ward 1", "District 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Buyer", "0901234567", "Old Street", "Ward 1", "District 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         );
 
@@ -118,7 +118,7 @@ public class OrderRequoteTests : IDisposable
             District: "Quan 10",
             Province: "TP.HCM",
             GhnDistrictId: 1450,
-            GhnWardCode: "21001",
+            GhnWardCode: "21001", ProvinceId: 202,
             FullAddressText: "999 Ba Thang Hai, Phuong 14, Quan 10, TP.HCM",
             IsDefault: false
         );

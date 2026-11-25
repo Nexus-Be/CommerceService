@@ -1,4 +1,4 @@
-namespace Commerce.Application.Services.Order;
+﻿namespace Commerce.Application.Services.Order;
 
 using Commerce.Application.Services.Shipment;
 using System;
@@ -13,6 +13,7 @@ using Microsoft.Extensions.Logging;
 using Commerce.Application.Common;
 using Commerce.Application.Common.Models;
 using Commerce.Application.Interfaces;
+using Commerce.Application.Services.Delivery;
 using Commerce.Application.Services.Discount;
 using Commerce.Domain.Entities;
 using Commerce.Domain.Enums;
@@ -31,6 +32,8 @@ public sealed class OrderService : IOrderService
     private readonly IVoucherDiscountCalculator? _voucherCalculator;
     private readonly IVoucherLifecycleService? _voucherLifecycleService;
     private readonly INotificationSettings? _notificationSettings;
+    private readonly ISettlementService? _settlementService;
+    private readonly IDeliveryFailurePolicy? _deliveryFailurePolicy;
 
     public OrderService(
         ICommerceDbContext dbContext,
@@ -39,7 +42,7 @@ public sealed class OrderService : IOrderService
         ICatalogClient catalogClient,
         IDistributedCache cache,
         ILogger<OrderService> logger)
-        : this(dbContext, walletClient, fulfillmentClient, catalogClient, null!, cache, logger, null, null, null)
+        : this(dbContext, walletClient, fulfillmentClient, catalogClient, null!, cache, logger, null, null, null, null)
     {
     }
 
@@ -53,9 +56,13 @@ public sealed class OrderService : IOrderService
         ILogger<OrderService> logger,
         IVoucherDiscountCalculator? voucherCalculator = null,
         IVoucherLifecycleService? voucherLifecycleService = null,
-        INotificationSettings? notificationSettings = null)
+        INotificationSettings? notificationSettings = null,
+        ISettlementService? settlementService = null,
+        IDeliveryFailurePolicy? deliveryFailurePolicy = null)
     {
+        _deliveryFailurePolicy = deliveryFailurePolicy;
         _notificationSettings = notificationSettings;
+        _settlementService = settlementService;
         _dbContext = dbContext;
         _walletClient = walletClient;
         _fulfillmentClient = fulfillmentClient;
@@ -65,6 +72,91 @@ public sealed class OrderService : IOrderService
         _logger = logger;
         _voucherCalculator = voucherCalculator;
         _voucherLifecycleService = voucherLifecycleService;
+    }
+
+    /// <summary>
+    /// Pays the seller of a completed sub-order through the shared settlement service (protocol V2 snapshot and retry state, or the
+    /// legacy route for V1 orders). Without the service (older wiring) it falls back to the legacy wallet call.
+    /// </summary>
+    private async Task<bool> SettleSubOrderPayoutAsync(SubOrder so, CancellationToken ct)
+    {
+        if (_settlementService != null)
+        {
+            return await _settlementService.SettleSubOrderAsync(so, ct);
+        }
+
+        if (so.SellerReceiveAmount <= 0m)
+        {
+            return true;
+        }
+
+        return await _walletClient.SettleSellerSubOrderAsync(so.Id, so.SellerId, so.SellerReceiveAmount, idempotencyKey: $"settle-{so.Id}", cancellationToken: ct);
+    }
+
+    /// <summary>Drops an order and its sub-orders that were never saved, and unlinks the voucher usages that were pointed at them.</summary>
+    private void DiscardUnsavedOrder(Order order, IEnumerable<SubOrder> subOrders, IReadOnlyCollection<Guid> usageIds)
+    {
+        foreach (var so in subOrders.ToList())
+        {
+            foreach (var item in so.Items.ToList())
+            {
+                _dbContext.SubOrderItems.Remove(item);
+            }
+
+            _dbContext.SubOrders.Remove(so);
+        }
+
+        _dbContext.Orders.Remove(order);
+        foreach (var usage in _dbContext.DiscountCodeUsages.Local.Where(u => usageIds.Contains(u.Id)))
+        {
+            usage.OrderId = null;
+            usage.SubOrderId = null;
+        }
+    }
+
+    private async Task ReleaseHeldSubsidiesAsync(IReadOnlyCollection<SubOrder> heldSubOrders, string reason)
+    {
+        if (_settlementService == null)
+        {
+            return;
+        }
+
+        foreach (var so in heldSubOrders)
+        {
+            try
+            {
+                if (await _settlementService.ReleaseSubsidyAsync(so.Id, reason, CancellationToken.None))
+                {
+                    so.SubsidyState = SubsidyState.Released;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to release the platform subsidy of sub-order '{SubOrderId}'.", so.Id);
+            }
+        }
+    }
+
+    /// <summary>Durable key of the platform fee rate in SystemSettings (the cache is only an accelerator).</summary>
+    public const string PlatformFeeSettingKey = "PLATFORM_FEE_PERCENT";
+
+    /// <summary>
+    /// The configured rate applies to wallet-paid orders only. COD is fixed at 0% until the cash reconciliation
+    /// path and the collecting party are agreed (decision 5 of the payout plan).
+    /// </summary>
+    internal static decimal ResolvePlatformFeePercent(PaymentMethod paymentMethod, decimal walletOrderPercent) =>
+        paymentMethod == PaymentMethod.Cod ? 0m : walletOrderPercent;
+
+    private static void EnsureNoSystemDiscountOnCod(PaymentMethod paymentMethod, VoucherCalculationResult? result)
+    {
+        if (paymentMethod != PaymentMethod.Cod || result == null) return;
+        if (result.ShopDiscounts.Values.Any(b => b.SystemDiscountAmount > 0m))
+        {
+            throw new CommerceDomainException(
+                "SYSTEM_VOUCHER_NOT_ALLOWED_FOR_COD",
+                "Platform vouchers cannot be used with cash on delivery. Remove the platform voucher or pay by wallet.",
+                409);
+        }
     }
 
     private async Task<decimal> GetActivePlatformMarkupPercentAsync(CancellationToken ct)
@@ -89,13 +181,64 @@ public sealed class OrderService : IOrderService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to retrieve platform fee percent from cache. Using fallback default.");
+            _logger.LogWarning(ex, "Failed to retrieve platform fee percent from cache. Falling back to the stored setting.");
+        }
+
+        // The cache is only an accelerator. A cold or flushed cache must not silently reset the rate to 0%.
+        try
+        {
+            var stored = await _dbContext.SystemSettings.AsNoTracking()
+                .Where(s => s.SettingKey == PlatformFeeSettingKey)
+                .Select(s => s.SettingValue)
+                .FirstOrDefaultAsync(ct);
+            if (!string.IsNullOrEmpty(stored) &&
+                decimal.TryParse(stored, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var storedPercent) &&
+                storedPercent >= 0m && storedPercent <= 100m)
+            {
+                try
+                {
+                    await _cache.SetStringAsync("commerce:platform_fee_percent",
+                        storedPercent.ToString("G", System.Globalization.CultureInfo.InvariantCulture), ct);
+                }
+                catch (Exception cacheEx)
+                {
+                    _logger.LogWarning(cacheEx, "Failed to refill the platform fee cache.");
+                }
+                return storedPercent;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read the stored platform fee percent. Using fallback default.");
         }
 
         return 0.0m;
     }
 
+    /// <summary>
+    /// Resolves the address of a quote, a re-quote or an address change, then requires its province, district and ward to be confirmed by the
+    /// GHN lists. Every way of giving an address (typed in, address book, default address) ends here, so none of them skips the check.
+    /// </summary>
     private async Task<(ShippingAddressInput Address, string ContactPhone)> ResolveShippingAddressAsync(
+        Guid buyerId,
+        Guid? addressId,
+        ShippingAddressInput? rawAddress,
+        string? contactPhone,
+        CancellationToken ct)
+    {
+        var resolved = await ResolveShippingAddressUncheckedAsync(buyerId, addressId, rawAddress, contactPhone, ct);
+        var confirmed = await Common.ShippingChain.EnsureConfirmedAsync(_fulfillmentClient, resolved.Address.ProvinceId, resolved.Address.GhnDistrictId, resolved.Address.GhnWardCode, ct);
+        // What is cached with the quote, kept on the order and shown to the carrier carries the names of the confirmed codes, not the typed text.
+        var named = resolved.Address with
+        {
+            Province = confirmed.ProvinceName ?? resolved.Address.Province,
+            District = confirmed.DistrictName ?? resolved.Address.District,
+            Ward = confirmed.WardName ?? resolved.Address.Ward,
+        };
+        return (named, resolved.ContactPhone);
+    }
+
+    private async Task<(ShippingAddressInput Address, string ContactPhone)> ResolveShippingAddressUncheckedAsync(
         Guid buyerId,
         Guid? addressId,
         ShippingAddressInput? rawAddress,
@@ -124,7 +267,8 @@ public sealed class OrderService : IOrderService
                 District: address.District,
                 Province: address.Province,
                 GhnDistrictId: address.GhnDistrictId,
-                GhnWardCode: address.GhnWardCode
+                GhnWardCode: address.GhnWardCode,
+                ProvinceId: address.ProvinceId
             );
             return (resolved, phone);
         }
@@ -150,7 +294,7 @@ public sealed class OrderService : IOrderService
                 throw new CommerceDomainException("INVALID_SHIPPING_ADDRESS", "Shipping address must contain valid GHN district and ward codes for carrier calculation.", 400);
             }
 
-            return (rawAddress with { ContactPhone = phone }, phone);
+            return (rawAddress with { ContactPhone = phone, GhnWardCode = rawAddress.GhnWardCode!.Trim() }, phone);
         }
 
         var defaultAddr = await _userClient.GetBuyerDefaultAddressAsync(buyerId, ct);
@@ -173,7 +317,8 @@ public sealed class OrderService : IOrderService
             District: defaultAddr.District,
             Province: defaultAddr.Province,
             GhnDistrictId: defaultAddr.GhnDistrictId,
-            GhnWardCode: defaultAddr.GhnWardCode
+            GhnWardCode: defaultAddr.GhnWardCode,
+            ProvinceId: defaultAddr.ProvinceId
         );
         return (defaultResolved, defaultPhone);
     }
@@ -282,6 +427,12 @@ public sealed class OrderService : IOrderService
             {
                 throw;
             }
+            // A shop with no usable warehouse cannot ship at all, so the buyer is told instead of being charged a default fee for a parcel
+            // nobody can send. Only a real outage (the next catch) falls back to the default rate.
+            catch (CommerceDomainException ex) when (ex.ErrorCode is "SELLER_WAREHOUSE_MISSING" or "SELLER_WAREHOUSE_INCOMPLETE")
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to calculate dynamic carrier shipping fee for Shop '{SellerId}'. Falling back to default rate.", sellerId);
@@ -316,6 +467,7 @@ public sealed class OrderService : IOrderService
                     calculationItems);
 
                 voucherResult = await _voucherCalculator.CalculateDiscountsAsync(vCalcRequest, ct);
+                EnsureNoSystemDiscountOnCod(request.PaymentMethod, voucherResult);
             }
             catch (CommerceDomainException)
             {
@@ -342,7 +494,7 @@ public sealed class OrderService : IOrderService
 
             decimal discountAmount = productDiscount + shopDiscount + systemDiscount;
             decimal netSeller = Math.Max(0m, pq.ItemsAmount - productDiscount - shopDiscount);
-            decimal platformFeeAmount = Math.Round(netSeller * (platformMarkupPercent / 100m), 0, MidpointRounding.AwayFromZero);
+            decimal platformFeeAmount = Math.Round(netSeller * (ResolvePlatformFeePercent(request.PaymentMethod, platformMarkupPercent) / 100m), 0, MidpointRounding.AwayFromZero);
             decimal sellerReceiveAmount = Math.Max(0m, netSeller - platformFeeAmount);
             decimal totalAmount = Math.Max(0m, netSeller - systemDiscount) + pq.ShippingFee;
 
@@ -375,9 +527,20 @@ public sealed class OrderService : IOrderService
             _logger.LogWarning(ex, "Failed to fetch real-time wallet balance for Buyer '{BuyerId}'. Fallback to 0.", buyerId);
         }
 
-        var appliedVouchers = voucherResult?.AppliedVouchers != null && voucherResult.AppliedVouchers.Count > 0
-            ? voucherResult.AppliedVouchers.ToList()
-            : request.VoucherCodes ?? new List<string>();
+        // Only vouchers the engine actually applied are reported as applied. Falling back to the requested codes
+        // used to show rejected vouchers as applied and then fail at order time.
+        var appliedVouchers = voucherResult?.AppliedVouchers?.ToList() ?? new List<string>();
+
+        var appliedDetails = voucherResult?.AllocatedUsages?
+            .GroupBy(u => new { u.Code, u.ScopeType, u.SubOrderSellerId })
+            .Select(g => new AppliedVoucherDetail(g.Key.Code, g.Key.ScopeType.ToString(), g.Key.SubOrderSellerId, g.Sum(x => x.DiscountAmount)))
+            .ToList();
+
+        var rejectedDetails = voucherResult?.RejectedVouchers?
+            .Select(code => new RejectedVoucherDetail(
+                code,
+                voucherResult.RejectedReasons != null && voucherResult.RejectedReasons.TryGetValue(code, out var reason) ? reason : "REJECTED"))
+            .ToList();
 
         var warnings = voucherResult?.Warnings != null && voucherResult.Warnings.Count > 0
             ? voucherResult.Warnings.ToList()
@@ -392,7 +555,9 @@ public sealed class OrderService : IOrderService
             shopQuotes,
             appliedVouchers,
             warnings,
-            expiredAt
+            expiredAt,
+            appliedDetails,
+            rejectedDetails
         );
 
         // Lưu vào Distributed Cache (Redis / Memory) với TTL 15 phút (ISSUE-01)
@@ -409,7 +574,8 @@ public sealed class OrderService : IOrderService
             BuyerId = buyerId,
             Request = effectiveRequest,
             Response = quoteResponse,
-            ExpiredAt = expiredAt
+            ExpiredAt = expiredAt,
+            PlatformFeePercent = platformMarkupPercent
         });
 
         await _cache.SetStringAsync(quoteKey, quotePayload, new DistributedCacheEntryOptions
@@ -506,7 +672,9 @@ public sealed class OrderService : IOrderService
             updatedShops,
             cachedQuote.Response.AppliedVouchers,
             cachedQuote.Response.Warnings,
-            cachedQuote.ExpiredAt
+            cachedQuote.ExpiredAt,
+            cachedQuote.Response.AppliedVoucherDetails,
+            cachedQuote.Response.RejectedVouchers
         );
 
         var effectiveRequest = cachedQuote.Request with
@@ -522,7 +690,8 @@ public sealed class OrderService : IOrderService
             BuyerId = buyerId,
             Request = effectiveRequest,
             Response = updatedResponse,
-            ExpiredAt = cachedQuote.ExpiredAt
+            ExpiredAt = cachedQuote.ExpiredAt,
+            PlatformFeePercent = cachedQuote.PlatformFeePercent
         };
 
         await _cache.SetStringAsync(quoteKey, JsonSerializer.Serialize(updatedCachedQuote), new DistributedCacheEntryOptions
@@ -763,6 +932,20 @@ public sealed class OrderService : IOrderService
 
                 recalculatedVouchers = await _voucherCalculator.CalculateDiscountsAsync(vReq, ct);
 
+                // A voucher shown as applied in the quote that no longer applies (limit reached by someone else,
+                // expired, minimum no longer met) must stop the order. Creating it anyway would charge more than quoted.
+                var stillApplied = new HashSet<string>(recalculatedVouchers.AppliedVouchers ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+                var lost = cachedQuote.Response.AppliedVouchers.Where(code => !stillApplied.Contains(code)).ToList();
+                if (lost.Count > 0)
+                {
+                    throw new CommerceDomainException(
+                        "VOUCHER_NO_LONGER_VALID",
+                        $"Voucher '{string.Join(", ", lost)}' can no longer be applied. Please request a new quote.",
+                        409);
+                }
+
+                EnsureNoSystemDiscountOnCod(request.PaymentMethod, recalculatedVouchers);
+
                 if (_voucherLifecycleService != null && recalculatedVouchers.AllocatedUsages != null && recalculatedVouchers.AllocatedUsages.Count > 0)
                 {
                     var ids = await _voucherLifecycleService.ReserveVouchersAsync(buyerId, recalculatedVouchers.AllocatedUsages, ct);
@@ -781,7 +964,9 @@ public sealed class OrderService : IOrderService
 
         decimal grandTotal = 0m;
         var createdSubOrders = new List<SubOrder>();
-        var platformMarkupPercent = await GetActivePlatformMarkupPercentAsync(ct);
+        // Reuse the rate the buyer was quoted; only quotes created before the snapshot existed fall back to the current rate.
+        var walletOrderPercent = cachedQuote.PlatformFeePercent ?? await GetActivePlatformMarkupPercentAsync(ct);
+        var platformMarkupPercent = ResolvePlatformFeePercent(request.PaymentMethod, walletOrderPercent);
 
         foreach (var shop in cachedQuote.Response.Shops)
         {
@@ -802,7 +987,8 @@ public sealed class OrderService : IOrderService
                 cachedQuote.Request.ShippingAddress?.Province ?? string.Empty,
                 cachedQuote.Request.ShippingAddress?.GhnDistrictId ?? 0,
                 cachedQuote.Request.ShippingAddress?.GhnWardCode ?? "",
-                effectiveFullAddress
+                effectiveFullAddress,
+                provinceId: cachedQuote.Request.ShippingAddress?.ProvinceId
             );
 
             decimal shopItemsAmount = 0m;
@@ -858,6 +1044,8 @@ public sealed class OrderService : IOrderService
                 productDiscount = freshBreakdown.ProductDiscountAmount;
             }
 
+            subOrder.PlatformFeePercent = platformMarkupPercent;
+            subOrder.SettlementProtocolVersion = _settlementService?.NewOrderProtocolVersion ?? 1;
             subOrder.CalculateFinancials(
                 shippingFee: shop.ShippingFeeAmount,
                 shopDiscount: shopDiscount,
@@ -914,6 +1102,35 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("INSUFFICIENT_STOCK", "One or more items in the order have insufficient stock.", 400);
         }
 
+        // Platform-funded voucher discounts (protocol V2, wallet payment): the budget must cover them before the buyer pays, one reservation per
+        // sub-order. If the budget cannot cover one, nothing is charged and the buyer is asked to re-quote and confirm the new total.
+        var heldSubsidySubOrders = new List<SubOrder>();
+        if (request.PaymentMethod == PaymentMethod.Wallet && _settlementService != null)
+        {
+            try
+            {
+                foreach (var so in createdSubOrders.Where(s => s.SettlementProtocolVersion >= 2 && s.SystemDiscountAmount > 0m))
+                {
+                    await _settlementService.HoldSubsidyAsync(orderId, so.Id, so.SystemDiscountAmount, ct);
+                    so.SubsidyState = SubsidyState.Held;
+                    heldSubsidySubOrders.Add(so);
+                }
+            }
+            catch
+            {
+                await ReleaseHeldSubsidiesAsync(heldSubsidySubOrders, "Order creation failed before payment");
+                await _fulfillmentClient.ReleaseStockAsync(orderId, CancellationToken.None);
+                // Releasing the voucher reservations saves the unit of work, which would also persist the order that is being refused.
+                DiscardUnsavedOrder(order, createdSubOrders, reservedUsageIds);
+                if (reservedUsageIds.Count > 0 && _voucherLifecycleService != null)
+                {
+                    await _voucherLifecycleService.ReleaseReservationsAsync(reservedUsageIds, CancellationToken.None);
+                }
+
+                throw;
+            }
+        }
+
         bool paid = false;
 
         // Tích hợp thanh toán ví theo hợp đồng chuẩn của WalletService
@@ -967,6 +1184,7 @@ public sealed class OrderService : IOrderService
                     orderId, paymentResult?.ErrorCode, paymentResult?.ErrorMessage);
 
                 await _fulfillmentClient.ReleaseStockAsync(orderId, ct);
+                await ReleaseHeldSubsidiesAsync(heldSubsidySubOrders, "Order payment failed");
 
                 if (reservedUsageIds.Count > 0 && _voucherLifecycleService != null)
                 {
@@ -1093,6 +1311,9 @@ public sealed class OrderService : IOrderService
                 }
             }
 
+            // 2b. Rollback ngân sách voucher sàn: trả lại phần nền tảng chịu đã giữ chỗ
+            await ReleaseHeldSubsidiesAsync(heldSubsidySubOrders, "Order creation failed during database persistence.");
+
             // 3. Rollback Voucher: Giải phóng các voucher đã giữ chỗ
             if (reservedUsageIds.Count > 0 && _voucherLifecycleService != null)
             {
@@ -1176,7 +1397,10 @@ public sealed class OrderService : IOrderService
                 i.Quantity,
                 i.UnitPrice,
                 i.LineTotal
-            )).ToList()
+            )).ToList(),
+            so.CarrierCode,
+            so.TrackingCode,
+            so.ShipmentPendingCreation
         )).ToList();
 
         var orderNo = $"ORD-{order.Id.ToString()[..8].ToUpperInvariant()}";
@@ -1291,7 +1515,10 @@ public sealed class OrderService : IOrderService
                 i.Quantity,
                 i.UnitPrice,
                 i.LineTotal
-            )).ToList()
+            )).ToList(),
+            so.CarrierCode,
+            so.TrackingCode,
+            so.ShipmentPendingCreation
         );
     }
 
@@ -1507,7 +1734,7 @@ public sealed class OrderService : IOrderService
                     CancellationId = cancellationId,
                     RefundType = RefundType.Full,
                     Amount = so.TotalAmount,
-                    Status = RefundStatus.Requested,
+                    Status = RefundStatus.WalletPending,
                     ReasonCode = "SELLER_CANCELLED",
                     ReasonNote = request.ReasonText ?? "Seller cancelled order.",
                     ActorRole = OrderActorRole.Seller,
@@ -1515,20 +1742,18 @@ public sealed class OrderService : IOrderService
                     RequestedAt = DateTimeOffset.UtcNow
                 };
 
+                // The decision is recorded before the wallet is asked: a crash or a refusal leaves a pending refund that the worker retries.
+                _dbContext.OrderRefunds.Add(refund);
+                await _dbContext.SaveChangesAsync(ct);
+
                 try
                 {
-                    var refundSucceeded = await _walletClient.RefundSubOrderPaymentAsync(
-                        so.Id,
-                        so.BuyerId.ToString(),
-                        so.TotalAmount,
-                        request.ReasonText ?? "Seller cancelled order.",
-                        idempotencyKey: $"refund-suborder-cancel-{so.Id}",
-                        cancellationToken: ct);
+                    var walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+                        so.Id, so.OrderId, so.BuyerId.ToString(), so.TotalAmount, request.ReasonText ?? "Seller cancelled order.", ct);
+                    var refundSucceeded = await RefundOutcome.ApplyAsync(_dbContext, refund, walletResult, ct);
 
                     if (refundSucceeded)
                     {
-                        refund.Status = RefundStatus.Completed;
-                        refund.CompletedAt = DateTimeOffset.UtcNow;
                         _logger.LogInformation("SubOrder '{SubOrderId}' refund on cancel succeeded via WalletClient. Amount: {Amount}", so.Id, so.TotalAmount);
                     }
                 }
@@ -1536,8 +1761,6 @@ public sealed class OrderService : IOrderService
                 {
                     _logger.LogError(ex, "Failed to automatically refund wallet balance on cancel for SubOrder '{SubOrderId}'.", so.Id);
                 }
-
-                _dbContext.OrderRefunds.Add(refund);
             }
             else if (so.PaymentMethod == PaymentMethod.Cod)
             {
@@ -1561,7 +1784,7 @@ public sealed class OrderService : IOrderService
                 CancellationId = null,
                 RefundType = RefundType.Full,
                 Amount = refundAmount,
-                Status = RefundStatus.Requested,
+                Status = RefundStatus.WalletPending,
                 ReasonCode = "BUYER_CANCELLED",
                 ReasonNote = request.ReasonText ?? "Buyer cancelled order before shipping.",
                 ActorRole = OrderActorRole.Buyer,
@@ -1681,7 +1904,7 @@ public sealed class OrderService : IOrderService
                 CancellationId = cancellationId,
                 RefundType = RefundType.Full,
                 Amount = refundAmount,
-                Status = RefundStatus.Requested,
+                Status = RefundStatus.WalletPending,
                 ReasonCode = "BUYER_CANCELLED",
                 ReasonNote = request.ReasonNote ?? "Buyer cancelled sub-order before shipping.",
                 ActorRole = OrderActorRole.Buyer,
@@ -1689,20 +1912,18 @@ public sealed class OrderService : IOrderService
                 RequestedAt = now
             };
 
+            // The decision is recorded before the wallet is asked: a crash or a refusal leaves a pending refund that the worker retries.
+            _dbContext.OrderRefunds.Add(refund);
+            await _dbContext.SaveChangesAsync(ct);
+
             try
             {
-                var refundSucceeded = await _walletClient.RefundSubOrderPaymentAsync(
-                    subOrder.Id,
-                    subOrder.BuyerId.ToString(),
-                    refundAmount,
-                    request.ReasonNote ?? "Buyer cancelled sub-order before shipping.",
-                    idempotencyKey: $"refund-suborder-cancel-{subOrder.Id}",
-                    cancellationToken: ct);
+                var walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+                    subOrder.Id, subOrder.OrderId, subOrder.BuyerId.ToString(), refundAmount, request.ReasonNote ?? "Buyer cancelled sub-order before shipping.", ct);
+                var refundSucceeded = await RefundOutcome.ApplyAsync(_dbContext, refund, walletResult, ct);
 
                 if (refundSucceeded)
                 {
-                    refund.Status = RefundStatus.Completed;
-                    refund.CompletedAt = DateTimeOffset.UtcNow;
                     _logger.LogInformation("SubOrder '{SubOrderId}' refund on cancel succeeded via WalletClient. Amount: {Amount}", subOrder.Id, refundAmount);
                 }
             }
@@ -1711,7 +1932,6 @@ public sealed class OrderService : IOrderService
                 _logger.LogError(ex, "Failed to automatically refund wallet balance on cancel for SubOrder '{SubOrderId}'.", subOrder.Id);
             }
 
-            _dbContext.OrderRefunds.Add(refund);
         }
         else if (subOrder.PaymentMethod == PaymentMethod.Cod)
         {
@@ -1992,7 +2212,7 @@ public sealed class OrderService : IOrderService
                 CancellationId = cancellationId,
                 RefundType = RefundType.Full,
                 Amount = so.TotalAmount,
-                Status = RefundStatus.Requested,
+                Status = RefundStatus.WalletPending,
                 ReasonCode = "SELLER_REJECTED",
                 ReasonNote = request.ReasonText ?? "Shop rejected sub-order after payment.",
                 ActorRole = OrderActorRole.Seller,
@@ -2000,20 +2220,18 @@ public sealed class OrderService : IOrderService
                 RequestedAt = DateTimeOffset.UtcNow
             };
 
+            // The decision is recorded before the wallet is asked: a crash or a refusal leaves a pending refund that the worker retries.
+            _dbContext.OrderRefunds.Add(refund);
+            await _dbContext.SaveChangesAsync(ct);
+
             try
             {
-                var refundSucceeded = await _walletClient.RefundSubOrderPaymentAsync(
-                    so.Id,
-                    so.BuyerId.ToString(),
-                    so.TotalAmount,
-                    request.ReasonText ?? "Shop rejected sub-order after payment.",
-                    idempotencyKey: $"refund-suborder-{so.Id}",
-                    cancellationToken: ct);
+                var walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+                    so.Id, so.OrderId, so.BuyerId.ToString(), so.TotalAmount, request.ReasonText ?? "Shop rejected sub-order after payment.", ct);
+                var refundSucceeded = await RefundOutcome.ApplyAsync(_dbContext, refund, walletResult, ct);
 
                 if (refundSucceeded)
                 {
-                    refund.Status = RefundStatus.Completed;
-                    refund.CompletedAt = DateTimeOffset.UtcNow;
                     _logger.LogInformation("SubOrder '{SubOrderId}' refund succeeded automatically via WalletClient. Amount: {Amount}", so.Id, so.TotalAmount);
                 }
                 else
@@ -2026,7 +2244,6 @@ public sealed class OrderService : IOrderService
                 _logger.LogError(ex, "Failed to automatically refund wallet balance for SubOrder '{SubOrderId}'. Flagged as Requested.", so.Id);
             }
 
-            _dbContext.OrderRefunds.Add(refund);
         }
         else if (so.PaymentMethod == PaymentMethod.Cod)
         {
@@ -2074,16 +2291,11 @@ public sealed class OrderService : IOrderService
             _logger.LogInformation("COD SubOrder '{SubOrderId}' confirmed. Courier reconciles physical cash directly. Skipping wallet escrow disbursement.", so.Id);
             settled = true;
         }
-        else if (so.SellerReceiveAmount > 0m)
+        else if (so.SellerReceiveAmount > 0m || (_settlementService != null && so.SettlementProtocolVersion >= 2 && so.TotalAmount > 0m))
         {
             try
             {
-                settled = await _walletClient.SettleSellerSubOrderAsync(
-                    so.Id,
-                    so.SellerId,
-                    so.SellerReceiveAmount,
-                    idempotencyKey: $"settle-{so.Id}",
-                    cancellationToken: ct);
+                settled = await SettleSubOrderPayoutAsync(so, ct);
 
                 if (settled)
                 {
@@ -2209,16 +2421,11 @@ public sealed class OrderService : IOrderService
                     _logger.LogInformation("COD SubOrder '{SubOrderId}' completed during master order complete. Courier reconciles physical cash directly. Skipping escrow disbursement.", so.Id);
                     subOrderSettled = true;
                 }
-                else if (so.SellerReceiveAmount > 0m)
+                else if (so.SellerReceiveAmount > 0m || (_settlementService != null && so.SettlementProtocolVersion >= 2 && so.TotalAmount > 0m))
                 {
                     try
                     {
-                        subOrderSettled = await _walletClient.SettleSellerSubOrderAsync(
-                            so.Id,
-                            so.SellerId,
-                            so.SellerReceiveAmount,
-                            idempotencyKey: $"settle-{so.Id}",
-                            cancellationToken: ct);
+                        subOrderSettled = await SettleSubOrderPayoutAsync(so, ct);
                     }
                     catch (Exception ex)
                     {
@@ -2420,7 +2627,7 @@ public sealed class OrderService : IOrderService
             {
                 try
                 {
-                    addressSnapshot = JsonSerializer.Deserialize<ShippingAddressSnapshot>(ao.ShippingAddress, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                    addressSnapshot = Commerce.Application.Services.AuctionOrder.AuctionAddressSnapshot.TryRead(ao.ShippingAddress)
                         ?? new ShippingAddressSnapshot(
                             receiverName: "Auction Winner",
                             contactPhone: ao.ContactPhone ?? "",
@@ -2489,7 +2696,7 @@ public sealed class OrderService : IOrderService
         }
 
         var hasPending = await _dbContext.OrderRefunds.AnyAsync(
-            r => r.SubOrderId == subOrderId && r.Status == RefundStatus.Requested && !r.IsDeleted,
+            r => r.SubOrderId == subOrderId && (r.Status == RefundStatus.Requested || r.Status == RefundStatus.WalletPending) && !r.IsDeleted,
             ct);
         if (hasPending)
         {
@@ -2539,6 +2746,130 @@ public sealed class OrderService : IOrderService
     public Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, string status, DateTimeOffset? deliveredAt, CancellationToken ct = default)
     {
         return UpdateSubOrderDeliveryStatusAsync(subOrderId, new UpdateDeliveryStatusRequest(status, deliveredAt), ct);
+    }
+
+    public async Task<SubOrderDisputeRefundResponse> RefundSubOrderForDisputeAsync(Guid subOrderId, Guid reportId, string? note, CancellationToken ct = default)
+    {
+        if (reportId == Guid.Empty)
+        {
+            throw new CommerceDomainException("VAL_INVALID_INPUT", "Report ID is required.", 400);
+        }
+
+        var so = await _dbContext.SubOrders.FirstOrDefaultAsync(s => s.Id == subOrderId, ct)
+            ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", subOrderId);
+
+        var refunds = await _dbContext.OrderRefunds
+            .Where(r => r.SubOrderId == subOrderId || (r.OrderId == so.OrderId && r.SubOrderId == null))
+            .ToListAsync(ct);
+
+        // Same report again: return what happened the first time, and retry only if the money did not move.
+        var existing = refunds.FirstOrDefault(r => r.SubOrderId == subOrderId && r.RequestEventId == reportId);
+        if (existing is { Status: RefundStatus.Completed })
+        {
+            return new SubOrderDisputeRefundResponse("AlreadyRefunded", existing.Amount, existing.Id, "This dispute was already refunded.");
+        }
+
+        if (existing is { Status: RefundStatus.Failed, FailureCode: RefundOutcome.AlreadyHeldByAnotherRefund })
+        {
+            return new SubOrderDisputeRefundResponse("ManualProcessingRequired", 0m, existing.Id, "The wallet already holds a refund of this sub-order made for another request; check it manually.");
+        }
+
+        if (so.Status is not (SubOrderStatus.Delivered or SubOrderStatus.Completed))
+        {
+            throw new CommerceDomainException("REFUND_NOT_ALLOWED", "Only a delivered sub-order can be refunded because of a dispute.", 409);
+        }
+
+        if (!so.PaidAt.HasValue || so.PaymentMethod != PaymentMethod.Wallet)
+        {
+            return new SubOrderDisputeRefundResponse("ManualProcessingRequired", 0m, null, "The sub-order was not paid from the wallet, so no wallet refund can be made automatically.");
+        }
+
+        // The money already went to the seller: refunding it needs a source of funds that does not exist yet (T30), so a person decides.
+        if (so.IsEscrowSettled)
+        {
+            return new SubOrderDisputeRefundResponse("ManualProcessingRequired", 0m, null, "The seller was already paid for this sub-order; the refund must be handled manually.");
+        }
+
+        // The wallet accepts one refund credit per reference, and the parent order and the sub-order are different references.
+        if (refunds.Any(r => r.SubOrderId == null && r.Status == RefundStatus.Completed))
+        {
+            return new SubOrderDisputeRefundResponse("ManualProcessingRequired", 0m, null, "The parent order was already refunded; the amount must be checked manually.");
+        }
+
+        var alreadyRefunded = refunds.Where(r => r.SubOrderId == subOrderId && r.Status == RefundStatus.Completed).Sum(r => r.Amount);
+        var amount = so.TotalAmount - alreadyRefunded;
+        if (amount <= 0)
+        {
+            return new SubOrderDisputeRefundResponse("AlreadyRefunded", alreadyRefunded, null, "The sub-order is already fully refunded.");
+        }
+
+        // The wallet keeps one refund per sub-order: a second credit for the rest would be refused (or taken for a replay of the first),
+        // so a sub-order that was already refunded in part is never completed automatically; a person decides what is still owed.
+        if (alreadyRefunded > 0)
+        {
+            return new SubOrderDisputeRefundResponse("ManualProcessingRequired", alreadyRefunded, null, "The sub-order was already partly refunded; the rest must be handled manually.");
+        }
+
+        var reason = string.IsNullOrWhiteSpace(note) ? "Dispute decided in favour of the buyer." : note.Trim();
+        var refund = existing;
+        if (refund == null)
+        {
+            refund = new OrderRefund
+            {
+                Id = Guid.NewGuid(),
+                OrderId = so.OrderId,
+                SubOrderId = so.Id,
+                RefundType = RefundType.Full,
+                Amount = amount,
+                Status = RefundStatus.WalletPending,
+                ReasonCode = "DISPUTE_RESOLVED",
+                ReasonNote = reason,
+                ActorRole = OrderActorRole.System,
+                RequestedBy = null,
+                RequestEventId = reportId,
+                RequestedAt = DateTimeOffset.UtcNow
+            };
+            _dbContext.OrderRefunds.Add(refund);
+            await _dbContext.SaveChangesAsync(ct);
+        }
+
+        // A refund left in the old waiting status by an earlier attempt has been decided (a dispute was resolved), so it is retried as such.
+        if (refund.Status == RefundStatus.Requested)
+        {
+            refund.Status = RefundStatus.WalletPending;
+            refund.UpdatedAt = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+        }
+
+        WalletRefundResult walletResult;
+        try
+        {
+            walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+                so.Id, so.OrderId, so.BuyerId.ToString(), refund.Amount, reason, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Dispute refund for SubOrder '{SubOrderId}' (report '{ReportId}') could not reach the wallet.", so.Id, reportId);
+            walletResult = WalletRefundResult.Failure("WALLET_UNREACHABLE");
+        }
+
+        var succeeded = await RefundOutcome.ApplyAsync(_dbContext, refund, walletResult, ct);
+        if (!succeeded)
+        {
+            if (refund.Status == RefundStatus.Failed && refund.FailureCode == RefundOutcome.AlreadyHeldByAnotherRefund)
+            {
+                await _dbContext.SaveChangesAsync(ct);
+                return new SubOrderDisputeRefundResponse("ManualProcessingRequired", 0m, refund.Id, "The wallet already holds a refund of this sub-order made for another request; check it manually.");
+            }
+
+            // The decision stays recorded as pending, so the worker retries it; nothing is reported as refunded.
+            refund.FailureCode = walletResult.ErrorCode ?? "WALLET_REFUND_FAILED";
+            await _dbContext.SaveChangesAsync(ct);
+            return new SubOrderDisputeRefundResponse("Failed", refund.Amount, refund.Id, "The wallet did not confirm the refund yet. It stays pending and is retried; nothing was recorded as refunded.");
+        }
+
+        await _dbContext.SaveChangesAsync(ct);
+        return new SubOrderDisputeRefundResponse("Refunded", refund.Amount, refund.Id, null);
     }
 
     public async Task UpdateSubOrderDeliveryStatusAsync(Guid subOrderId, UpdateDeliveryStatusRequest request, CancellationToken ct = default)
@@ -2670,6 +3001,32 @@ public sealed class OrderService : IOrderService
             // T024 [US4]: Retain Shipped status, log history with reason/location
             so.UpdatedAt = timestamp;
 
+            // Keep every failed attempt as its own row of its own parcel (tracking code and the carrier's time). A callback the carrier repeats has
+            // the same key and is stored once, so it is not counted twice either in the row list or in the legacy text below.
+            var attemptKey = DeliveryFailureAttempt.KeyOf(request.TrackingCode, request.EventType, request.EventTime);
+            var repeated = attemptKey != null
+                && await _dbContext.DeliveryFailureAttempts.AnyAsync(item => item.SubOrderId == so.Id && item.DedupeKey == attemptKey, ct);
+            if (!repeated)
+            {
+                _dbContext.DeliveryFailureAttempts.Add(new DeliveryFailureAttempt
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = so.Id,
+                    TrackingCode = string.IsNullOrWhiteSpace(request.TrackingCode) ? null : request.TrackingCode.Trim(),
+                    ReasonCode = string.IsNullOrWhiteSpace(request.ReasonCode) ? null : request.ReasonCode.Trim(),
+                    Reason = string.IsNullOrWhiteSpace(request.Reason) ? null : (request.Reason.Length > 500 ? request.Reason[..500] : request.Reason),
+                    EventType = string.IsNullOrWhiteSpace(request.EventType) ? null : request.EventType.Trim(),
+                    EventTime = request.EventTime,
+                    ReceivedAt = DateTimeOffset.UtcNow,
+                    DedupeKey = attemptKey
+                });
+
+                // The one-line history on the sub-order, kept for what already reads it. An attempt without a code is kept as "no code".
+                so.DeliveryFailureCodes = DeliveryFailureClassifier.Append(so.DeliveryFailureCodes, request.ReasonCode);
+                so.LastDeliveryFailureReason = string.IsNullOrWhiteSpace(request.Reason) ? null : (request.Reason.Length > 500 ? request.Reason[..500] : request.Reason);
+                so.LastDeliveryFailureAt = timestamp;
+            }
+
             _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
             {
                 Id = Guid.NewGuid(),
@@ -2705,6 +3062,19 @@ public sealed class OrderService : IOrderService
             so.CancelledAt = timestamp;
             so.UpdatedAt = timestamp;
 
+            // Was it a refusal? Decided now, with the table in force now, so approving a table later never penalises an older return.
+            // Without an approved table nothing is classified and nobody is penalised; the evidence above is kept either way.
+            if (_deliveryFailurePolicy is { Enabled: true } failurePolicy && so.BuyerRefusalPenaltyStatus == BuyerRefusalPenaltyStatus.None)
+            {
+                var failedAttempts = await _dbContext.DeliveryFailureAttempts.AsNoTracking().Where(item => item.SubOrderId == so.Id).ToListAsync(ct);
+                so.ReturnClassification = DeliveryFailureClassifier.Classify(failedAttempts, request.TrackingCode, request.EventTime, request.ReasonCode, failurePolicy);
+                if (so.ReturnClassification == DeliveryFailureClassifier.BuyerRefused)
+                {
+                    so.BuyerRefusalPenaltyStatus = BuyerRefusalPenaltyStatus.Pending;
+                    _logger.LogInformation("[OrderService] SubOrder '{SubOrderId}' came back as a buyer refusal (table {Table}); the penalty is queued.", so.Id, failurePolicy.TableVersion);
+                }
+            }
+
             _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
             {
                 Id = Guid.NewGuid(),
@@ -2730,8 +3100,8 @@ public sealed class OrderService : IOrderService
             };
             _dbContext.OrderCancellations.Add(cancellation);
 
-            // SPEC-036 [US4]: Penalize Buyer for delivery failure return (bom hàng)
-            if (_userClient != null)
+            // SPEC-036 [US4]: Penalize Buyer for delivery failure return (bom hàng) when the T17 queued penalty table is not active
+            if (_userClient != null && _deliveryFailurePolicy is not { Enabled: true })
             {
                 try
                 {
@@ -2763,7 +3133,7 @@ public sealed class OrderService : IOrderService
                     CancellationId = cancellationId,
                     RefundType = RefundType.Full,
                     Amount = so.TotalAmount,
-                    Status = RefundStatus.Requested,
+                    Status = RefundStatus.WalletPending,
                     ReasonCode = "PACKAGE_RETURNED",
                     ReasonNote = request.Note ?? "Automated refund created due to package returned to sender.",
                     ActorRole = OrderActorRole.System,
@@ -2771,20 +3141,18 @@ public sealed class OrderService : IOrderService
                     RequestedAt = timestamp
                 };
 
+                // The decision is recorded before the wallet is asked: a crash or a refusal leaves a pending refund that the worker retries.
+                _dbContext.OrderRefunds.Add(refund);
+                await _dbContext.SaveChangesAsync(ct);
+
                 try
                 {
-                    var refundSucceeded = await _walletClient.RefundSubOrderPaymentAsync(
-                        so.Id,
-                        so.BuyerId.ToString(),
-                        so.TotalAmount,
-                        request.Note ?? "Refund for returned package.",
-                        idempotencyKey: $"refund-delivery-returned-{so.Id}",
-                        cancellationToken: ct);
+                    var walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+                        so.Id, so.OrderId, so.BuyerId.ToString(), so.TotalAmount, request.Note ?? "Refund for returned package.", ct);
+                    var refundSucceeded = await RefundOutcome.ApplyAsync(_dbContext, refund, walletResult, ct);
 
                     if (refundSucceeded)
                     {
-                        refund.Status = RefundStatus.Completed;
-                        refund.CompletedAt = DateTimeOffset.UtcNow;
                         _logger.LogInformation("SubOrder '{SubOrderId}' refund on return succeeded via WalletClient. Amount: {Amount}", so.Id, so.TotalAmount);
                     }
                     else
@@ -2796,8 +3164,6 @@ public sealed class OrderService : IOrderService
                 {
                     _logger.LogError(ex, "Failed to automatically refund wallet balance for returned SubOrder '{SubOrderId}'.", so.Id);
                 }
-
-                _dbContext.OrderRefunds.Add(refund);
             }
             else if (so.PaymentMethod == PaymentMethod.Cod)
             {
@@ -2875,7 +3241,7 @@ public sealed class OrderService : IOrderService
                     CancellationId = cancellationId,
                     RefundType = RefundType.Full,
                     Amount = so.TotalAmount,
-                    Status = RefundStatus.Requested,
+                    Status = RefundStatus.WalletPending,
                     ReasonCode = "DELIVERY_FAILED",
                     ReasonNote = $"Automated refund request created due to delivery carrier status: {status}.",
                     ActorRole = OrderActorRole.System,
@@ -2888,6 +3254,23 @@ public sealed class OrderService : IOrderService
             {
                 _logger.LogInformation("Delivery-failed SubOrder '{SubOrderId}' has COD payment method. Skipping refund request.", so.Id);
             }
+        }
+        else if (string.Equals(status, "Returning", StringComparison.OrdinalIgnoreCase))
+        {
+            // The parcel is on its way back to the seller. Record the milestone only: cancelling the order, refunding and restocking
+            // happen when the carrier reports "Returned", never while the goods are still in transit.
+            so.UpdatedAt = timestamp;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = previousStatus,
+                ToStatus = previousStatus,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
         }
         else
         {
@@ -3029,7 +3412,7 @@ public sealed class OrderService : IOrderService
                     CancellationId = cancellationId,
                     RefundType = RefundType.Full,
                     Amount = refundAmount,
-                    Status = RefundStatus.Requested,
+                    Status = RefundStatus.WalletPending,
                     ReasonCode = isReturned ? "PACKAGE_RETURNED" : "DELIVERY_FAILED",
                     ReasonNote = $"Automated refund request created due to delivery carrier status: {status}.",
                     ActorRole = OrderActorRole.System,
@@ -3045,6 +3428,21 @@ public sealed class OrderService : IOrderService
                 AuctionOrderId = auctionOrder.Id,
                 FromStatus = previousStatus,
                 ToStatus = SubOrderStatus.Cancelled,
+                ActorRole = OrderActorRole.System,
+                Reason = formattedReason,
+                CreatedAt = timestamp
+            });
+        }
+        else if (string.Equals(status, "Returning", StringComparison.OrdinalIgnoreCase))
+        {
+            // The parcel is on its way back to the seller. Record the milestone only: cancelling the order, refunding and restocking
+            // happen when the carrier reports "Returned", never while the goods are still in transit.
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                AuctionOrderId = auctionOrder.Id,
+                FromStatus = previousStatus,
+                ToStatus = previousStatus,
                 ActorRole = OrderActorRole.System,
                 Reason = formattedReason,
                 CreatedAt = timestamp
@@ -3324,6 +3722,19 @@ public sealed class OrderService : IOrderService
 
         await _dbContext.SaveChangesAsync(ct);
 
+        // The reservation made when the order was created becomes a use now that the order is paid (as in the create path).
+        if (_voucherLifecycleService != null)
+        {
+            try
+            {
+                await _voucherLifecycleService.CommitOrderVouchersAsync(order.Id, ct);
+            }
+            catch (Exception cvEx)
+            {
+                _logger.LogWarning(cvEx, "Failed to commit voucher redemptions for repaid Order '{OrderId}'.", order.Id);
+            }
+        }
+
         bool stockCommitted = await _fulfillmentClient.CommitStockAsync(order.Id, ct);
         if (!stockCommitted)
         {
@@ -3473,6 +3884,7 @@ public sealed class OrderService : IOrderService
             Ward = resolvedAddress.Ward,
             District = resolvedAddress.District,
             Province = resolvedAddress.Province,
+            ProvinceId = resolvedAddress.ProvinceId,
             GhnDistrictId = resolvedAddress.GhnDistrictId ?? 0,
             GhnWardCode = resolvedAddress.GhnWardCode,
             FullAddressText = fullAddressText
@@ -3595,6 +4007,7 @@ public sealed class OrderService : IOrderService
                 Ward = resolvedAddress.Ward,
                 District = resolvedAddress.District,
                 Province = resolvedAddress.Province,
+                ProvinceId = resolvedAddress.ProvinceId,
                 GhnDistrictId = resolvedAddress.GhnDistrictId ?? 0,
                 GhnWardCode = resolvedAddress.GhnWardCode,
                 FullAddressText = fullAddressText
@@ -3747,44 +4160,69 @@ public sealed class OrderService : IOrderService
         var subOrder = refund.SubOrder
             ?? throw new EntityNotFoundException("SUB_ORDER_NOT_FOUND", "SubOrder", refund.SubOrderId ?? Guid.Empty);
 
-        var walletSuccess = await _walletClient.RefundSubOrderPaymentAsync(
-            subOrder.Id,
-            subOrder.BuyerId.ToString(),
-            refund.Amount,
-            request.Note ?? "Refund approved by seller",
-            null,
-            ct);
-
-        if (!walletSuccess)
-        {
-            throw new CommerceDomainException("WALLET_REFUND_FAILED", "Failed to process refund payment via wallet service.", 400);
-        }
-
+        // Approving is the decision. It is recorded first (the refund now waits for the wallet and is no longer "waiting for a decision"),
+        // so a failure or a crash leaves a pending refund that the worker retries instead of a request that looks undecided.
         var now = DateTimeOffset.UtcNow;
-        refund.Status = RefundStatus.Completed;
-        refund.CompletedAt = now;
+        refund.Status = RefundStatus.WalletPending;
+        refund.UpdatedAt = now;
         if (!string.IsNullOrWhiteSpace(request.Note))
         {
             refund.ReasonNote = string.IsNullOrWhiteSpace(refund.ReasonNote)
                 ? $"Note: {request.Note}"
                 : $"{refund.ReasonNote} | Note: {request.Note}";
         }
+        await _dbContext.SaveChangesAsync(ct);
 
-        var fromStatus = subOrder.Status;
-        subOrder.Status = SubOrderStatus.Refunded;
-        subOrder.CompletedAt = now;
+        var walletResult = await _walletClient.RefundSubOrderPaymentAsync(
+            subOrder.Id,
+            subOrder.OrderId,
+            subOrder.BuyerId.ToString(),
+            refund.Amount,
+            request.Note ?? "Refund approved by seller",
+            ct);
 
-        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        var confirmed = await RefundOutcome.ApplyAsync(_dbContext, refund, walletResult, ct);
+        if (!confirmed)
         {
-            Id = Guid.NewGuid(),
-            SubOrderId = subOrder.Id,
-            FromStatus = fromStatus,
-            ToStatus = SubOrderStatus.Refunded,
-            ChangedBy = currentUserId,
-            ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Seller,
-            Reason = $"Refund approved. Note: {request.Note}",
-            CreatedAt = now
-        });
+            if (refund.Status != RefundStatus.Failed)
+            {
+                refund.FailureCode = walletResult.ErrorCode ?? "WALLET_REFUND_FAILED";
+            }
+            await _dbContext.SaveChangesAsync(ct);
+            // Nothing is reported as refunded: the answer carries the real status (WalletPending, retried automatically, or Failed).
+            return new RefundDetailResponse(
+                Id: refund.Id,
+                SubOrderId: subOrder.Id,
+                SubOrderNo: subOrder.SubOrderNo,
+                BuyerId: subOrder.BuyerId,
+                SellerId: subOrder.SellerId,
+                Amount: refund.Amount,
+                Reason: refund.ReasonNote ?? refund.ReasonCode,
+                Status: refund.Status.ToString(),
+                SellerNote: request.Note,
+                RejectReason: refund.FailureCode,
+                RequestedAt: refund.RequestedAt,
+                CompletedAt: null);
+        }
+
+        if (subOrder.Status != SubOrderStatus.Refunded)
+        {
+            var fromStatus = subOrder.Status;
+            subOrder.Status = SubOrderStatus.Refunded;
+            subOrder.CompletedAt = now;
+
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = subOrder.Id,
+                FromStatus = fromStatus,
+                ToStatus = SubOrderStatus.Refunded,
+                ChangedBy = currentUserId,
+                ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Seller,
+                Reason = $"Refund approved. Note: {request.Note}",
+                CreatedAt = now
+            });
+        }
 
         await _dbContext.SaveChangesAsync(ct);
 
@@ -4057,16 +4495,15 @@ public sealed class OrderService : IOrderService
             _dbContext.OrderRefunds.Add(refund);
         }
 
-        var idempotencyKey = $"dispute-refund-{request.DisputeId}";
-        var walletSuccess = await _walletClient.RefundSubOrderPaymentAsync(
+        var walletResult = await _walletClient.RefundSubOrderPaymentAsync(
             subOrder.Id,
+            subOrder.OrderId,
             subOrder.BuyerId.ToString(),
             request.RefundAmount,
             request.Reason,
-            idempotencyKey,
             ct);
 
-        if (!walletSuccess)
+        if (!walletResult.Succeeded)
         {
             throw new CommerceDomainException("WALLET_REFUND_FAILED", "Failed to process refund payment via wallet service.", 400);
         }

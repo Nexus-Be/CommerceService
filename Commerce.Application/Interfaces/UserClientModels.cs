@@ -27,6 +27,24 @@ public sealed record ReputationAdjustResponse(
     int AppliedDelta,
     string NewTrustLevel);
 
+public sealed record PenaltyRevokeRequest(
+    Guid UserId,
+    string TargetRole,
+    string ReferenceId,
+    Guid ApprovedBy,
+    string Note);
+
+/// <summary>Outcome is "Restored" (points were given back) or "NothingToRestore" (the penalty had taken none).</summary>
+public sealed record PenaltyRevokeResponse(
+    Guid UserId,
+    string TargetRole,
+    bool IsDuplicate,
+    string Outcome,
+    int RestoredPoints,
+    int PreviousScore,
+    int NewScore,
+    string NewTrustLevel);
+
 public sealed record UserPenaltyRequest(
     Guid UserId,
     string TargetRole,
@@ -72,5 +90,6 @@ public sealed record BuyerAddressDto(
     int GhnDistrictId,
     string GhnWardCode,
     string FullAddressText,
-    bool IsDefault
+    bool IsDefault,
+    int? ProvinceId = null
 );

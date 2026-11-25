@@ -21,7 +21,7 @@ using Commerce.UnitTests.Common;
 public class PaymentTimeoutWorkerTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<IAuctionClient> _mockAuctionClient = new();
     private readonly Mock<IWalletClient> _mockWalletClient = new();
     private readonly Mock<IUserClient> _mockUserClient = new();
@@ -212,7 +212,7 @@ public class PaymentTimeoutWorkerTests : IDisposable
         // VERIFY: _mockWalletClient received 0 calls of any kind
         _mockWalletClient.Invocations.Should().BeEmpty();
         _mockWalletClient.Verify(w => w.RefundOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockWalletClient.Verify(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

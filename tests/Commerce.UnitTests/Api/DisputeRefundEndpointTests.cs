@@ -233,12 +233,12 @@ public class DisputeRefundEndpointTests : IDisposable
         _mockWalletClient
             .Setup(w => w.RefundSubOrderPaymentAsync(
                 subOrder.Id,
+                subOrder.OrderId,
                 subOrder.BuyerId.ToString(),
                 850_000m,
                 request.Reason,
-                $"dispute-refund-{disputeId}",
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .ReturnsAsync(WalletRefundResult.Success());
 
         // Act
         var response = await _orderService.DisputeRefundSubOrderAsync(subOrder.Id, request, CancellationToken.None);
@@ -270,11 +270,13 @@ public class DisputeRefundEndpointTests : IDisposable
         // Verify Wallet Client Invocation
         _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
             subOrder.Id,
+            subOrder.OrderId,
             subOrder.BuyerId.ToString(),
             850_000m,
             request.Reason,
-            $"dispute-refund-{disputeId}",
             It.IsAny<CancellationToken>()), Times.Once);
+
+        // Next test
     }
 
     [Fact]
@@ -288,12 +290,12 @@ public class DisputeRefundEndpointTests : IDisposable
         _mockWalletClient
             .Setup(w => w.RefundSubOrderPaymentAsync(
                 It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
                 It.IsAny<string>(),
                 It.IsAny<decimal>(),
                 It.IsAny<string>(),
-                It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(false);
+            .ReturnsAsync(WalletRefundResult.Failure("WALLET_REFUND_FAILED"));
 
         // Act
         var act = () => _orderService.DisputeRefundSubOrderAsync(subOrder.Id, request, CancellationToken.None);
@@ -335,12 +337,12 @@ public class DisputeRefundEndpointTests : IDisposable
         _mockWalletClient
             .Setup(w => w.RefundSubOrderPaymentAsync(
                 It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
                 It.IsAny<string>(),
                 It.IsAny<decimal>(),
                 It.IsAny<string>(),
-                It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .ReturnsAsync(WalletRefundResult.Success());
 
         // Act
         var response = await _orderService.DisputeRefundSubOrderAsync(subOrder.Id, request, CancellationToken.None);

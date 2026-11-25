@@ -9,5 +9,8 @@ public enum AuditAction
     OrderCancel = 4,
     DiscountCreate = 5,
     DiscountUpdate = 6,
-    InvoiceGenerate = 7
+    InvoiceGenerate = 7,
+    DiscountStatusChange = 8,
+    DiscountDelete = 9,
+    PlatformFeeUpdate = 10
 }

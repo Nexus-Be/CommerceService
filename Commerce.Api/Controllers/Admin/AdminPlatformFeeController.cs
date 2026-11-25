@@ -6,7 +6,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using Commerce.Api.Extensions;
 using Commerce.Api.Filters;
+using Commerce.Application.Common.Extensions;
 using Commerce.Application.Common.Models;
+using Commerce.Application.Interfaces;
+using Commerce.Domain.Entities;
+using Commerce.Domain.Enums;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Distributed;
@@ -22,15 +27,18 @@ public class AdminPlatformFeeController : ControllerBase
     public const string PlatformFeePercentCacheKey = "commerce:platform_fee_percent";
 
     private readonly IDistributedCache _cache;
+    private readonly ICommerceDbContext _db;
     private readonly IConfiguration _configuration;
     private readonly ILogger<AdminPlatformFeeController> _logger;
 
     public AdminPlatformFeeController(
         IDistributedCache cache,
+        ICommerceDbContext db,
         IConfiguration configuration,
         ILogger<AdminPlatformFeeController> logger)
     {
         _cache = cache;
+        _db = db;
         _configuration = configuration;
         _logger = logger;
     }
@@ -61,6 +69,18 @@ public class AdminPlatformFeeController : ControllerBase
             {
                 _logger.LogWarning(ex, "Failed to deserialize cached platform fee metadata.");
             }
+        }
+
+        // The cache is empty: read the durable setting before falling back to configuration.
+        var stored = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.SettingKey == Commerce.Application.Services.Order.OrderService.PlatformFeeSettingKey, ct);
+        if (stored != null &&
+            decimal.TryParse(stored.SettingValue, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var storedPercent))
+        {
+            return Ok(new PlatformFeeResponse(
+                DefaultPercent: storedPercent,
+                UpdatedByRole: "system",
+                UpdatedAt: stored.UpdatedAt));
         }
 
         var defaultPercent = _configuration.GetValue<decimal>("PlatformFee:DefaultPercent", 0.0m);
@@ -111,9 +131,57 @@ public class AdminPlatformFeeController : ControllerBase
             UpdatedAt: DateTimeOffset.UtcNow
         );
 
+        // The fee lives in the cache, so the audit record is the only durable trace of who changed it and from what.
+        decimal? previousPercent = null;
+        var setting = await _db.SystemSettings
+            .FirstOrDefaultAsync(s => s.SettingKey == Commerce.Application.Services.Order.OrderService.PlatformFeeSettingKey, ct);
+        if (setting != null &&
+            decimal.TryParse(setting.SettingValue, System.Globalization.NumberStyles.Number, System.Globalization.CultureInfo.InvariantCulture, out var parsedPrevious))
+        {
+            previousPercent = parsedPrevious;
+        }
+        else
+        {
+            var previousText = await _cache.GetStringAsync(PlatformFeePercentCacheKey, ct);
+            if (decimal.TryParse(previousText, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var cachedPrevious))
+            {
+                previousPercent = cachedPrevious;
+            }
+        }
+
+        var newValueText = request.DefaultPercent.ToString("G", System.Globalization.CultureInfo.InvariantCulture);
+        if (setting == null)
+        {
+            _db.SystemSettings.Add(new SystemSetting
+            {
+                Id = Guid.NewGuid(),
+                SettingKey = Commerce.Application.Services.Order.OrderService.PlatformFeeSettingKey,
+                SettingValue = newValueText,
+                ValueType = SettingValueType.Decimal,
+                Category = SettingCategory.Money,
+                Description = "Platform fee percent applied to new orders",
+                UpdatedBy = HttpContext.GetUserId()
+            });
+        }
+        else
+        {
+            setting.SettingValue = newValueText;
+            setting.UpdatedBy = HttpContext.GetUserId();
+            setting.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+
+        _db.AddAuditLog(
+            AuditAction.PlatformFeeUpdate,
+            "PlatformFee",
+            "platform-fee",
+            oldValues: new { DefaultPercent = previousPercent },
+            newValues: new { request.DefaultPercent, Role = updatedByRole },
+            userId: HttpContext.GetUserId()?.ToString());
+        await _db.SaveChangesAsync(ct);
+
         var serialized = JsonSerializer.Serialize(response);
         await _cache.SetStringAsync(PlatformFeeMetadataCacheKey, serialized, ct);
-        await _cache.SetStringAsync(PlatformFeePercentCacheKey, request.DefaultPercent.ToString("G"), ct);
+        await _cache.SetStringAsync(PlatformFeePercentCacheKey, newValueText, ct);
 
         _logger.LogInformation("Platform fee updated to {Percent}% by role '{Role}'.",
             request.DefaultPercent, updatedByRole);

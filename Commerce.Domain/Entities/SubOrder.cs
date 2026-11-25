@@ -32,6 +32,12 @@ public class SubOrder : BaseEntity<Guid>
     public decimal TotalAmount { get; set; }
     public decimal SellerReceiveAmount { get; set; }
     public decimal PlatformFeeAmount { get; set; }
+    /// <summary>Platform fee rate (percent) captured when the order was created; null for orders created before the snapshot existed.</summary>
+    public decimal? PlatformFeePercent { get; set; }
+    /// <summary>Seller payout protocol of this order: 1 = legacy (V1) route, 2 = atomic allocation command (V2). Set per order, never inferred from dates.</summary>
+    public int SettlementProtocolVersion { get; set; } = 1;
+    /// <summary>Lifecycle of the platform-funded voucher subsidy reserved for this sub-order (None for orders without one).</summary>
+    public SubsidyState SubsidyState { get; set; } = SubsidyState.None;
     public required DateTimeOffset PaymentDeadlineAt { get; set; }
     public DateTimeOffset? SellerRespondDeadlineAt { get; set; }
     public DateTimeOffset? PaidAt { get; set; }
@@ -46,6 +52,25 @@ public class SubOrder : BaseEntity<Guid>
     public DateTimeOffset? EstimatedDeliveryAt { get; set; }
     public bool ShipmentPendingCreation { get; set; } = false;
     public bool IsEscrowSettled { get; set; } = false;
+
+    /// <summary>Carrier reason code of every failed delivery attempt, in order, comma separated; "-" stands for an attempt that came without a code.</summary>
+    public string? DeliveryFailureCodes { get; set; }
+    /// <summary>The carrier's free text for the last failed delivery attempt, exactly as received.</summary>
+    public string? LastDeliveryFailureReason { get; set; }
+    public DateTimeOffset? LastDeliveryFailureAt { get; set; }
+    /// <summary>"BuyerRefused" or "Unknown", decided when the parcel came back while the rules were enabled; null otherwise.</summary>
+    public string? ReturnClassification { get; set; }
+    public BuyerRefusalPenaltyStatus BuyerRefusalPenaltyStatus { get; set; } = BuyerRefusalPenaltyStatus.None;
+    public int BuyerRefusalPenaltyAttempts { get; set; }
+    public DateTimeOffset? BuyerRefusalPenaltyAppliedAt { get; set; }
+    /// <summary>The admin who decided to withdraw the penalty.</summary>
+    public Guid? BuyerRefusalPenaltyRevokedBy { get; set; }
+    public string? BuyerRefusalPenaltyRevokeReason { get; set; }
+    public DateTimeOffset? BuyerRefusalPenaltyRevokeRequestedAt { get; set; }
+    /// <summary>When User confirmed the withdrawal.</summary>
+    public DateTimeOffset? BuyerRefusalPenaltyRevokedAt { get; set; }
+    /// <summary>The points User really gave back (0 when the penalty had taken none).</summary>
+    public int? BuyerRefusalPenaltyRestoredPoints { get; set; }
     public long RowVersion { get; set; }
 
     // Navigation

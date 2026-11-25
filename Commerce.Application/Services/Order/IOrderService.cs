@@ -1,4 +1,4 @@
-namespace Commerce.Application.Services.Order;
+﻿namespace Commerce.Application.Services.Order;
 
 using System;
 using System.Threading;
@@ -109,6 +109,13 @@ public interface IOrderService
     Task<RefundDetailResponse> GetRefundDetailAsync(Guid currentUserId, Guid refundId, bool isAdminOrStaff = false, CancellationToken ct = default);
 
     /// <summary>Duyệt yêu cầu hoàn tiền và hoàn tiền ví cho người mua.</summary>
+    /// <summary>
+    /// Refunds a delivered, wallet-paid sub-order to the buyer after a dispute was decided in the buyer's favour. Idempotent per report:
+    /// a second call for the same report returns the first result. A sub-order whose money already went to the seller, or whose parent order
+    /// was refunded separately, is not refunded automatically and is reported as ManualProcessingRequired.
+    /// </summary>
+    Task<SubOrderDisputeRefundResponse> RefundSubOrderForDisputeAsync(Guid subOrderId, Guid reportId, string? note, CancellationToken ct = default);
+
     Task<RefundDetailResponse> ApproveRefundAsync(Guid currentUserId, Guid refundId, ApproveRefundRequest request, bool isAdminOrStaff = false, CancellationToken ct = default);
 
     /// <summary>Từ chối yêu cầu hoàn tiền kèm lý do.</summary>

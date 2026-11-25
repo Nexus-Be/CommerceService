@@ -10,6 +10,8 @@ public class ShippingAddressSnapshot
     public string Ward { get; set; } = string.Empty;
     public string District { get; set; } = string.Empty;
     public string Province { get; set; } = string.Empty;
+    /// <summary>GHN province id. Null for an order placed before the whole chain was kept; such an address is not guessed.</summary>
+    public int? ProvinceId { get; set; }
     public int GhnDistrictId { get; set; }
     public string GhnWardCode { get; set; } = string.Empty;
     public string FullAddressText { get; set; } = string.Empty;
@@ -25,7 +27,8 @@ public class ShippingAddressSnapshot
         string province,
         int ghnDistrictId = 0,
         string ghnWardCode = "",
-        string? fullAddressText = null)
+        string? fullAddressText = null,
+        int? provinceId = null)
     {
         ReceiverName = receiverName;
         ContactPhone = contactPhone;
@@ -35,6 +38,7 @@ public class ShippingAddressSnapshot
         Province = province;
         GhnDistrictId = ghnDistrictId;
         GhnWardCode = ghnWardCode;
+        ProvinceId = provinceId;
 
         if (!string.IsNullOrWhiteSpace(fullAddressText))
         {

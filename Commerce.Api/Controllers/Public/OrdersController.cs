@@ -1,4 +1,4 @@
-namespace Commerce.Api.Controllers;
+﻿namespace Commerce.Api.Controllers;
 
 using System;
 using System.Threading;
@@ -372,6 +372,28 @@ public class OrdersController : ControllerBase
             status = request.Status,
             updatedAt = DateTimeOffset.UtcNow
         });
+    }
+
+    /// <summary>
+    /// Called by User after a dispute is decided for the buyer. The caller sends only the report ID; Commerce works out the amount
+    /// and refuses to refund twice for the same report.
+    /// </summary>
+    [HttpPost("/api/v1/sub-orders/{subOrderId:guid}/dispute-refund")]
+    // Called service to service: the class-level role check is skipped and the internal service key is checked below.
+    [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+    public async Task<IActionResult> RefundForDispute(
+        [FromRoute] Guid subOrderId,
+        [FromBody] SubOrderDisputeRefundRequest request,
+        [FromServices] Microsoft.Extensions.Configuration.IConfiguration configuration,
+        CancellationToken ct)
+    {
+        var denied = Commerce.Api.Security.InternalServiceKeyGuard.Check(Request, configuration);
+        if (denied is not null)
+        {
+            return denied;
+        }
+
+        return Ok(await _orderService.RefundSubOrderForDisputeAsync(subOrderId, request.ReportId, request.Note, ct));
     }
 
     /// <summary>R100: Tạo lại vận đơn giao hàng khi đơn con đã xác nhận nhưng gặp sự cố mạng tạm thời với GHN.</summary>

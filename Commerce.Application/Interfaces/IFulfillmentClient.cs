@@ -97,4 +97,7 @@ public interface IFulfillmentClient
 
     /// <summary>Hủy vận đơn đã tạo bên bưu cục GHN khi đơn con bị hủy trước khi lấy hàng.</summary>
     Task<bool> CancelShipmentAsync(Guid subOrderId, string reason = "SubOrderCancelled", CancellationToken ct = default);
+
+    /// <summary>Asks Fulfillment whether the province, district and ward belong together in the GHN lists.</summary>
+    Task<LocationCheckResult> ValidateLocationAsync(int provinceId, int districtId, string wardCode, CancellationToken ct = default);
 }

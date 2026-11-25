@@ -24,7 +24,7 @@ public class OrderServiceTests
 {
     private readonly Mock<ICommerceDbContext> _mockDbContext = new();
     private readonly Mock<IWalletClient> _mockWalletClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IDistributedCache> _mockCache = new();
     private readonly Mock<ILogger<OrderService>> _mockLogger = new();
@@ -157,7 +157,7 @@ public class OrderServiceTests
             BuyerId = buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(
@@ -278,7 +278,7 @@ public class OrderServiceTests
             BuyerId = buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(
@@ -370,7 +370,7 @@ public class OrderServiceTests
             BuyerId = buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(
@@ -448,7 +448,7 @@ public class OrderServiceTests
             BuyerId = buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Receiver", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+                new ShippingAddressInput("Receiver", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(
@@ -648,7 +648,7 @@ public class OrderServiceTests
         dbContext.Orders.Add(order);
         await dbContext.SaveChangesAsync();
 
-        var mockFulfillment = new Mock<IFulfillmentClient>();
+        var mockFulfillment = FulfillmentMocks.WithConfirmedLocations();
         mockFulfillment
             .Setup(f => f.ReleaseSubOrderStockAsync(It.IsAny<Guid>(), It.IsAny<List<StockReservationItem>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
@@ -923,7 +923,7 @@ public class OrderServiceTests
         // Assert: OrderRefund record
         var refund = await dbContext.OrderRefunds.FirstOrDefaultAsync(r => r.SubOrderId == subOrderId);
         refund.Should().NotBeNull();
-        refund!.Status.Should().Be(RefundStatus.Requested);
+        refund!.Status.Should().Be(RefundStatus.WalletPending);
         refund.ReasonCode.Should().Be("PACKAGE_RETURNED");
         refund.Amount.Should().Be(85000m);
     }
@@ -1402,6 +1402,9 @@ public class OrderServiceTests
         {
             Id = subOrderId,
             SubOrderNo = "SUB-TEST-00003",
+            CarrierCode = "GHN",
+            TrackingCode = "GHN-TRACK-3",
+            ShipmentPendingCreation = false,
             OrderId = orderId,
             BuyerId = buyerId,
             SellerId = sellerId,
@@ -1433,6 +1436,9 @@ public class OrderServiceTests
         result.Should().NotBeNull();
         result.SubOrderId.Should().Be(subOrderId);
         result.BuyerId.Should().Be(buyerId);
+        result.CarrierCode.Should().Be("GHN");
+        result.TrackingCode.Should().Be("GHN-TRACK-3");
+        result.ShipmentPendingCreation.Should().BeFalse();
     }
 
     [Fact]
@@ -1574,7 +1580,7 @@ public class OrderServiceTests
 
         var request = new CheckoutQuoteRequest(
             new List<Guid> { cart.Items.First().Id },
-            new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+            new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
             "0901234567"
         );
 
@@ -1604,7 +1610,7 @@ public class OrderServiceTests
             BuyerId = buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(
@@ -1699,7 +1705,7 @@ public class OrderServiceTests
             BuyerId = buyerId,
             Request = new CheckoutQuoteRequest(
                 new List<Guid> { Guid.NewGuid() },
-                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101"),
+                new ShippingAddressInput("Receiver", "0901234567", "Street", "Ward", "District", "Province", 1442, "20101", ProvinceId: 202),
                 "0901234567"
             ),
             Response = new CheckoutQuoteResponse(

@@ -11,7 +11,8 @@ public sealed record ShippingAddressDto(
     [Required] string DistrictName,
     [Required] string WardName,
     [Range(1, int.MaxValue)] int GhnDistrictId,
-    [Required] string GhnWardCode
+    [Required] string GhnWardCode,
+    int? ProvinceId = null
 );
 
 public sealed record AuctionSettlementRequest(

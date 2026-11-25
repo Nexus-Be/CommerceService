@@ -28,7 +28,7 @@ public sealed class OrderPaidNotificationTests : IDisposable
 {
     private readonly TestCommerceDbContext _db = TestDbContextFactory.CreateInMemoryDbContext();
     private readonly Mock<IWalletClient> _wallet = new();
-    private readonly Mock<IFulfillmentClient> _fulfillment = new();
+    private readonly Mock<IFulfillmentClient> _fulfillment = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _catalog = new();
     private readonly Mock<IUserClient> _users = new();
     private readonly IDistributedCache _cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
@@ -90,7 +90,7 @@ public sealed class OrderPaidNotificationTests : IDisposable
     private async Task<CreateOrderResponse> Checkout(OrderService service, Guid buyer, List<Guid> items, PaymentMethod method = PaymentMethod.Wallet)
     {
         var quote = await service.QuoteCheckoutAsync(buyer, new CheckoutQuoteRequest(
-            items, new ShippingAddressInput("A", "0901234567", "1 Street", "Ward", "District", "City", 1442, "20101"), "0901234567", method), CancellationToken.None);
+            items, new ShippingAddressInput("A", "0901234567", "1 Street", "Ward", "District", "City", 1442, "20101", ProvinceId: 202), "0901234567", method), CancellationToken.None);
         return await service.CreateOrderAsync(buyer,
             new CreateOrderRequest(quote.QuoteId, method, "1 Street, Ward", "0901234567"), CancellationToken.None);
     }

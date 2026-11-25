@@ -1,4 +1,4 @@
-namespace Commerce.Domain.Enums;
+﻿namespace Commerce.Domain.Enums;
 
 public enum AuctionOrderSource
 {

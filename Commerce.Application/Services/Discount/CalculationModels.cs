@@ -48,5 +48,7 @@ public sealed record EvaluateVouchersResult(
     IReadOnlyList<AllocatedVoucherUsage> AllAllocatedUsages,
     IReadOnlyList<string> AppliedVoucherCodes,
     IReadOnlyList<string> RejectedVoucherCodes,
-    IReadOnlyList<string> Warnings
+    IReadOnlyList<string> Warnings,
+    /// <summary>Why each rejected code was left out, as a stable reason code (for example MIN_ORDER_NOT_MET). Keyed by voucher code.</summary>
+    IReadOnlyDictionary<string, string>? RejectedReasons = null
 );

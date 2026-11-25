@@ -87,6 +87,7 @@ public sealed class GlobalExceptionHandlerMiddleware
             status = statusCode,
             errorCode,
             detail,
+            reasonCode = (exception as DomainException)?.ReasonCode,
             traceId,
             timestamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
         };

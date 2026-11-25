@@ -26,7 +26,7 @@ public class OrderCheckoutTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IWalletClient> _mockWalletClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IUserClient> _mockUserClient = new();
     private readonly Mock<ILogger<OrderService>> _mockLogger = new();
@@ -83,7 +83,7 @@ public class OrderCheckoutTests : IDisposable
         _dbContext.Dispose();
     }
 
-    private OrderService CreateOrderService(IVoucherDiscountCalculator? voucherCalculator = null)
+    private OrderService CreateOrderService(IVoucherDiscountCalculator? voucherCalculator = null, ISettlementService? settlementService = null)
     {
         return new OrderService(
             _dbContext,
@@ -93,7 +93,10 @@ public class OrderCheckoutTests : IDisposable
             _mockUserClient.Object,
             _cache,
             _mockLogger.Object,
-            voucherCalculator);
+            voucherCalculator,
+            null,
+            null,
+            settlementService);
     }
 
     private async Task<Cart> SeedCartWithItemAsync(Guid buyerId, Guid skuId, Guid sellerId, decimal price, int quantity)
@@ -151,7 +154,7 @@ public class OrderCheckoutTests : IDisposable
         // Act 1: Quote Checkout
         var quoteRequest = new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cartItemId },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567",
             PaymentMethod: PaymentMethod.Wallet
         );
@@ -222,7 +225,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cartItemId },
-            ShippingAddress: new ShippingAddressInput("Tran Van B", "0909999999", "456 Nguyen Hue", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Tran Van B", "0909999999", "456 Nguyen Hue", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0909999999",
             PaymentMethod: PaymentMethod.Cod
         ), CancellationToken.None);
@@ -283,7 +286,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -326,7 +329,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -374,7 +377,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -418,7 +421,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -451,7 +454,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -497,7 +500,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteResponse = await orderService.QuoteCheckoutAsync(buyerId, new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         ), CancellationToken.None);
 
@@ -534,7 +537,7 @@ public class OrderCheckoutTests : IDisposable
 
         var quoteRequest = new CheckoutQuoteRequest(
             new List<Guid> { cart.Items.First().Id },
-            new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Phuong Ben Nghe", "Quan 1", "TP. Ho Chi Minh", 1442, "20101"),
+            new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Phuong Ben Nghe", "Quan 1", "TP. Ho Chi Minh", 1442, "20101", ProvinceId: 202),
             "0901234567",
             PaymentMethod.Wallet);
 
@@ -609,7 +612,7 @@ public class OrderCheckoutTests : IDisposable
 
         var request = new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567"
         );
 
@@ -656,7 +659,7 @@ public class OrderCheckoutTests : IDisposable
 
         var request = new CheckoutQuoteRequest(
             CartItemIds: new List<Guid> { cart.Items.First().Id },
-            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
             ContactPhone: "0901234567",
             VoucherCodes: new List<string> { "SHOP30K", "SYS10K" }
         );
@@ -681,5 +684,265 @@ public class OrderCheckoutTests : IDisposable
         mockVoucherCalculator.Verify(v => v.CalculateDiscountsAsync(
             It.Is<VoucherCalculationRequest>(r => r.BuyerId == buyerId && r.VoucherCodes.Contains("SHOP30K")),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // =========================================================================
+    // G-1 step 2: platform fee rate is durable and snapshotted per order
+    // =========================================================================
+
+    private async Task SeedPlatformFeeSettingAsync(string percent)
+    {
+        _dbContext.SystemSettings.Add(new SystemSetting
+        {
+            Id = Guid.NewGuid(),
+            SettingKey = OrderService.PlatformFeeSettingKey,
+            SettingValue = percent,
+            ValueType = SettingValueType.Decimal,
+            Category = SettingCategory.Money
+        });
+        await _dbContext.SaveChangesAsync();
+    }
+
+    private static CheckoutQuoteRequest PlatformFeeQuoteRequest(Guid cartItemId) => new(
+        CartItemIds: new List<Guid> { cartItemId },
+        ShippingAddress: new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
+        ContactPhone: "0901234567",
+        PaymentMethod: PaymentMethod.Wallet);
+
+    [Fact]
+    public async Task QuoteCheckoutAsync_ShouldReadStoredFee_WhenCacheIsCold_AndRefillCache()
+    {
+        var buyerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), Guid.NewGuid(), 100000m, 2);
+        await SeedPlatformFeeSettingAsync("10");
+        var service = CreateOrderService();
+
+        var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id), CancellationToken.None);
+
+        var cachedQuote = JsonSerializer.Deserialize<CachedQuote>((await _cache.GetStringAsync($"checkout_quote:{quote.QuoteId}"))!);
+        cachedQuote!.PlatformFeePercent.Should().Be(10m);
+        (await _cache.GetStringAsync("commerce:platform_fee_percent")).Should().Be("10");
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldSnapshotQuotedFeePercent_EvenWhenRateChangesAfterQuote()
+    {
+        var buyerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), Guid.NewGuid(), 100000m, 2);
+        await SeedPlatformFeeSettingAsync("10");
+        var service = CreateOrderService();
+
+        var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id), CancellationToken.None);
+
+        // The admin raises the fee after the buyer was quoted.
+        var setting = await _dbContext.SystemSettings.SingleAsync(s => s.SettingKey == OrderService.PlatformFeeSettingKey);
+        setting.SettingValue = "20";
+        await _dbContext.SaveChangesAsync();
+        await _cache.SetStringAsync("commerce:platform_fee_percent", "20");
+
+        var order = await service.CreateOrderAsync(buyerId, new CreateOrderRequest(
+            QuoteId: quote.QuoteId,
+            PaymentMethod: PaymentMethod.Wallet,
+            ShippingAddress: "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
+            ContactPhone: "0901234567",
+            Note: null), CancellationToken.None);
+
+        var sub = await _dbContext.SubOrders.SingleAsync(s => s.OrderId == order.OrderId);
+        sub.PlatformFeePercent.Should().Be(10m);
+        sub.PlatformFeeAmount.Should().Be(20000m); // 10% of 200,000, not 20%
+        sub.SellerReceiveAmount.Should().Be(180000m);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldRecordZeroPercent_WhenNoFeeIsConfigured()
+    {
+        var buyerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), Guid.NewGuid(), 100000m, 2);
+        var service = CreateOrderService();
+
+        var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id), CancellationToken.None);
+        var order = await service.CreateOrderAsync(buyerId, new CreateOrderRequest(
+            QuoteId: quote.QuoteId,
+            PaymentMethod: PaymentMethod.Wallet,
+            ShippingAddress: "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
+            ContactPhone: "0901234567",
+            Note: null), CancellationToken.None);
+
+        var sub = await _dbContext.SubOrders.SingleAsync(s => s.OrderId == order.OrderId);
+        sub.PlatformFeePercent.Should().Be(0m);
+        sub.PlatformFeeAmount.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldCharge0PercentFee_ForCod_EvenWhenWalletFeeIsConfigured()
+    {
+        var buyerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), Guid.NewGuid(), 100000m, 2);
+        await SeedPlatformFeeSettingAsync("10");
+        var service = CreateOrderService();
+
+        var quoteRequest = PlatformFeeQuoteRequest(cart.Items.First().Id) with { PaymentMethod = PaymentMethod.Cod };
+        var quote = await service.QuoteCheckoutAsync(buyerId, quoteRequest, CancellationToken.None);
+        var order = await service.CreateOrderAsync(buyerId, new CreateOrderRequest(
+            QuoteId: quote.QuoteId,
+            PaymentMethod: PaymentMethod.Cod,
+            ShippingAddress: "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
+            ContactPhone: "0901234567",
+            Note: null), CancellationToken.None);
+
+        var sub = await _dbContext.SubOrders.SingleAsync(s => s.OrderId == order.OrderId);
+        sub.PlatformFeePercent.Should().Be(0m);
+        sub.PlatformFeeAmount.Should().Be(0m);
+        sub.SellerReceiveAmount.Should().Be(200000m);
+    }
+
+    [Fact]
+    public async Task QuoteCheckoutAsync_ShouldRejectPlatformVoucher_WhenPaymentIsCod()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+        var calc = new Mock<IVoucherDiscountCalculator>();
+        calc.Setup(v => v.CalculateDiscountsAsync(It.IsAny<VoucherCalculationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VoucherCalculationResult(
+                new Dictionary<Guid, ShopDiscountBreakdown> { [sellerId] = new ShopDiscountBreakdown(SystemDiscountAmount: 10000m) },
+                new List<string> { "SYS10K" }, new List<string>()));
+        var service = CreateOrderService(calc.Object);
+
+        var request = PlatformFeeQuoteRequest(cart.Items.First().Id) with
+        {
+            PaymentMethod = PaymentMethod.Cod,
+            VoucherCodes = new List<string> { "SYS10K" }
+        };
+        var act = () => service.QuoteCheckoutAsync(buyerId, request, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<CommerceDomainException>())
+            .Which.ErrorCode.Should().Be("SYSTEM_VOUCHER_NOT_ALLOWED_FOR_COD");
+    }
+
+    [Fact]
+    public async Task QuoteCheckoutAsync_ShouldAllowShopVoucher_WhenPaymentIsCod()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+        var calc = new Mock<IVoucherDiscountCalculator>();
+        calc.Setup(v => v.CalculateDiscountsAsync(It.IsAny<VoucherCalculationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VoucherCalculationResult(
+                new Dictionary<Guid, ShopDiscountBreakdown> { [sellerId] = new ShopDiscountBreakdown(ShopDiscountAmount: 30000m) },
+                new List<string> { "SHOP30K" }, new List<string>()));
+        var service = CreateOrderService(calc.Object);
+
+        var request = PlatformFeeQuoteRequest(cart.Items.First().Id) with
+        {
+            PaymentMethod = PaymentMethod.Cod,
+            VoucherCodes = new List<string> { "SHOP30K" }
+        };
+        var quote = await service.QuoteCheckoutAsync(buyerId, request, CancellationToken.None);
+
+        quote.AppliedVouchers.Should().Contain("SHOP30K");
+    }
+
+    // =========================================================================
+    // G-1: platform voucher subsidy is reserved per sub-order before the buyer pays (protocol V2)
+    // =========================================================================
+
+    private static Mock<IVoucherDiscountCalculator> PlatformVoucherCalculator(Guid sellerId)
+    {
+        var calc = new Mock<IVoucherDiscountCalculator>();
+        calc.Setup(v => v.CalculateDiscountsAsync(It.IsAny<VoucherCalculationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VoucherCalculationResult(
+                new Dictionary<Guid, ShopDiscountBreakdown> { [sellerId] = new ShopDiscountBreakdown(SystemDiscountAmount: 10000m) },
+                new List<string> { "SYS10K" }, new List<string>()));
+        return calc;
+    }
+
+    private async Task<(OrderService Service, Guid BuyerId, CheckoutQuoteResponse Quote, Mock<ISettlementService> Settlement)> V2PlatformVoucherQuoteAsync(
+        Action<Mock<ISettlementService>>? configure = null)
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+        var settlement = new Mock<ISettlementService>();
+        settlement.SetupGet(s => s.NewOrderProtocolVersion).Returns(2);
+        configure?.Invoke(settlement);
+        var service = CreateOrderService(PlatformVoucherCalculator(sellerId).Object, settlement.Object);
+        var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id) with
+        {
+            VoucherCodes = new List<string> { "SYS10K" }
+        }, CancellationToken.None);
+        return (service, buyerId, quote, settlement);
+    }
+
+    private static CreateOrderRequest WalletCreateRequest(Guid quoteId) => new(
+        QuoteId: quoteId,
+        PaymentMethod: PaymentMethod.Wallet,
+        ShippingAddress: "123 Le Loi, Ben Nghe, Quan 1, TP.HCM",
+        ContactPhone: "0901234567",
+        Note: null);
+
+    [Fact]
+    public async Task CreateOrderAsync_V2_ShouldReserveThePlatformSubsidyPerSubOrder_AndMarkItHeld()
+    {
+        var (service, buyerId, quote, settlement) = await V2PlatformVoucherQuoteAsync();
+
+        var order = await service.CreateOrderAsync(buyerId, WalletCreateRequest(quote.QuoteId), CancellationToken.None);
+
+        var sub = await _dbContext.SubOrders.SingleAsync(s => s.OrderId == order.OrderId);
+        sub.SettlementProtocolVersion.Should().Be(2);
+        sub.SystemDiscountAmount.Should().Be(10000m);
+        sub.SubsidyState.Should().Be(SubsidyState.Held);
+        settlement.Verify(s => s.HoldSubsidyAsync(order.OrderId, sub.Id, 10000m, It.IsAny<CancellationToken>()), Times.Once);
+        _mockWalletClient.Verify(w => w.PayOrderAsync(order.OrderId, buyerId, It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_V2_ShouldRefuseWithoutChargingAnything_WhenTheBudgetCannotCoverTheDiscount()
+    {
+        var (service, buyerId, quote, _) = await V2PlatformVoucherQuoteAsync(settlement =>
+            settlement.Setup(s => s.HoldSubsidyAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new CommerceDomainException("VOUCHER_BUDGET_EXHAUSTED", "Please request a new quote.", 409)));
+
+        var act = () => service.CreateOrderAsync(buyerId, WalletCreateRequest(quote.QuoteId), CancellationToken.None);
+
+        (await act.Should().ThrowAsync<CommerceDomainException>()).Which.ErrorCode.Should().Be("VOUCHER_BUDGET_EXHAUSTED");
+        _mockWalletClient.Verify(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockFulfillmentClient.Verify(f => f.ReleaseStockAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
+        (await _dbContext.SubOrders.CountAsync()).Should().Be(0);
+        // Nothing is left waiting to be saved either: releasing the voucher reservations saves the unit of work, and must not persist the refused order.
+        _dbContext.ChangeTracker.Entries<SubOrder>().Should().BeEmpty();
+        _dbContext.ChangeTracker.Entries<Order>().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_V2_ShouldGiveTheSubsidyBack_WhenThePaymentFailsDefinitively()
+    {
+        var (service, buyerId, quote, settlement) = await V2PlatformVoucherQuoteAsync();
+        _mockWalletClient
+            .Setup(w => w.PayOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WalletPaymentResult(false, ErrorCode: "INSUFFICIENT_BALANCE", ErrorMessage: "Insufficient wallet balance"));
+
+        var act = () => service.CreateOrderAsync(buyerId, WalletCreateRequest(quote.QuoteId), CancellationToken.None);
+
+        await act.Should().ThrowAsync<CommerceDomainException>();
+        settlement.Verify(s => s.HoldSubsidyAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), 10000m, It.IsAny<CancellationToken>()), Times.Once);
+        settlement.Verify(s => s.ReleaseSubsidyAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldStayOnProtocolV1AndSkipTheBudget_WhenTheSettlementServiceSaysV1()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+        var settlement = new Mock<ISettlementService>();
+        settlement.SetupGet(s => s.NewOrderProtocolVersion).Returns(1);
+        var service = CreateOrderService(PlatformVoucherCalculator(sellerId).Object, settlement.Object);
+        var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id) with { VoucherCodes = new List<string> { "SYS10K" } }, CancellationToken.None);
+
+        var order = await service.CreateOrderAsync(buyerId, WalletCreateRequest(quote.QuoteId), CancellationToken.None);
+
+        (await _dbContext.SubOrders.SingleAsync(s => s.OrderId == order.OrderId)).SettlementProtocolVersion.Should().Be(1);
+        settlement.Verify(s => s.HoldSubsidyAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

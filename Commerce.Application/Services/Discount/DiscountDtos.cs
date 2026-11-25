@@ -134,7 +134,9 @@ public sealed record DiscountSummaryDto(
     bool IsVisible,
     DiscountStatus Status,
     DateTimeOffset? StartsAt,
-    DateTimeOffset? EndsAt
+    DateTimeOffset? EndsAt,
+    bool IsExpired = false,
+    int? RemainingUses = null
 );
 
 public sealed record BuyerAvailableVoucherDto(

@@ -1,4 +1,4 @@
-namespace Commerce.Infrastructure.Services.Fulfillment;
+﻿namespace Commerce.Infrastructure.Services.Fulfillment;
 
 using System;
 using System.Collections.Generic;
@@ -34,19 +34,8 @@ public sealed class FulfillmentClient : IFulfillmentClient
         var failOpenSetting = configuration?["StockPolicy:FailOpen"]
             ?? Environment.GetEnvironmentVariable("STOCK_FAIL_OPEN");
 
-        var environment = configuration?["ASPNETCORE_ENVIRONMENT"]
-            ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
-        var isDevelopment = string.Equals(environment, "Development", StringComparison.OrdinalIgnoreCase);
-
-        // Fail-closed governance: FailOpen defaults to false in staging/production unless explicitly configured
-        if (!string.IsNullOrEmpty(failOpenSetting))
-        {
-            _failOpen = bool.TryParse(failOpenSetting, out var val) && val;
-        }
-        else
-        {
-            _failOpen = isDevelopment;
-        }
+        // Fail closed unless it is switched on explicitly (isolated QA only): an order must never be accepted without a stock reservation.
+        _failOpen = bool.TryParse(failOpenSetting, out var val) && val;
     }
 
     public async Task<bool> CheckStockAvailabilityAsync(Guid skuId, int quantity, CancellationToken ct = default)
@@ -180,21 +169,34 @@ public sealed class FulfillmentClient : IFulfillmentClient
             _logger.LogError("[REST Fulfillment Client] Stock reservation failed for Order '{OrderId}'. Status: {StatusCode}, Details: {Details}",
                 orderId, response.StatusCode, errorBody);
 
-            if (!_failOpen)
+            // A 4xx answer is a business refusal (not enough stock, unknown SKU): always reject, never fail open.
+            if ((int)response.StatusCode is >= 400 and < 500)
             {
                 return false;
             }
+
+            // Anything else (5xx) means the warehouse could not do its job; only an explicit QA switch lets the order through.
+            if (_failOpen)
+            {
+                return true;
+            }
+
+            throw new CommerceDomainException("FULFILLMENT_UNAVAILABLE", "Warehouse inventory service could not reserve stock right now.", 503);
+        }
+        catch (CommerceDomainException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[REST Fulfillment Client] Connection error reserving stock for Order '{OrderId}'.", orderId);
-            if (!_failOpen)
+            _logger.LogWarning(ex, "[REST Fulfillment Client] Connection error reserving stock for Order '{OrderId}'.", orderId);
+            if (_failOpen)
             {
-                throw new CommerceDomainException("STOCK_RESERVATION_FAILED", "Warehouse inventory service is temporarily unreachable.", 503);
+                return true;
             }
-        }
 
-        return _failOpen;
+            throw new CommerceDomainException("FULFILLMENT_UNAVAILABLE", "Warehouse inventory service is temporarily unreachable.", 503);
+        }
     }
 
     public async Task<bool> CommitStockAsync(Guid orderId, CancellationToken ct = default)
@@ -355,6 +357,81 @@ public sealed class FulfillmentClient : IFulfillmentClient
         }
     }
 
+    /// <summary>The error code in Fulfillment's error body ("errorCode"), or null when the body is empty or not an error object.</summary>
+    private static string? ReadErrorCode(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            return doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("errorCode", out var code)
+                && code.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? code.GetString()
+                    : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsWarehouseMissing(string? body) => string.Equals(ReadErrorCode(body), "WAREHOUSE_NOT_FOUND", StringComparison.Ordinal);
+
+    /// <summary>The seller has a warehouse but it has no origin district, so no fee can be quoted and no pickup arranged.</summary>
+    private sealed record LocationAnswer(string? ProvinceName, string? DistrictName, string? WardName);
+
+    private static bool IsWarehouseIncomplete(string? body) =>
+        ReadErrorCode(body) is "INVALID_FROM_DISTRICT" or "WAREHOUSE_ADDRESS_INCOMPLETE";
+
+    public async Task<LocationCheckResult> ValidateLocationAsync(int provinceId, int districtId, string wardCode, CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await _httpClient.PostAsJsonAsync("api/v1/internal/shipping/locations/validate", new { provinceId, districtId, wardCode }, JsonOptions, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                // A 200 that does not name the province, district and ward breaks the contract: the order would keep the typed text, which is
+                // exactly what the confirmation is there to replace. It is treated as "cannot be confirmed" (503), never as confirmed.
+                LocationAnswer? answer = null;
+                try
+                {
+                    answer = await response.Content.ReadFromJsonAsync<LocationAnswer>(JsonOptions, ct);
+                }
+                catch (JsonException)
+                {
+                    // handled below with the other unusable answers
+                }
+
+                if (answer is null || string.IsNullOrWhiteSpace(answer.ProvinceName) || string.IsNullOrWhiteSpace(answer.DistrictName) || string.IsNullOrWhiteSpace(answer.WardName))
+                {
+                    _logger.LogWarning("[REST Fulfillment Client] Location check answered 200 without the province, district and ward names; the address is not used.");
+                    return LocationCheckResult.SourceUnavailable();
+                }
+
+                return LocationCheckResult.Confirmed(answer.ProvinceName.Trim(), answer.DistrictName.Trim(), answer.WardName.Trim());
+            }
+
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (response.StatusCode == HttpStatusCode.BadRequest && string.Equals(ReadErrorCode(body), "VAL_INVALID_LOCATION", StringComparison.Ordinal))
+            {
+                return LocationCheckResult.Rejected();
+            }
+
+            _logger.LogWarning("[REST Fulfillment Client] Location check answered {StatusCode}; the address is not used until the GHN lists can be read.", (int)response.StatusCode);
+            return LocationCheckResult.SourceUnavailable();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "[REST Fulfillment Client] Location check could not be completed.");
+            return LocationCheckResult.SourceUnavailable();
+        }
+    }
+
     public async Task<decimal> CalculateShopShippingFeeAsync(ShopShippingQuoteRequest request, CancellationToken ct = default)
     {
         try
@@ -383,11 +460,47 @@ public sealed class FulfillmentClient : IFulfillmentClient
                 throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Fulfillment service returned an empty shipping quote response.", 503);
             }
 
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                var missingBody = await response.Content.ReadAsStringAsync(ct);
+                if (IsWarehouseMissing(missingBody))
+                {
+                    _logger.LogWarning("[REST Fulfillment Client] Seller '{SellerId}' has no active warehouse; no shipping fee can be quoted.", request.SellerId);
+                    throw new CommerceDomainException("SELLER_WAREHOUSE_MISSING", "This shop is not ready to ship yet because it has no active warehouse.", 422);
+                }
+            }
+
             if (response.StatusCode == HttpStatusCode.BadRequest)
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
+                if (IsWarehouseIncomplete(errorBody))
+                {
+                    _logger.LogWarning("[REST Fulfillment Client] The warehouse of Seller '{SellerId}' has no origin district; no shipping fee can be quoted.", request.SellerId);
+                    throw new CommerceDomainException("SELLER_WAREHOUSE_INCOMPLETE", "This shop's warehouse has no pickup location yet, so shipping cannot be arranged.", 422);
+                }
+
                 _logger.LogWarning("[REST Fulfillment Client] Shipping quote rejected with 400 for Seller '{SellerId}': {Error}", request.SellerId, errorBody);
                 throw new CommerceDomainException("SHIPPING_QUOTE_FAILED", "Invalid shipping destination address or items payload for carrier calculation.", 400);
+            }
+
+            // Fulfillment is up but the shipping carrier cannot be used: say so with the carrier's own code (not configured, unavailable,
+            // timed out) instead of the generic "Fulfillment is unreachable", and never blame the buyer's address for it.
+            if (response.StatusCode is HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout)
+            {
+                var carrierBody = await response.Content.ReadAsStringAsync(ct);
+                var carrierCode = ReadErrorCode(carrierBody);
+                var carrierMessage = carrierCode switch
+                {
+                    "SHIPPING_CARRIER_NOT_CONFIGURED" => "The shipping carrier is not configured, so the shipping fee cannot be calculated.",
+                    "SHIPPING_CARRIER_UNAVAILABLE" => "The shipping carrier is temporarily unavailable, so the shipping fee cannot be calculated.",
+                    "SHIPPING_CARRIER_TIMEOUT" => "The shipping carrier did not answer in time, so the shipping fee cannot be calculated.",
+                    _ => null
+                };
+                if (carrierMessage is not null)
+                {
+                    _logger.LogWarning("[REST Fulfillment Client] Shipping quote for Seller '{SellerId}' failed because of the carrier: {Code}.", request.SellerId, carrierCode);
+                    throw new CommerceDomainException(carrierCode!, carrierMessage, 503);
+                }
             }
 
             _logger.LogWarning("[REST Fulfillment Client] Shipping quote returned status {StatusCode} for Seller '{SellerId}'.", response.StatusCode, request.SellerId);
@@ -455,6 +568,15 @@ public sealed class FulfillmentClient : IFulfillmentClient
                 _logger.LogWarning(
                     "[REST Fulfillment Client] Create shipment rejected with {StatusCode} for SubOrder '{SubOrderId}': {Error}",
                     (int)response.StatusCode, subOrderId, errorBody);
+                if (IsWarehouseMissing(errorBody))
+                {
+                    throw new CommerceDomainException("SELLER_WAREHOUSE_MISSING", "The seller has no active warehouse yet, so no shipment can be created. Set up the warehouse, then retry.", 422);
+                }
+                if (IsWarehouseIncomplete(errorBody))
+                {
+                    throw new CommerceDomainException("SELLER_WAREHOUSE_INCOMPLETE", "The seller's warehouse has no pickup location yet, so no shipment can be created. Complete the warehouse address, then retry.", 422);
+                }
+
                 throw new CommerceDomainException("SHIPMENT_CREATION_REJECTED", "The carrier shipment request was rejected by the fulfillment service.", 422);
             }
 
@@ -472,12 +594,14 @@ public sealed class FulfillmentClient : IFulfillmentClient
         }
     }
 
+    // The service-to-service route (shipment found by sub-order id). The public /api/v1/shipments/{id}/cancel needs a signed-in owner and answered
+    // 403 to Commerce, so the carrier order was never cancelled.
     public async Task<bool> CancelShipmentAsync(Guid subOrderId, string reason = "SubOrderCancelled", CancellationToken ct = default)
     {
         try
         {
             var payload = new { reason };
-            var response = await _httpClient.PostAsJsonAsync($"api/v1/shipments/{subOrderId}/cancel", payload, JsonOptions, ct);
+            var response = await _httpClient.PostAsJsonAsync($"api/v1/internal/shipments/order/{subOrderId}/cancel", payload, JsonOptions, ct);
             if (response.IsSuccessStatusCode)
             {
                 _logger.LogInformation("[REST Fulfillment Client] Carrier shipment cancelled successfully for SubOrder '{SubOrderId}'.", subOrderId);

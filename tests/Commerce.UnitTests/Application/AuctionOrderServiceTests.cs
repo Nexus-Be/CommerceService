@@ -1,4 +1,4 @@
-namespace Commerce.UnitTests.Application;
+﻿namespace Commerce.UnitTests.Application;
 
 using System;
 using System.Threading.Tasks;
@@ -17,7 +17,7 @@ public class AuctionOrderServiceTests
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IWalletClient> _walletClientMock = new();
-    private readonly Mock<IFulfillmentClient> _fulfillmentClientMock = new();
+    private readonly Mock<IFulfillmentClient> _fulfillmentClientMock = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<IAuctionClient> _auctionClientMock = new();
     private readonly Mock<ICatalogClient> _catalogClientMock = new();
     private readonly Mock<IUserClient> _userClientMock = new();
@@ -35,6 +35,25 @@ public class AuctionOrderServiceTests
             _catalogClientMock.Object,
             _userClientMock.Object,
             _loggerMock.Object);
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_ShouldRoundTheFeeToWholeVnd_SoTheIdentityStaysExact()
+    {
+        var request = new AuctionSettlementRequest(
+            AuctionId: Guid.NewGuid(), WinnerId: Guid.NewGuid(), SellerId: Guid.NewGuid(), WinningBidId: Guid.NewGuid(), ProductId: Guid.NewGuid(),
+            SkuId: null, ProductName: "Odd price", ProductImageUrl: "https://example.com/x.png", SkuAttributes: "{}",
+            WinningAmount: 1000010m, // 5% = 50,000.5 -> 50,001 (halves away from zero)
+            PaymentDeadlineAt: DateTimeOffset.UtcNow.AddHours(24));
+
+        var result = await _service.ReceiveSettlementAsync(request);
+
+        var order = await _dbContext.AuctionOrders.FindAsync(result.Response.OrderId);
+        order!.PlatformFeeAmount.Should().Be(50001m);
+        order.SellerReceiveAmount.Should().Be(950009m);
+        (order.PlatformFeeAmount + order.SellerReceiveAmount).Should().Be(order.WinningAmount);
+        order.PlatformFeePercent.Should().Be(5m);
+        order.PlatformFeeAmount.Should().Be(decimal.Round(order.PlatformFeeAmount, 0));
     }
 
     [Fact]
@@ -81,9 +100,90 @@ public class AuctionOrderServiceTests
         savedOrder.RemainingAmount.Should().Be(2000000m);
         savedOrder.OrderSource.Should().Be(AuctionOrderSource.Winner);
         savedOrder.PlatformFeeAmount.Should().Be(100000m); // 5% of 2,000,000
+        savedOrder.PlatformFeePercent.Should().Be(5m);
         savedOrder.SellerReceiveAmount.Should().Be(1900000m); // 2,000,000 - 100,000
         savedOrder.TotalAmount.Should().BeNull(); // awaiting shipping quote
         savedOrder.Status.Should().Be(SubOrderStatus.PendingPayment);
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_BuyNow_CreatesAPendingOrderWhereTheGoodsAreFullyCovered_AndNothingIsLeftButShipping()
+    {
+        // Arrange: Auction sends the total it holds (deposit plus goods hold) as DepositAmount for a Buy Now.
+        var request = new AuctionSettlementRequest(
+            AuctionId: Guid.NewGuid(),
+            WinnerId: Guid.NewGuid(),
+            SellerId: Guid.NewGuid(),
+            WinningBidId: Guid.NewGuid(),
+            ProductId: Guid.NewGuid(),
+            SkuId: null,
+            ProductName: "Buy Now Item",
+            ProductImageUrl: null,
+            SkuAttributes: null,
+            WinningAmount: 5000000m,
+            PaymentDeadlineAt: DateTimeOffset.UtcNow.AddHours(24),
+            DepositAmount: 5000000m,
+            Source: "BUY_NOW");
+
+        // Act
+        var result = await _service.ReceiveSettlementAsync(request);
+
+        // Assert
+        result.IsNewlyCreated.Should().BeTrue();
+        result.Response.Status.Should().Be("PendingPayment");
+        var order = await _dbContext.AuctionOrders.FindAsync(result.Response.OrderId);
+        order!.OrderSource.Should().Be(AuctionOrderSource.BuyNow);
+        order.DepositAmount.Should().Be(5000000m);
+        order.RemainingAmount.Should().Be(0m);
+        order.Status.Should().Be(SubOrderStatus.PendingPayment);
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_BuyNow_WhenSentAgain_ReturnsTheSameOrderInsteadOfASecondOne()
+    {
+        var request = new AuctionSettlementRequest(
+            AuctionId: Guid.NewGuid(),
+            WinnerId: Guid.NewGuid(),
+            SellerId: Guid.NewGuid(),
+            WinningBidId: Guid.NewGuid(),
+            ProductId: Guid.NewGuid(),
+            SkuId: null,
+            ProductName: "Buy Now Item",
+            ProductImageUrl: null,
+            SkuAttributes: null,
+            WinningAmount: 3000000m,
+            PaymentDeadlineAt: DateTimeOffset.UtcNow.AddHours(24),
+            DepositAmount: 3000000m,
+            Source: "BUY_NOW");
+
+        var first = await _service.ReceiveSettlementAsync(request);
+        var second = await _service.ReceiveSettlementAsync(request);
+
+        second.IsNewlyCreated.Should().BeFalse();
+        second.Response.OrderId.Should().Be(first.Response.OrderId);
+        _dbContext.AuctionOrders.Local.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReceiveSettlementAsync_UnknownSource_IsStillRejected()
+    {
+        var request = new AuctionSettlementRequest(
+            AuctionId: Guid.NewGuid(),
+            WinnerId: Guid.NewGuid(),
+            SellerId: Guid.NewGuid(),
+            WinningBidId: Guid.NewGuid(),
+            ProductId: Guid.NewGuid(),
+            SkuId: null,
+            ProductName: "Item",
+            ProductImageUrl: null,
+            SkuAttributes: null,
+            WinningAmount: 1000000m,
+            PaymentDeadlineAt: DateTimeOffset.UtcNow.AddHours(24),
+            Source: "MYSTERY");
+
+        var act = () => _service.ReceiveSettlementAsync(request);
+
+        (await act.Should().ThrowAsync<CommerceDomainException>()).Which.ErrorCode.Should().Be("VAL_INVALID_SETTLEMENT");
     }
 
     [Fact]
@@ -555,7 +655,7 @@ public class AuctionOrderServiceTests
                 DistrictName: "District 1",
                 WardName: "Ben Nghe",
                 GhnDistrictId: 1442,
-                GhnWardCode: "20101"
+                GhnWardCode: "20101", ProvinceId: 202
             ),
             ContactPhone: "0901234567"
         );
@@ -627,7 +727,7 @@ public class AuctionOrderServiceTests
                 DistrictName: "Hai Chau",
                 WardName: "Thach Thang",
                 GhnDistrictId: 1500,
-                GhnWardCode: "30101"
+                GhnWardCode: "30101", ProvinceId: 202
             ),
             ContactPhone: "0912345678"
         );
@@ -682,7 +782,7 @@ public class AuctionOrderServiceTests
                 DistrictName: "District 1",
                 WardName: "Ben Nghe",
                 GhnDistrictId: 1442,
-                GhnWardCode: "20101"
+                GhnWardCode: "20101", ProvinceId: 202
             ),
             ContactPhone: "0901234567"
         );
@@ -730,7 +830,7 @@ public class AuctionOrderServiceTests
                 DistrictName: "District 1",
                 WardName: "Ben Nghe",
                 GhnDistrictId: 1442,
-                GhnWardCode: "20101"
+                GhnWardCode: "20101", ProvinceId: 202
             ),
             ContactPhone: "0901234567"
         );
@@ -1153,6 +1253,28 @@ public class AuctionOrderServiceTests
         // Verify Wallet refund was called with TotalAmount (8,050,000), NEVER including the 2,000,000 deposit
         _walletClientMock.Verify(w => w.RefundOrderPaymentAsync(orderId, buyerId.ToString(), 8050000m, It.IsAny<string>(), null, default), Times.Once);
         _walletClientMock.Verify(w => w.RefundOrderPaymentAsync(orderId, buyerId.ToString(), 10050000m, It.IsAny<string>(), null, default), Times.Never);
+    }
+
+    [Fact]
+    public async Task SellerRejectAsync_BeforeTheBuyerPaid_IsRefusedAndNothingChanges()
+    {
+        var sellerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        _dbContext.AuctionOrders.Add(new AuctionOrder
+        {
+            Id = orderId, OrderNo = "AO-20261120-00001", AuctionId = Guid.NewGuid(), BuyerId = Guid.NewGuid(), SellerId = sellerId,
+            WinningBidId = Guid.NewGuid(), ProductId = Guid.NewGuid(), ProductNameSnapshot = "Camera", WinningAmount = 2000000m,
+            DepositAmount = 2000000m, RemainingAmount = 0m, ShippingAddress = "{}", ShippingFeeAmount = 30000m, TotalAmount = 30000m,
+            SellerReceiveAmount = 1900000m, PlatformFeeAmount = 100000m, OrderSource = AuctionOrderSource.Winner,
+            Status = SubOrderStatus.PendingPayment, PaymentMethod = PaymentMethod.Wallet, PaymentDeadlineAt = DateTimeOffset.UtcNow.AddHours(20)
+        });
+        await _dbContext.SaveChangesAsync();
+
+        var act = () => _service.SellerRejectAsync(orderId, sellerId, new SellerRejectAuctionOrderRequest(ReasonNote: "No stock"));
+
+        (await act.Should().ThrowAsync<CommerceDomainException>()).Which.ErrorCode.Should().Be("ORDER_NOT_PAID");
+        (await _dbContext.AuctionOrders.FindAsync(orderId))!.Status.Should().Be(SubOrderStatus.PendingPayment);
+        _auctionClientMock.Verify(a => a.NotifyPaymentStatusAsync(It.IsAny<Guid>(), It.IsAny<AuctionPaymentStatusCallbackRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1776,6 +1898,67 @@ public class AuctionOrderServiceTests
         result.Items[0].OrderNo.Should().Be("AO-ACTIVE-1");
     }
 
+    // =========================================================================
+    // G-1: PayoutCompletedAt is set only after Wallet confirmed the payout
+    // =========================================================================
+
+    private async Task<AuctionOrder> DeliveredAuctionOrderAsync(Guid buyerId)
+    {
+        var order = new AuctionOrder
+        {
+            Id = Guid.NewGuid(), OrderNo = "AO-20261121-00001", AuctionId = Guid.NewGuid(), BuyerId = buyerId, SellerId = Guid.NewGuid(),
+            WinningBidId = Guid.NewGuid(), ProductId = Guid.NewGuid(), ProductNameSnapshot = "Rare Painting",
+            WinningAmount = 5000000m, DepositAmount = 500000m, RemainingAmount = 4500000m, ShippingFeeAmount = 50000m, TotalAmount = 4550000m,
+            SellerReceiveAmount = 4750000m, PlatformFeeAmount = 250000m,
+            Status = SubOrderStatus.Delivered, PaymentMethod = PaymentMethod.Wallet,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddDays(-2), PaidAt = DateTimeOffset.UtcNow.AddDays(-2), DeliveredAt = DateTimeOffset.UtcNow.AddHours(-1)
+        };
+        _dbContext.AuctionOrders.Add(order);
+        await _dbContext.SaveChangesAsync();
+        return order;
+    }
+
+    [Fact]
+    public async Task ConfirmReceiptAsync_ShouldSetPayoutCompletedAt_OnlyWhenTheLegacyPayoutWasConfirmed()
+    {
+        var buyerId = Guid.NewGuid();
+        var paidOrder = await DeliveredAuctionOrderAsync(buyerId);
+        var unpaidOrder = await DeliveredAuctionOrderAsync(buyerId);
+        _walletClientMock.Setup(w => w.SettleSellerSubOrderAsync(paidOrder.Id, It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<System.Threading.CancellationToken>())).ReturnsAsync(true);
+        _walletClientMock.Setup(w => w.SettleSellerSubOrderAsync(unpaidOrder.Id, It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<System.Threading.CancellationToken>())).ReturnsAsync(false);
+
+        await _service.ConfirmReceiptAsync(paidOrder.Id, buyerId);
+        await _service.ConfirmReceiptAsync(unpaidOrder.Id, buyerId);
+
+        (await _dbContext.AuctionOrders.FindAsync(paidOrder.Id))!.PayoutCompletedAt.Should().NotBeNull();
+        // Not confirmed: the order is Completed but still unpaid, so the retry worker picks it up.
+        var unpaid = await _dbContext.AuctionOrders.FindAsync(unpaidOrder.Id);
+        unpaid!.Status.Should().Be(SubOrderStatus.Completed);
+        unpaid.PayoutCompletedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ConfirmReceiptAsync_V2_ShouldUseTheSettlementServiceAndSetPayoutCompletedAtOnlyOnSuccess()
+    {
+        var buyerId = Guid.NewGuid();
+        var paidOrder = await DeliveredAuctionOrderAsync(buyerId);
+        var unpaidOrder = await DeliveredAuctionOrderAsync(buyerId);
+        var settlement = new Mock<ISettlementService>();
+        settlement.SetupGet(s => s.NewOrderProtocolVersion).Returns(2);
+        settlement.Setup(s => s.SettleAuctionOrderAsync(It.Is<AuctionOrder>(o => o.Id == paidOrder.Id), It.IsAny<System.Threading.CancellationToken>(), It.IsAny<bool>())).ReturnsAsync(true);
+        settlement.Setup(s => s.SettleAuctionOrderAsync(It.Is<AuctionOrder>(o => o.Id == unpaidOrder.Id), It.IsAny<System.Threading.CancellationToken>(), It.IsAny<bool>())).ReturnsAsync(false);
+        var service = new AuctionOrderService(
+            _dbContext, _walletClientMock.Object, _fulfillmentClientMock.Object, _auctionClientMock.Object,
+            _catalogClientMock.Object, _userClientMock.Object, _loggerMock.Object, settlement.Object);
+
+        await service.ConfirmReceiptAsync(paidOrder.Id, buyerId);
+        await service.ConfirmReceiptAsync(unpaidOrder.Id, buyerId);
+
+        (await _dbContext.AuctionOrders.FindAsync(paidOrder.Id))!.PayoutCompletedAt.Should().NotBeNull();
+        (await _dbContext.AuctionOrders.FindAsync(unpaidOrder.Id))!.PayoutCompletedAt.Should().BeNull();
+        _walletClientMock.Verify(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string?>(), It.IsAny<System.Threading.CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task ReceiveSettlementAsync_WithBuyNowSource_CreatesOrderWithZeroRemainingAmount_AndStatusPendingPayment()
     {
@@ -1906,6 +2089,10 @@ public class AuctionOrderServiceTests
             .ReturnsAsync(new CatalogProductCheckResult(skuId, productId, sellerId, "SKU-001", 1000m, true, 10, null, 500));
 
         _fulfillmentClientMock
+            .Setup(f => f.ValidateLocationAsync(202, 1442, "20101", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(LocationCheckResult.Confirmed("Ho Chi Minh", "District 1", "Ben Nghe"));
+
+        _fulfillmentClientMock
             .Setup(f => f.CalculateShopShippingFeeAsync(It.IsAny<ShopShippingQuoteRequest>(), default))
             .ReturnsAsync(35000m); // Carrier fee: 35,000 VND
 
@@ -1918,7 +2105,8 @@ public class AuctionOrderServiceTests
                 DistrictName: "District 1",
                 WardName: "Ben Nghe",
                 GhnDistrictId: 1442,
-                GhnWardCode: "20101"
+                GhnWardCode: "20101",
+                ProvinceId: 202
             ),
             ContactPhone: "0912345678"
         );

@@ -23,7 +23,7 @@ public class OrderSettlementRefundTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IWalletClient> _mockWalletClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IUserClient> _mockUserClient = new();
     private readonly Mock<ILogger<OrderService>> _mockLogger = new();
@@ -39,8 +39,8 @@ public class OrderSettlementRefundTests : IDisposable
             .ReturnsAsync(true);
 
         _mockWalletClient
-            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .Setup(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletRefundResult.Success());
 
         _mockWalletClient
             .Setup(w => w.SettleSellerSubOrderAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -216,13 +216,7 @@ public class OrderSettlementRefundTests : IDisposable
         refund!.Status.Should().Be(RefundStatus.Completed);
         refund.Amount.Should().Be(150000m);
 
-        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
-            subOrder.Id,
-            buyerId.ToString(),
-            150000m,
-            It.IsAny<string>(),
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(subOrder.Id, It.IsAny<Guid>(), buyerId.ToString(), 150000m, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // =========================================================================
@@ -308,13 +302,7 @@ public class OrderSettlementRefundTests : IDisposable
         refund!.Status.Should().Be(RefundStatus.Completed);
         refund.Amount.Should().Be(150000m);
 
-        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
-            subOrder.Id,
-            buyerId.ToString(),
-            150000m,
-            It.IsAny<string>(),
-            $"refund-delivery-returned-{subOrder.Id}",
-            It.IsAny<CancellationToken>()), Times.Once);
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(subOrder.Id, It.IsAny<Guid>(), buyerId.ToString(), 150000m, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
 
         // Assert 4: Warehouse stock release with PackageReturned reason
         _mockFulfillmentClient.Verify(f => f.ReleaseSubOrderStockAsync(
@@ -373,13 +361,7 @@ public class OrderSettlementRefundTests : IDisposable
         cancellation!.ReasonCode.Should().Be(CancellationReasonCode.PackageReturned);
 
         // Assert 3: ZERO wallet refund for COD order
-        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
-            It.IsAny<Guid>(),
-            It.IsAny<string>(),
-            It.IsAny<decimal>(),
-            It.IsAny<string>(),
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         _mockWalletClient.Verify(w => w.RefundOrderPaymentAsync(
             It.IsAny<Guid>(),
@@ -421,13 +403,7 @@ public class OrderSettlementRefundTests : IDisposable
         updatedSubOrder!.Status.Should().Be(SubOrderStatus.Cancelled);
 
         // Verify NO wallet refund was called
-        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
-            It.IsAny<Guid>(),
-            It.IsAny<string>(),
-            It.IsAny<decimal>(),
-            It.IsAny<string>(),
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         _mockWalletClient.Verify(w => w.RefundOrderPaymentAsync(
             It.IsAny<Guid>(),
@@ -462,13 +438,7 @@ public class OrderSettlementRefundTests : IDisposable
         updatedSubOrder!.Status.Should().Be(SubOrderStatus.Cancelled);
 
         // Verify NO wallet refund was called
-        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(
-            It.IsAny<Guid>(),
-            It.IsAny<string>(),
-            It.IsAny<decimal>(),
-            It.IsAny<string>(),
-            It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+        _mockWalletClient.Verify(w => w.RefundSubOrderPaymentAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<decimal>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
 
         _mockWalletClient.Verify(w => w.RefundOrderPaymentAsync(
             It.IsAny<Guid>(),

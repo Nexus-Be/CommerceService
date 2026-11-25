@@ -22,7 +22,7 @@ public class RefundGovernanceTests : IDisposable
 {
     private readonly TestCommerceDbContext _dbContext;
     private readonly Mock<IWalletClient> _mockWalletClient = new();
-    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = new();
+    private readonly Mock<IFulfillmentClient> _mockFulfillmentClient = FulfillmentMocks.WithConfirmedLocations();
     private readonly Mock<ICatalogClient> _mockCatalogClient = new();
     private readonly Mock<IUserClient> _mockUserClient = new();
     private readonly Mock<ILogger<OrderService>> _mockOrderLogger = new();
@@ -235,8 +235,8 @@ public class RefundGovernanceTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         _mockWalletClient
-            .Setup(w => w.RefundSubOrderPaymentAsync(subOrder.Id, buyerId.ToString(), 150000m, It.IsAny<string>(), null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .Setup(w => w.RefundSubOrderPaymentAsync(subOrder.Id, It.IsAny<Guid>(), buyerId.ToString(), 150000m, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WalletRefundResult.Success());
 
         var request = new ApproveRefundRequest(Note: "Item accepted for return");
 

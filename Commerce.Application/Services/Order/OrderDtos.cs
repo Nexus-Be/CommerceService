@@ -22,4 +22,6 @@ public sealed class CachedQuote
     public CheckoutQuoteRequest Request { get; init; } = null!;
     public CheckoutQuoteResponse Response { get; init; } = null!;
     public DateTimeOffset ExpiredAt { get; init; }
+    /// <summary>Platform fee rate used to price this quote; order creation reuses it so the rate cannot change between quote and order.</summary>
+    public decimal? PlatformFeePercent { get; init; }
 }

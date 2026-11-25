@@ -1,6 +1,7 @@
 namespace Commerce.Infrastructure.Services.Wallet;
 
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -150,16 +151,17 @@ public sealed class WalletClient : IWalletClient
     }
 
     /// <summary>
-    /// Tự động hoàn tiền SubOrder vào ví Buyer qua WalletService (RefundCredit).
+    /// Refunds a sub-order to the buyer's wallet (RefundCredit).
     /// POST /api/v1/wallets/sub-orders/{subOrderId}/refund
-    /// S2S Route: Không yêu cầu identity header; neo idempotency trên subOrderId.
+    /// S2S route: no identity header. The body carries the parent order id, which the wallet requires (it checks the payment and takes the
+    /// money out of the parent escrow). The wallet keeps one refund per sub-order id; a repeated call answers the existing transaction.
     /// </summary>
-    public async Task<bool> RefundSubOrderPaymentAsync(
+    public async Task<WalletRefundResult> RefundSubOrderPaymentAsync(
         Guid subOrderId,
+        Guid parentOrderId,
         string userId,
         decimal amount,
         string reason,
-        string? idempotencyKey = null,
         CancellationToken cancellationToken = default)
     {
         try
@@ -171,24 +173,26 @@ public sealed class WalletClient : IWalletClient
                 {
                     userId,
                     amount,
-                    reason
+                    reason,
+                    parentOrderId
                 })
             };
 
             var response = await _httpClient.SendAsync(request, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogInformation("[REST Wallet Client] SubOrder '{SubOrderId}' refund succeeded for User '{UserId}', Amount: {Amount}.", subOrderId, userId, amount);
-                return true;
+                var (transactionId, replayed) = ParseRefundTransaction(body);
+                _logger.LogInformation("[REST Wallet Client] SubOrder '{SubOrderId}' refund succeeded for User '{UserId}', Amount: {Amount}, Transaction: {TransactionId}, Replayed: {Replayed}.", subOrderId, userId, amount, transactionId, replayed);
+                return WalletRefundResult.Success(transactionId, replayed);
             }
 
             var statusCode = (int)response.StatusCode;
-            var errorBody = await response.Content.ReadAsStringAsync(cancellationToken);
-            var (errorCode, errorMessage) = ParseProblemDetails(errorBody, statusCode);
+            var (errorCode, errorMessage) = ParseProblemDetails(body, statusCode);
 
             if (statusCode == 503 || errorCode == "FEATURE_DISABLED")
             {
-                _logger.LogError("[REST Wallet Client] SubOrder '{SubOrderId}' refund failed with 503 FEATURE_DISABLED. Wallet feature flag 'LegacyCommerceCreditsEnabled' may be disabled: {ErrorBody}", subOrderId, errorBody);
+                _logger.LogError("[REST Wallet Client] SubOrder '{SubOrderId}' refund failed with 503 FEATURE_DISABLED. The wallet release flag 'OrderRefundEnabled' is off, so the refund stays pending: {ErrorBody}", subOrderId, body);
             }
             else if (statusCode == 409)
             {
@@ -198,12 +202,83 @@ public sealed class WalletClient : IWalletClient
             {
                 _logger.LogWarning("[REST Wallet Client] SubOrder '{SubOrderId}' refund failed with status {StatusCode} ({ErrorCode}): {ErrorMessage}", subOrderId, statusCode, errorCode, errorMessage);
             }
-            return false;
+            return WalletRefundResult.Failure(errorCode);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[REST Wallet Client] Error during refund for SubOrder '{SubOrderId}'.", subOrderId);
-            return false;
+            return WalletRefundResult.Failure("WALLET_UNREACHABLE");
+        }
+    }
+
+    /// <summary>Reads the refund transaction id and the replay marker from the wallet's answer (plain or wrapped in "data").</summary>
+    public async Task<RefundFundPayResponse?> PayRefundFundCaseAsync(RefundFundPayRequest request, CancellationToken ct = default)
+    {
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Post, $"api/v1/internal/wallets/refund-fund/sub-orders/{request.SubOrderId}/payout")
+            {
+                Content = JsonContent.Create(new
+                {
+                    parentOrderId = request.ParentOrderId,
+                    buyerId = request.BuyerId.ToString(),
+                    amount = request.Amount,
+                    firstApproverId = request.FirstApproverId.ToString(),
+                    secondApproverId = request.SecondApproverId?.ToString()
+                })
+            };
+            using var response = await _httpClient.SendAsync(message, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var status = (int)response.StatusCode;
+            if (response.IsSuccessStatusCode)
+            {
+                using var document = JsonDocument.Parse(body);
+                var root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
+                {
+                    root = data;
+                }
+
+                string? Text(string name) => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+                decimal Number(string name) => root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number ? value.GetDecimal() : 0m;
+                var replayed = root.TryGetProperty("replayed", out var rep) && rep.ValueKind == JsonValueKind.True;
+                return new RefundFundPayResponse(Text("outcome") ?? "NeedsFinance", Text("reason"), Number("amount"), Number("sellerRecovered"), Number("sellerShortfall"), replayed, Text("buyerTransactionId"));
+            }
+
+            // 5xx, 408 and 429 (the fund being switched off included) are not decisions: the caller repeats later.
+            if (status >= 500 || status == 408 || status == 429)
+            {
+                _logger.LogWarning("[REST Wallet Client] Refund fund payout of sub-order '{SubOrderId}' is not ready ({Status}); it will be repeated.", request.SubOrderId, status);
+                return null;
+            }
+
+            var (errorCode, _) = ParseProblemDetails(body, status);
+            _logger.LogWarning("[REST Wallet Client] Refund fund payout of sub-order '{SubOrderId}' was refused: {ErrorCode}.", request.SubOrderId, errorCode);
+            return new RefundFundPayResponse("Rejected", string.IsNullOrWhiteSpace(errorCode) ? $"HTTP_{status}" : errorCode, request.Amount, 0m, 0m, false, null);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogError(ex, "[REST Wallet Client] Could not reach the Wallet for the refund fund payout of sub-order '{SubOrderId}'.", request.SubOrderId);
+            return null;
+        }
+    }
+
+    private static (Guid? TransactionId, bool Replayed) ParseRefundTransaction(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return (null, false);
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object) root = data;
+            if (root.ValueKind != JsonValueKind.Object) return (null, false);
+            Guid? id = root.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.String && Guid.TryParse(idElement.GetString(), out var parsed) ? parsed : null;
+            var replayed = root.TryGetProperty("replayed", out var flag) && flag.ValueKind == JsonValueKind.True;
+            return (id, replayed);
+        }
+        catch (JsonException)
+        {
+            return (null, false);
         }
     }
 
@@ -355,6 +430,129 @@ public sealed class WalletClient : IWalletClient
         }
 
         return Guid.Empty;
+    }
+
+    public Task<WalletCallOutcome> SettleOrderPayoutAsync(WalletSettlementRequest request, CancellationToken cancellationToken = default) =>
+        PostInternalAsync(
+            "api/v1/internal/wallets/order-settlements",
+            new
+            {
+                businessType = request.BusinessType,
+                parentOrderId = request.ParentOrderId,
+                subOrderId = request.SubOrderId,
+                sellerId = request.SellerId,
+                sellerReceiveAmount = request.SellerReceiveAmount,
+                platformFeeAmount = request.PlatformFeeAmount,
+                shippingAmount = request.ShippingAmount,
+                subsidyAmount = request.SubsidyAmount,
+                orderEscrowAmount = request.OrderEscrowAmount,
+                depositEscrowAmount = request.DepositEscrowAmount,
+                payloadVersion = request.PayloadVersion
+            },
+            $"payout of {request.BusinessType} '{request.SubOrderId}'",
+            cancellationToken);
+
+    public Task<WalletCallOutcome> HoldPlatformSubsidyAsync(Guid orderId, Guid subOrderId, decimal amount, CancellationToken cancellationToken = default) =>
+        PostInternalAsync(
+            $"api/v1/internal/wallets/sub-orders/{subOrderId}/subsidy-hold",
+            new { orderId, amount },
+            $"subsidy hold of sub-order '{subOrderId}'",
+            cancellationToken);
+
+    public Task<WalletCallOutcome> ReleasePlatformSubsidyAsync(Guid subOrderId, string reason, CancellationToken cancellationToken = default) =>
+        PostInternalAsync(
+            $"api/v1/internal/wallets/sub-orders/{subOrderId}/subsidy-release",
+            new { reason },
+            $"subsidy release of sub-order '{subOrderId}'",
+            cancellationToken);
+
+    public async Task<IReadOnlyList<StaleSubsidyHold>?> ListStaleSubsidyHoldsAsync(int olderThanMinutes, int limit, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var response = await _httpClient.GetAsync($"api/v1/internal/wallets/subsidy-holds/stale?olderThanMinutes={olderThanMinutes}&limit={limit}", cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("[REST Wallet Client] The list of stale subsidy holds failed with status {StatusCode}.", (int)response.StatusCode);
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            var root = doc.RootElement;
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data)) root = data;
+            if (root.ValueKind != JsonValueKind.Array) return null;
+
+            var result = new List<StaleSubsidyHold>();
+            foreach (var item in root.EnumerateArray())
+            {
+                result.Add(new StaleSubsidyHold(
+                    item.GetProperty("subOrderId").GetGuid(),
+                    item.GetProperty("orderId").GetGuid(),
+                    item.GetProperty("amount").GetDecimal(),
+                    item.GetProperty("heldSince").GetDateTimeOffset()));
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[REST Wallet Client] The list of stale subsidy holds could not be read.");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Posts to an internal Wallet route and reports the outcome without ever throwing: a Wallet answer of 4xx is a permanent refusal,
+    /// anything else (timeout, 5xx, feature switched off) is transient.
+    /// </summary>
+    private async Task<WalletCallOutcome> PostInternalAsync(string requestUri, object body, string what, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, requestUri) { Content = JsonContent.Create(body) };
+            using var response = await _httpClient.SendAsync(request, cancellationToken);
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                var replay = false;
+                try
+                {
+                    using var doc = JsonDocument.Parse(content);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("data", out var data)) root = data;
+                    replay = root.TryGetProperty("isReplay", out var flag) && flag.ValueKind == JsonValueKind.True;
+                }
+                catch (JsonException)
+                {
+                    // A body that is not JSON does not change the fact that Wallet accepted the call.
+                }
+
+                return WalletCallOutcome.Ok(replay);
+            }
+
+            var (code, message) = ParseProblemDetails(content, (int)response.StatusCode);
+            if (response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable || code == "FEATURE_DISABLED")
+            {
+                _logger.LogError("[REST Wallet Client] {What} refused: the feature is disabled on Wallet ({Code}).", what, code);
+                return new WalletCallOutcome(false, 503, code ?? "FEATURE_DISABLED", message);
+            }
+
+            _logger.LogWarning("[REST Wallet Client] {What} failed with status {StatusCode} ({ErrorCode}): {Message}", what, (int)response.StatusCode, code, message);
+            return new WalletCallOutcome(false, (int)response.StatusCode, code, message);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[REST Wallet Client] {What} failed before an answer was received.", what);
+            return WalletCallOutcome.Transient("WALLET_UNAVAILABLE", ex.Message);
+        }
     }
 
     private static (string ErrorCode, string ErrorMessage) ParseProblemDetails(string errorBody, int statusCode)
