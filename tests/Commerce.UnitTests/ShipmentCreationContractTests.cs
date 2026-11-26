@@ -100,6 +100,12 @@ public sealed class ShipmentCreationContractTests
         Assert.Equal(skuId, item.SkuId);
         Assert.Equal(2, item.Quantity);
         Assert.Equal(800000m, item.Price);
+        Assert.Equal(0, request.CodAmount);
+
+        subOrder.PaymentMethod = PaymentMethod.Cod;
+        subOrder.TotalAmount = 1630000m;
+        var codRequest = ShipmentRequestFactory.ForSubOrder(subOrder);
+        Assert.Equal(1630000, codRequest.CodAmount);
     }
 
     [Fact]

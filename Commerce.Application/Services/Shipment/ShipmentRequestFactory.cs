@@ -6,6 +6,7 @@ using System.Text.Json;
 using Commerce.Application.Interfaces;
 using Commerce.Application.Services.AuctionOrder;
 using Commerce.Domain.Entities;
+using Commerce.Domain.Enums;
 using Commerce.Domain.Exceptions;
 
 /// <summary>Builds the Fulfillment shipment request from an order, so every flow sends the same, complete payload.</summary>
@@ -56,6 +57,10 @@ public static class ShipmentRequestFactory
             .Select(i => new ShipmentCreationItem(i.SkuId, i.Quantity, i.ProductNameSnapshot, i.UnitPriceAfterDiscount, null))
             .ToList();
 
+        var codAmount = subOrder.PaymentMethod == PaymentMethod.Cod
+            ? Math.Max(0, (int)Math.Round(subOrder.TotalAmount, 0, MidpointRounding.AwayFromZero))
+            : 0;
+
         return new ShipmentCreationRequest(
             OrderId: subOrder.OrderId,
             SubOrderId: subOrder.Id,
@@ -71,7 +76,8 @@ public static class ShipmentRequestFactory
             // Commerce does not keep per-SKU weights for regular orders; Fulfillment then applies its own default.
             WeightInGrams: DefaultWeightInGrams,
             Items: items,
-            PickShiftId: pickShiftId);
+            PickShiftId: pickShiftId,
+            CodAmount: codAmount);
     }
 
     private static string JoinAddress(params string?[] parts) =>

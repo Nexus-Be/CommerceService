@@ -50,7 +50,8 @@ public sealed record ShipmentCreationRequest(
     string? ToWardCode,
     int WeightInGrams,
     IReadOnlyList<ShipmentCreationItem> Items,
-    int? PickShiftId = null);
+    int? PickShiftId = null,
+    int CodAmount = 0);
 
 public sealed record ShipmentCreationResult(
     string TrackingCode,

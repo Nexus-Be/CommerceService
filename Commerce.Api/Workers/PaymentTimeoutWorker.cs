@@ -95,7 +95,9 @@ public sealed class PaymentTimeoutWorker : BackgroundService
 
         var expiredOrders = await dbContext.Orders
             .Include(o => o.SubOrders)
-            .Where(o => o.Status == OrderStatus.PendingPayment && o.PaymentDeadlineAt < now)
+            .Where(o => o.Status == OrderStatus.PendingPayment
+                && o.PaymentDeadlineAt < now
+                && !o.SubOrders.Any(so => so.PaymentMethod == PaymentMethod.Cod))
             .OrderBy(o => o.PaymentDeadlineAt)
             .Take(50)
             .ToListAsync(ct);

@@ -538,6 +538,7 @@ public sealed class FulfillmentClient : IFulfillmentClient
                 toWardCode = request.ToWardCode,
                 weightInGrams = request.WeightInGrams,
                 pickShiftId = request.PickShiftId,
+                codAmount = request.CodAmount,
                 items = request.Items.Select(i => new
                 {
                     skuId = i.SkuId,

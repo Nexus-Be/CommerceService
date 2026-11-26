@@ -107,7 +107,7 @@ public class PaymentTimeoutWorkerTests : IDisposable
                     BuyerId = buyerId2,
                     SellerId = Guid.NewGuid(),
                     Status = SubOrderStatus.PendingPayment,
-                    PaymentMethod = PaymentMethod.Cod,
+                    PaymentMethod = PaymentMethod.Wallet,
                     ContactPhone = "0912345678",
                     PaymentDeadlineAt = now.AddMinutes(-5)
                 }
@@ -163,6 +163,50 @@ public class PaymentTimeoutWorkerTests : IDisposable
 
         // VERIFY: Tuyệt đối không gọi sang WalletClient vì đơn hết hạn thanh toán chưa từng bị trừ tiền
         _mockWalletClient.Invocations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ProcessExpiredOrdersAsync_ShouldNotCancelCodOrders_EvenWhenPendingPaymentPastDeadline()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var codOrderId = Guid.NewGuid();
+        var codBuyerId = Guid.NewGuid();
+        var codOrder = new Order
+        {
+            Id = codOrderId,
+            BuyerId = codBuyerId,
+            Status = OrderStatus.PendingPayment,
+            TotalAmount = 250000m,
+            PaymentDeadlineAt = now.AddMinutes(-30),
+            SubOrders = new List<SubOrder>
+            {
+                new()
+                {
+                    Id = Guid.NewGuid(),
+                    OrderId = codOrderId,
+                    SubOrderNo = "SO-COD-KEEP",
+                    BuyerId = codBuyerId,
+                    SellerId = Guid.NewGuid(),
+                    Status = SubOrderStatus.PendingPayment,
+                    PaymentMethod = PaymentMethod.Cod,
+                    ContactPhone = "0912345678",
+                    PaymentDeadlineAt = now.AddMinutes(-30)
+                }
+            }
+        };
+
+        _dbContext.Orders.Add(codOrder);
+        await _dbContext.SaveChangesAsync();
+
+        var worker = new PaymentTimeoutWorker(_mockServiceProvider.Object, NullLogger<PaymentTimeoutWorker>.Instance);
+        await worker.ProcessExpiredOrdersAsync(CancellationToken.None);
+
+        var codInDb = await _dbContext.Orders.Include(o => o.SubOrders).FirstAsync(o => o.Id == codOrder.Id);
+        codInDb.Status.Should().Be(OrderStatus.PendingPayment);
+        codInDb.SubOrders.First().Status.Should().Be(SubOrderStatus.PendingPayment);
+        _mockFulfillmentClient.Verify(
+            f => f.BatchReleaseStockAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
