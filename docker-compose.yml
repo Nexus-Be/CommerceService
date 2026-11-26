@@ -25,13 +25,15 @@ services:
       FULFILLMENT_SERVICE_URL: "${FULFILLMENT_SERVICE_URL:-http://fulfillment-service:8006}"
       USER_SERVICE_URL: "${USER_SERVICE_URL:-http://user-service:8001}"
       AUCTION_SERVICE_URL: "${AUCTION_SERVICE_URL:-http://auction-service:8005}"
+      NOTIFICATION_SERVICE_URL: "${NOTIFICATION_SERVICE_URL:-http://notification-service:8007}"
+      Notification__Enabled: "${NOTIFICATION_ENABLED:-true}"
       # T17: the buyer refusal table approved by the project owner on 26/11/2026 (GHN reason codes: the receiver changed their mind, the receiver
       # refused for lack of money), -5 reputation points once per sub-order. Set DELIVERY_FAILURE_REFUSED_CODES to an empty value to switch it off.
       DeliveryFailure__BuyerRefusedReasonCodes: "${DELIVERY_FAILURE_REFUSED_CODES-GHN-DCD0A8,GHN-DCD1A5}"
       DeliveryFailure__BuyerRefusalScoreDelta: "${DELIVERY_FAILURE_SCORE_DELTA:--5}"
       DeliveryFailure__TableVersion: "${DELIVERY_FAILURE_TABLE_VERSION:-ghn-docs-2026-11-25}"
       InternalSecurity__ServiceKey: "${INTERNAL_SERVICE_SECRET:-}"
-      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
     restart: unless-stopped
 
 networks:
