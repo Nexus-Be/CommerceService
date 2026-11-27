@@ -142,7 +142,7 @@ public sealed class FulfillmentClient : IFulfillmentClient
         return results;
     }
 
-    public async Task<bool> ReserveStockAsync(Guid orderId, List<StockReservationItem> items, int ttlMinutes = 15, CancellationToken ct = default)
+    public async Task<bool> ReserveStockAsync(Guid orderId, List<StockReservationItem> items, int ttlMinutes = 5, CancellationToken ct = default)
     {
         var payload = new
         {

@@ -54,7 +54,7 @@ public class AdminRefundFundCasesController : ControllerBase
 
     /// <summary>Decides to refund a sub-order from the fund. Above the threshold the case waits for a second, different admin.</summary>
     [HttpPost]
-    public async Task<IActionResult> Request([FromBody] RequestRefundFundCaseRequest request, CancellationToken ct)
+    public new async Task<IActionResult> Request([FromBody] RequestRefundFundCaseRequest request, CancellationToken ct)
     {
         if (!TryAdmin(out var adminId, out var error)) return error;
         return Ok(await _service.RequestAsync(request.SubOrderId, adminId, request.Reason, request.ReportId, ct));

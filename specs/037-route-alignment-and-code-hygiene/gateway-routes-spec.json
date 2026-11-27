@@ -1,0 +1,87 @@
+{
+  "ReverseProxy": {
+    "Routes": {
+      "commerce-carts-route": {
+        "ClusterId": "commerce-cluster",
+        "Match": {
+          "Path": "/api/v1/carts/{**catch-all}"
+        }
+      },
+      "commerce-orders-route": {
+        "ClusterId": "commerce-cluster",
+        "Match": {
+          "Path": "/api/v1/orders/{**catch-all}"
+        }
+      },
+      "commerce-checkouts-route": {
+        "ClusterId": "commerce-cluster",
+        "Match": {
+          "Path": "/api/v1/checkouts/{**catch-all}"
+        }
+      },
+      "commerce-sub-orders-route": {
+        "ClusterId": "commerce-cluster",
+        "Match": {
+          "Path": "/api/v1/sub-orders/{**catch-all}"
+        }
+      },
+      "commerce-auction-orders-route": {
+        "ClusterId": "commerce-cluster",
+        "Match": {
+          "Path": "/api/v1/auction-orders/{**catch-all}"
+        }
+      },
+      "commerce-discounts-route": {
+        "ClusterId": "commerce-cluster",
+        "Match": {
+          "Path": "/api/v1/discounts/{**catch-all}"
+        }
+      },
+      "commerce-refunds-route": {
+        "ClusterId": "commerce-cluster",
+        "Match": {
+          "Path": "/api/v1/refunds/{**catch-all}"
+        }
+      },
+      "commerce-admin-platform-fee-route": {
+        "ClusterId": "commerce-cluster",
+        "Match": {
+          "Path": "/api/v1/admin/platform-fee/{**catch-all}"
+        }
+      },
+      "commerce-admin-penalties-route": {
+        "ClusterId": "commerce-cluster",
+        "Match": {
+          "Path": "/api/v1/admin/buyer-refusal-penalties/{**catch-all}"
+        }
+      },
+      "commerce-admin-refund-fund-route": {
+        "ClusterId": "commerce-cluster",
+        "Match": {
+          "Path": "/api/v1/admin/refund-fund/{**catch-all}"
+        }
+      },
+      "commerce-admin-orders-route": {
+        "ClusterId": "commerce-cluster",
+        "Match": {
+          "Path": "/api/v1/admin/orders/{**catch-all}"
+        }
+      },
+      "commerce-admin-sub-orders-route": {
+        "ClusterId": "commerce-cluster",
+        "Match": {
+          "Path": "/api/v1/admin/sub-orders/{**catch-all}"
+        }
+      }
+    },
+    "Clusters": {
+      "commerce-cluster": {
+        "Destinations": {
+          "commerce-service-destination": {
+            "Address": "http://commerce-service:8003"
+          }
+        }
+      }
+    }
+  }
+}

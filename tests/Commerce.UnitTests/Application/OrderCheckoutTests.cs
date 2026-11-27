@@ -196,7 +196,7 @@ public class OrderCheckoutTests : IDisposable
         dbOrder.SubOrders.First().Items.Should().HaveCount(1);
 
         // Verify External Interactions
-        _mockFulfillmentClient.Verify(f => f.ReserveStockAsync(orderResponse.OrderId, It.IsAny<List<StockReservationItem>>(), 15, It.IsAny<CancellationToken>()), Times.Once);
+        _mockFulfillmentClient.Verify(f => f.ReserveStockAsync(orderResponse.OrderId, It.IsAny<List<StockReservationItem>>(), 5, It.IsAny<CancellationToken>()), Times.Once);
         _mockWalletClient.Verify(w => w.PayOrderAsync(orderResponse.OrderId, buyerId, 230000m, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
         _mockFulfillmentClient.Verify(f => f.CommitStockAsync(orderResponse.OrderId, It.IsAny<CancellationToken>()), Times.Once);
 

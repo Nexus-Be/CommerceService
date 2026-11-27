@@ -32,7 +32,7 @@
 | **ORD-05** | Order | `POST`| `/api/v1/orders/{orderId}/reject` | Người bán từ chối đơn con (`SubOrderStatus.Cancelled`) (`R84`) | Seller (own) | - |
 | **ORD-06** | Order | `POST`| `/api/v1/orders/{orderId}/cancel` | Hủy đơn hàng khi chưa vận chuyển (`R80`) | Buyer (own), Admin | Required |
 | **ORD-07** | Order | `POST`| `/api/v1/orders/{orderId}/complete` | Người mua xác nhận hoàn tất đơn hàng cha, thưởng điểm uy tín | Buyer (own) | - |
-| **ORD-08** | Order | `GET` | `/api/v1/shipments/order/{orderId}` | Tra cứu tiến độ vận chuyển đơn hàng (`R87`) | Buyer, Seller (own) | - |
+| **ORD-08** | Order | `GET` | `/api/v1/orders/{orderId}/shipments` | Tra cứu tiến độ vận chuyển đơn hàng (`R87`) (alias: `/api/v1/shipments/order/{orderId}`) | Buyer, Seller (own) | - |
 | **ORD-08B**| Order | `GET` | `/api/v1/sub-orders/{subOrderId}/shipments/timeline` | Theo dõi dòng thời gian hành trình giao hàng GHN (`R101`) | Buyer, Seller (own) | - |
 | **ORD-09** | Order | `POST`| `/api/v1/sub-orders/{subOrderId}/confirm-receipt` | Buyer xác nhận đã nhận hàng đơn con, kích hoạt giải ngân Escrow | Buyer (own) | - |
 | **ORD-10** | Order | `POST`| `/api/v1/sub-orders/{subOrderId}/delivery-status` | Webhook callback cập nhật tiến độ giao vận từ Fulfillment | System / Webhook | Header Key |
@@ -59,7 +59,7 @@ CommerceService **không sở hữu các tài nguyên ngoại vi**, việc tươ
    - `POST /api/v1/wallets/escrow/release`: Giải ngân số tiền chờ về ví chính của người bán.
 2. **`IFulfillmentClient` (Port 8005 - FulfillmentService)**:
    - `POST /api/v1/fulfillment/shipping/fee`: Tính phí vận chuyển độc lập từng kho GHN.
-   - `POST /api/v1/fulfillment/inventory/reserve`: Giữ tồn kho vật lý 15 phút.
+   - `POST /api/v1/fulfillment/inventory/reserve`: Giữ tồn kho vật lý 5 phút.
    - `POST /api/v1/fulfillment/inventory/release`: Xả tồn kho khi giao dịch thất bại (Compensating action).
    - `POST /api/v1/fulfillment/shipments`: Khởi tạo mã vận đơn giao hàng đối tác.
 3. **`ICatalogClient` (Port 8002 - CatalogService)**:

@@ -54,7 +54,7 @@
 Commerce Service là **Hạt nhân Điều phối Giao dịch (Transactional Core)** sở hữu độc quyền:
 1. **Quản lý Giỏ hàng (`Carts`, `CartItems`)**: Mỗi Người mua (Buyer) sở hữu tối đa 1 Giỏ hàng `Active`. Giới hạn tối đa **50 món** (distinct items) và tối đa **99 đơn vị/món**. Hỗ trợ checkbox lựa chọn tính toán (`CalculateSelected`), đổi biến thể trực tiếp (`ChangeVariant`), và gộp giỏ vãng lai (`MergeGuestCart`).
 2. **Đơn hàng cha & Đơn con theo Shop (`Orders`, `SubOrders`, `SubOrderItems`)**:
-   - **Đơn hàng cha (Master Order)** quản lý tổng thanh toán, phương thức thanh toán, hạn thanh toán (TTL 15 phút) và địa chỉ nhận hàng.
+   - **Đơn hàng cha (Master Order)** quản lý tổng thanh toán, phương thức thanh toán, hạn thanh toán (TTL 5 phút) và địa chỉ nhận hàng.
    - **Đơn hàng con (Shop Sub-Order)** quản lý gói hàng riêng của từng Người bán (Seller), cước vận chuyển GHN riêng, vận đơn GHN riêng, voucher riêng, và giải ngân Escrow độc lập.
 3. **Phân hệ Khuyến mãi & Voucher (`DiscountCodes`, `DiscountCodeScopes`, `DiscountCodeUsages`)**:
    - Hệ thống voucher đa tầng: Product Voucher, Shop Voucher, và System Voucher.
@@ -247,7 +247,7 @@ Toàn bộ yêu cầu từ Frontend (Web/Mobile) gửi qua API Gateway được 
 Commerce Service áp dụng **Quy trình Thanh toán 2 Bước (Two-Phase Checkout)** để đảm bảo tính bất biến về giá, phí vận chuyển GHN và hạn mức voucher:
 
 ```
-[ Step 1: POST /api/v1/checkouts/quote ] ──▶ Sinh QuoteId (Redis TTL 15m) kèm cước ship GHN & Voucher
+[ Step 1: POST /api/v1/checkouts/quote ] ──▶ Sinh QuoteId (Redis TTL 5m) kèm cước ship GHN & Voucher
                                                     │
                                                     ▼
 [ Step 2: POST /api/v1/orders ]          ──▶ Gửi QuoteId, kiểm tra ví, giữ kho & chốt đơn
@@ -335,7 +335,7 @@ Commerce Service áp dụng **Quy trình Thanh toán 2 Bước (Two-Phase Checko
 * **Response (HTTP 200 OK):**
   Trả về `CheckoutQuoteResponse` mới với cước phí GHN đã cập nhật theo địa chỉ mới, bảo lưu voucher và giỏ hàng.
 * **Lỗi (HTTP 404 Not Found):**
-  - `QUOTE_NOT_FOUND`: Báo giá không tồn tại hoặc đã quá hạn 15 phút.
+  - `QUOTE_NOT_FOUND`: Báo giá không tồn tại hoặc đã quá hạn 5 phút.
   - `ADDRESS_NOT_FOUND`: Địa chỉ theo `addressId` không tồn tại trong sổ địa chỉ.
 * **Lỗi (HTTP 403 Forbidden):**
   - `FORBIDDEN`: Người dùng không phải chủ sở hữu báo giá.
@@ -398,10 +398,10 @@ Commerce Service áp dụng **Quy trình Thanh toán 2 Bước (Two-Phase Checko
 | `ORD-07` | `POST` | `/api/v1/sub-orders/{subOrderId}/confirm-receipt` | Buyer | Buyer xác nhận đã nhận hàng đơn con (Yêu cầu nghiêm ngặt `Delivered` $\rightarrow$ giải ngân Escrow). |
 | `ORD-07B` | `POST` | `/api/v1/orders/{orderId}/complete` | Buyer | Buyer xác nhận hoàn tất toàn bộ đơn cha (yêu cầu tất cả đơn con đã `Delivered`). |
 | `ORD-14 / R102`| `POST` | `/api/v1/sub-orders/{subOrderId}/cancel` | Buyer | Buyer hủy riêng 1 đơn con của Shop cụ thể trước khi hàng xuất kho. |
-| `ORD-15` | `POST` | `/api/v1/orders/{orderId}/pay` | Buyer | Thanh toán lại đơn hàng đang ở `PendingPayment` trong hạn 15 phút. |
+| `ORD-15` | `POST` | `/api/v1/orders/{orderId}/pay` | Buyer | Thanh toán lại đơn hàng đang ở `PendingPayment` trong hạn 5 phút. |
 | `ORD-16` | `GET` | `/api/v1/orders/{orderId}/refunds` | Buyer | Tra cứu lịch sử hoàn tiền chi tiết của đơn hàng. |
 | `ORD-17` | `GET` | `/api/v1/sub-orders/{subOrderId}/financial-breakdown` | Buyer/Seller | Bảng kê phân rã tài chính, doanh thu thực nhận và phí sàn chi tiết cho Seller. |
-| `ORD-08 / R87` | `GET` | `/api/v1/shipments/order/{orderId}` | Buyer/Seller | Tra cứu danh sách vận đơn và tiến độ giao hàng của đơn cha. |
+| `ORD-08 / R87` | `GET` | `/api/v1/orders/{orderId}/shipments` | Buyer/Seller | Tra cứu danh sách vận đơn và tiến độ giao hàng của đơn cha (alias: `/api/v1/shipments/order/{orderId}`). |
 | `ORD-08B / R101`| `GET` | `/api/v1/sub-orders/{subOrderId}/shipments/timeline` | Buyer/Seller | Dòng thời gian chi tiết hành trình vận chuyển của đơn con. |
 | `ORD-04B / R100`| `POST` | `/api/v1/sub-orders/{subOrderId}/shipments/retry` | Seller | Tạo lại vận đơn GHN khi gặp sự cố mạng tạm thời. |
 | `ORD-13 / R99` | `POST` | `/api/v1/sub-orders/{subOrderId}/refund` | Buyer | Khởi tạo yêu cầu hoàn tiền cho đơn con. |
@@ -437,7 +437,7 @@ Commerce Service áp dụng **Quy trình Thanh toán 2 Bước (Two-Phase Checko
 #### `ORD-15`: Người Mua Thanh Toán Lại Đơn Hàng (Order Repay)
 * **Endpoint:** `POST /api/v1/orders/{orderId}/pay`
 * **Quyền:** `buyer`, `admin`, `staff`
-* **Mô tả:** Khi đơn hàng ở trạng thái `PendingPayment` (do lỗi số dư trước đó), người mua nạp tiền và gọi API này để thanh toán lại trong vòng 15 phút.
+* **Mô tả:** Khi đơn hàng ở trạng thái `PendingPayment` (do lỗi số dư trước đó), người mua nạp tiền và gọi API này để thanh toán lại trong vòng 5 phút.
 * **Response (HTTP 200 OK):**
   ```json
   {
@@ -930,7 +930,7 @@ Commerce Service giao tiếp với các dịch vụ vệ tinh qua các Typed HTT
 ### 10.2. Fulfillment Service (`:8006` REST) — `IFulfillmentClient`
 1. `GET /api/v1/inventories/{skuId}`: Kiểm tra số lượng tồn kho.
 2. `POST /api/v1/inventories/by-skus`: Batch kiểm tra tồn kho giỏ hàng.
-3. `POST /api/v1/internal/inventories/reservations`: Giữ hàng tạm thời 15 phút trước khi thanh toán.
+3. `POST /api/v1/internal/inventories/reservations`: Giữ hàng tạm thời 5 phút trước khi thanh toán.
 4. `POST /api/v1/internal/inventories/reservations/commit`: Khấu trừ vĩnh viễn tồn kho khi đơn đã thanh toán.
 5. `POST /api/v1/internal/inventories/reservations/release`: Giải phóng hàng dự lưu khi hủy đơn hoặc thanh toán thất bại.
 6. `POST /api/v1/internal/inventories/reservations/batch-release`: Batch nhả tồn kho cho tiến trình quét quá hạn.
@@ -970,7 +970,7 @@ Toàn bộ mã lỗi trả về tuân thủ nghiêm ngặt chuẩn **`SCREAMING_
 | `UNSUPPORTED_PAYMENT_METHOD`| 400 | Payment method is not supported. Use Wallet or Cod. | Cố tình gửi `PaymentMethod.VnPay`. |
 | `ORDER_NOT_FOUND` | 404 | Order was not found. | Không tìm thấy mã đơn hàng cha. |
 | `SUB_ORDER_NOT_FOUND` | 404 | Sub-order was not found. | Không tìm thấy mã đơn hàng con của Shop. |
-| `ORDER_PAYMENT_DEADLINE_EXPIRED` | 400 | Payment deadline for this order has expired. | Quá hạn 15 phút thanh toán đơn hàng. |
+| `ORDER_PAYMENT_DEADLINE_EXPIRED` | 400 | Payment deadline for this order has expired. | Quá hạn 5 phút thanh toán đơn hàng. |
 | `INVALID_STATUS` | 400 | Order is not in a valid status for this action. | Thao tác sai trạng thái (Ví dụ xác nhận nhận hàng khi chưa giao). |
 | `SUB_ORDER_ALREADY_SHIPPED` | 400 | Dispatched packages cannot be cancelled directly. | Khách cố tình bấm hủy khi đơn con đã `Shipped`. |
 | `DISCOUNT_NOT_FOUND` | 404 | Promotion discount code was not found. | Mã voucher không tồn tại trên hệ thống. |

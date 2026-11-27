@@ -243,7 +243,8 @@ public class OrdersController : ControllerBase
     }
 
     /// <summary>R87: Theo dõi tiến độ giao hàng và thông tin vận chuyển của đơn hàng.</summary>
-    [HttpGet("/api/v1/shipments/order/{orderId:guid}")]
+    [HttpGet("{orderId:guid}/shipments")]
+    [HttpGet("/api/v1/shipments/order/{orderId:guid}", Order = 2)]
     public async Task<IActionResult> GetShipmentTracking([FromRoute] Guid orderId, CancellationToken ct)
     {
         if (!this.TryGetUserId(out var currentUserId, out var authError))

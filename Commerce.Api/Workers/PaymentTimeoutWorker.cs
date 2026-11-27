@@ -142,7 +142,7 @@ public sealed class PaymentTimeoutWorker : BackgroundService
                             CancelledBy = null,
                             ActorRole = OrderActorRole.System,
                             ReasonCode = CancellationReasonCode.PaymentTimeout,
-                            ReasonNote = "Payment timeout expired after 15 minutes.",
+                            ReasonNote = "Payment timeout expired after 5 minutes.",
                             WasPaid = false,
                             InventoryReleased = stockReleased
                         });

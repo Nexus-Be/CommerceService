@@ -47,7 +47,7 @@ Hệ thống Voucher & Khuyến mãi của sàn vận hành theo **Mô hình 2 T
 2. **Quy tắc Voucher Toàn sàn (Platform Voucher Invariant)**:
    - Mỗi đơn hàng chỉ được chọn **TỐI ĐA 1 VOUCHER SÀN** (`ScopeType == "System"`). Nếu gửi $\ge 2$ voucher sàn $\rightarrow$ Lỗi **HTTP 400 `VOUCHER_STACKING_CONFLICT`**.
 3. **Mô hình Báo giá 2 Bước (Quote-First Checkout Flow)**:
-   - Bắt buộc phải qua bước Báo giá (`POST /api/v1/checkouts/quote`) để nhận `quoteId` (hiệu lực 15 phút), sau đó mới gọi tạo đơn (`POST /api/v1/orders`).
+   - Bắt buộc phải qua bước Báo giá (`POST /api/v1/checkouts/quote`) để nhận `quoteId` (hiệu lực 5 phút), sau đó mới gọi tạo đơn (`POST /api/v1/orders`).
 
 ---
 
@@ -106,7 +106,7 @@ sequenceDiagram
 | **Buyer** | `GET` | `/api/v1/discounts/available` | `buyer` | Lấy danh sách voucher khả dụng để mở Popup |
 | **Buyer** | `POST` | `/api/v1/discounts/validate` | `buyer` | Kiểm tra mã voucher khi gõ tay |
 | **Buyer** | `POST` | `/api/v1/discounts/recommend` | `buyer` | Tự động chọn combo voucher hời nhất (2 Tầng) |
-| **Checkout**| `POST` | `/api/v1/checkouts/quote` | `buyer`, `seller`, `admin` | Tạo phiên báo giá đơn hàng (TTL 15 phút) |
+| **Checkout**| `POST` | `/api/v1/checkouts/quote` | `buyer`, `seller`, `admin` | Tạo phiên báo giá đơn hàng (TTL 5 phút) |
 | **Checkout**| `POST` | `/api/v1/orders` | `buyer`, `seller`, `admin` | Tạo đơn hàng chính thức từ `quoteId` |
 | **Admin/Shop**| `POST` | `/api/v1/discounts` | `admin`, `seller` | Tạo mới voucher |
 | **Admin/Shop**| `GET` | `/api/v1/discounts` | `admin`, `seller`, `staff` | Lấy danh sách voucher quản trị phân trang |
@@ -240,7 +240,7 @@ sequenceDiagram
 ---
 
 ### 4.4. Báo giá Đơn hàng Đa Shop (`POST /api/v1/checkouts/quote`)
-- **Mục đích**: Tính toán chi tiết toàn bộ tiền hàng, cước ship GHN, số tiền giảm từng shop, và sinh mã `quoteId` có hiệu lực 15 phút.
+- **Mục đích**: Tính toán chi tiết toàn bộ tiền hàng, cước ship GHN, số tiền giảm từng shop, và sinh mã `quoteId` có hiệu lực 5 phút.
 - **Request Body**:
   ```json
   {
@@ -432,6 +432,6 @@ Tất cả các lỗi đều trả về dưới cấu trúc RFC 9110 Problem Det
 | `VOUCHER_SELLER_SKU_FORBIDDEN` | **403** | *"Seller can only apply vouchers to their own products."* | "Bạn không thể tạo mã giảm giá cho sản phẩm của Shop khác." |
 | `VOUCHER_FINANCIAL_MODIFICATION_LOCKED`| **400** | *"Financial terms cannot be modified after voucher has been reserved or used."*| "Không thể thay đổi giá trị giảm giá của mã đã phát sinh lượt dùng." |
 | `PRICE_CHANGED` | **409** | *"Price of product has increased. Cart prices have been refreshed."* | "Giá sản phẩm trong giỏ đã thay đổi. Vui lòng kiểm tra lại đơn trước khi đặt." |
-| `QUOTE_EXPIRED` | **400** | *"Checkout quote has expired, is invalid, or is currently being processed."*| "Phiên báo giá đã hết hạn (15 phút). Vui lòng tải lại trang thanh toán." |
+| `QUOTE_EXPIRED` | **400** | *"Checkout quote has expired, is invalid, or is currently being processed."*| "Phiên báo giá đã hết hạn (5 phút). Vui lòng tải lại trang thanh toán." |
 | `BUYER_ACTION_RESTRICTED` | **403** | *"User has an active restriction prohibiting purchase actions."* | "Tài khoản của bạn đang bị tạm khóa tính năng mua hàng." |
 | `SELLER_ACTION_RESTRICTED` | **403** | *"User has an active restriction prohibiting voucher management."* | "Tài khoản người bán đang bị giới hạn quyền quản lý khuyến mãi." |

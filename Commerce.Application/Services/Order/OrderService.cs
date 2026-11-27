@@ -22,6 +22,8 @@ using Commerce.Domain.ValueObjects;
 
 public sealed class OrderService : IOrderService
 {
+    public const int DefaultPaymentDeadlineMinutes = 5;
+
     private readonly ICommerceDbContext _dbContext;
     private readonly IWalletClient _walletClient;
     private readonly IFulfillmentClient _fulfillmentClient;
@@ -514,7 +516,7 @@ public sealed class OrderService : IOrderService
 
         decimal grandTotal = shopQuotes.Sum(s => s.TotalAmount);
         var quoteId = Guid.NewGuid();
-        var expiredAt = DateTimeOffset.UtcNow.AddMinutes(15);
+        var expiredAt = DateTimeOffset.UtcNow.AddMinutes(DefaultPaymentDeadlineMinutes);
 
         // Lấy số dư ví thực tế từ WalletService (ISSUE-05)
         decimal walletBalance = 0m;
@@ -560,7 +562,7 @@ public sealed class OrderService : IOrderService
             rejectedDetails
         );
 
-        // Lưu vào Distributed Cache (Redis / Memory) với TTL 15 phút (ISSUE-01)
+        // Lưu vào Distributed Cache (Redis / Memory) với TTL 5 phút (ISSUE-01)
         var quoteKey = $"checkout_quote:{quoteId}";
         var effectiveRequest = request with
         {
@@ -1039,7 +1041,7 @@ public sealed class OrderService : IOrderService
                 PaymentMethod = request.PaymentMethod,
                 ShippingAddress = addressSnapshot,
                 ContactPhone = request.ContactPhone,
-                PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+                PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(DefaultPaymentDeadlineMinutes)
             };
 
             foreach (var soi in subOrderItems)
@@ -1078,7 +1080,7 @@ public sealed class OrderService : IOrderService
             BuyerId = buyerId,
             Status = OrderStatus.PendingPayment,
             TotalAmount = grandTotal,
-            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(DefaultPaymentDeadlineMinutes),
             PaymentAttemptCount = 1
         };
 
@@ -1100,12 +1102,12 @@ public sealed class OrderService : IOrderService
             }
         }
 
-        // Giữ hàng tạm thời tại Fulfillment Service (TTL 15 phút) (CHK-02)
+        // Giữ hàng tạm thời tại Fulfillment Service (TTL 5 phút) (CHK-02)
         var reservationItems = createdSubOrders
             .SelectMany(so => so.Items.Select(i => new StockReservationItem(i.SkuId, i.Quantity, so.SellerId)))
             .ToList();
 
-        var reserved = await _fulfillmentClient.ReserveStockAsync(orderId, reservationItems, ttlMinutes: 15, ct);
+        var reserved = await _fulfillmentClient.ReserveStockAsync(orderId, reservationItems, ttlMinutes: DefaultPaymentDeadlineMinutes, ct);
         if (!reserved)
         {
             if (reservedUsageIds.Count > 0 && _voucherLifecycleService != null)
@@ -3891,15 +3893,15 @@ public sealed class OrderService : IOrderService
         var fullAddressText = $"{resolvedAddress.ReceiverName}, {resolvedAddress.Street}, {resolvedAddress.Ward}, {resolvedAddress.District}, {resolvedAddress.Province}";
         subOrder.ShippingAddress = new ShippingAddressSnapshot
         {
-            ReceiverName = resolvedAddress.ReceiverName,
+            ReceiverName = resolvedAddress.ReceiverName ?? string.Empty,
             ContactPhone = resolvedPhone,
-            Street = resolvedAddress.Street,
-            Ward = resolvedAddress.Ward,
-            District = resolvedAddress.District,
-            Province = resolvedAddress.Province,
+            Street = resolvedAddress.Street ?? string.Empty,
+            Ward = resolvedAddress.Ward ?? string.Empty,
+            District = resolvedAddress.District ?? string.Empty,
+            Province = resolvedAddress.Province ?? string.Empty,
             ProvinceId = resolvedAddress.ProvinceId,
             GhnDistrictId = resolvedAddress.GhnDistrictId ?? 0,
-            GhnWardCode = resolvedAddress.GhnWardCode,
+            GhnWardCode = resolvedAddress.GhnWardCode ?? string.Empty,
             FullAddressText = fullAddressText
         };
         subOrder.ContactPhone = resolvedPhone;
@@ -4014,15 +4016,15 @@ public sealed class OrderService : IOrderService
 
             so.ShippingAddress = new ShippingAddressSnapshot
             {
-                ReceiverName = resolvedAddress.ReceiverName,
+                ReceiverName = resolvedAddress.ReceiverName ?? string.Empty,
                 ContactPhone = resolvedPhone,
-                Street = resolvedAddress.Street,
-                Ward = resolvedAddress.Ward,
-                District = resolvedAddress.District,
-                Province = resolvedAddress.Province,
+                Street = resolvedAddress.Street ?? string.Empty,
+                Ward = resolvedAddress.Ward ?? string.Empty,
+                District = resolvedAddress.District ?? string.Empty,
+                Province = resolvedAddress.Province ?? string.Empty,
                 ProvinceId = resolvedAddress.ProvinceId,
                 GhnDistrictId = resolvedAddress.GhnDistrictId ?? 0,
-                GhnWardCode = resolvedAddress.GhnWardCode,
+                GhnWardCode = resolvedAddress.GhnWardCode ?? string.Empty,
                 FullAddressText = fullAddressText
             };
             so.ContactPhone = resolvedPhone;
