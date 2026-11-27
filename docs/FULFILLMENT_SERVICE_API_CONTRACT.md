@@ -47,7 +47,7 @@ sequenceDiagram
     Ful-->>Commerce: 200 OK { feeAmount, carrierCode, estimatedDeliveryDays }
 
     Note over Commerce, Ful: NHÓM 2: KHÓA GIỮ TỒN KHO & XÁC NHẬN ĐƠN
-    Commerce->>Ful: POST /api/v1/internal/inventories/reservations (Khóa giữ tồn kho 15 phút)
+    Commerce->>Ful: POST /api/v1/internal/inventories/reservations (Khóa giữ tồn kho 5 phút)
     Ful-->>Commerce: 200 OK (Đã khóa)
     Commerce->>Ful: POST /api/v1/internal/inventories/reservations/{orderId}/commit (Trừ kho vĩnh viễn khi thanh toán xong)
     Ful-->>Commerce: 200 OK (Đã trừ kho)
@@ -430,7 +430,7 @@ Dưới đây là đặc tả các API mà `FulfillmentService` phải cung cấ
 
 CommerceService quản lý vòng đời giữ và trừ hàng thông qua 4 endpoint kho của FulfillmentService:
 
-#### 1. Khóa giữ tồn kho tạm thời (15 phút TTL):
+#### 1. Khóa giữ tồn kho tạm thời (5 phút TTL):
 * **Endpoint:** `POST /api/v1/internal/inventories/reservations`
 * **Payload:**
   ```json
@@ -439,7 +439,7 @@ CommerceService quản lý vòng đời giữ và trừ hàng thông qua 4 endpo
     "items": [
       { "skuId": "e3a1f802-5c8e-4b69-8d62-7f91c98a5e12", "quantity": 2, "sellerId": "shop-guid" }
     ],
-    "ttlMinutes": 15
+    "ttlMinutes": 5
   }
   ```
 * **Response (200 OK):** `{ "success": true }`
@@ -476,7 +476,7 @@ CommerceService quản lý vòng đời giữ và trừ hàng thông qua 4 endpo
 | **Commerce $\rightarrow$ Ful** | `POST /api/v1/internal/shipping/quote` | Báo giá cước GHN theo trọng lượng động | `X-Internal-Service-Key` | `200`, `400`, `503` |
 | **Commerce $\rightarrow$ Ful** | `POST /api/v1/internal/shipments` | Tạo vận đơn GHN thật (kèm Safe Idempotency) | `X-Internal-Service-Key` | `200`, `503` |
 | **Commerce $\rightarrow$ Ful** | `POST /api/v1/shipments/{subOrderId}/cancel` | Hủy vận đơn GHN khi khách hủy đơn | `X-Internal-Service-Key` | `200`, `404` |
-| **Commerce $\rightarrow$ Ful** | `POST /api/v1/internal/inventories/reservations` | Khóa giữ hàng 15 phút khi Checkout | `X-Internal-Service-Key` | `200`, `400` |
+| **Commerce $\rightarrow$ Ful** | `POST /api/v1/internal/inventories/reservations` | Khóa giữ hàng 5 phút khi Checkout | `X-Internal-Service-Key` | `200`, `400` |
 | **Commerce $\rightarrow$ Ful** | `POST /api/v1/internal/inventories/reservations/{orderId}/commit` | Trừ kho vĩnh viễn sau thanh toán | `X-Internal-Service-Key` | `200` |
 | **Commerce $\rightarrow$ Ful** | `POST /api/v1/internal/inventories/reservations/{orderId}/release` | Nhả toàn bộ kho khi đơn bị hủy | `X-Internal-Service-Key` | `200` |
 | **Commerce $\rightarrow$ Ful** | `POST /api/v1/internal/inventories/reservations/{orderId}/release-items` | Nhả kho món riêng lẻ / Hoàn hàng Shop | `X-Internal-Service-Key` | `200` |

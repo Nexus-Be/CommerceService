@@ -73,13 +73,13 @@ public interface IFulfillmentClient
     /// <summary>Batch check danh sách SKU để làm xám các món hết hàng trong giỏ (CART-01, CART-03, CART-11).</summary>
     Task<Dictionary<Guid, SkuStockCheckResult>> BatchCheckStockAsync(List<Guid> skuIds, CancellationToken ct = default);
 
-    /// <summary>Khóa giữ hàng tạm thời khi bấm Đặt hàng (TTL 15 phút) (CHK-02).</summary>
-    Task<bool> ReserveStockAsync(Guid orderId, List<StockReservationItem> items, int ttlMinutes = 15, CancellationToken ct = default);
+    /// <summary>Khóa giữ hàng tạm thời khi bấm Đặt hàng (TTL 5 phút) (CHK-02).</summary>
+    Task<bool> ReserveStockAsync(Guid orderId, List<StockReservationItem> items, int ttlMinutes = 5, CancellationToken ct = default);
 
     /// <summary>Xác nhận trừ kho vĩnh viễn sau khi thanh toán thành công.</summary>
     Task<bool> CommitStockAsync(Guid orderId, CancellationToken ct = default);
 
-    /// <summary>Nhả hàng lại cho kho khi đơn bị Hủy hoặc Quá hạn thanh toán 15 phút.</summary>
+    /// <summary>Nhả hàng lại cho kho khi đơn bị Hủy hoặc Quá hạn thanh toán 5 phút.</summary>
     Task<bool> ReleaseStockAsync(Guid orderId, CancellationToken ct = default);
 
     /// <summary>Nhả hàng lại cho kho hàng loạt khi nhiều đơn bị Quá hạn thanh toán (chống N+1 HTTP calls).</summary>

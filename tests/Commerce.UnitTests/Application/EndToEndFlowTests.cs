@@ -317,7 +317,7 @@ public class EndToEndFlowTests : IDisposable
         order.Status.Should().Be("Paid");
 
         // Verify: Khóa kho & Trừ kho vĩnh viễn đã được gọi
-        _mockFulfillmentClient.Verify(f => f.ReserveStockAsync(order.OrderId, It.IsAny<List<StockReservationItem>>(), 15, It.IsAny<CancellationToken>()), Times.Once);
+        _mockFulfillmentClient.Verify(f => f.ReserveStockAsync(order.OrderId, It.IsAny<List<StockReservationItem>>(), 5, It.IsAny<CancellationToken>()), Times.Once);
         _mockFulfillmentClient.Verify(f => f.CommitStockAsync(order.OrderId, It.IsAny<CancellationToken>()), Times.Once);
 
         // Verify: Tiền ví đã được trừ

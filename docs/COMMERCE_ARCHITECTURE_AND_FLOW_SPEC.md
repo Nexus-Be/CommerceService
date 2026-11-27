@@ -54,7 +54,7 @@ flowchart TD
 
     subgraph StorageLayer["Lưu Trữ & Bộ Nhớ Đệm Biệt Lập"]
         PGDB[("PostgreSQL 16 (:5435)<br/>commerce_db<br/>(16 Tables, JSONB Snapshots)")]
-        RedisCache[("Redis Distributed Cache<br/>(Quote TTL 15m, Atomic Pop)")]
+        RedisCache[("Redis Distributed Cache<br/>(Quote TTL 5m, Atomic Pop)")]
     end
 
     subgraph SatelliteServices["Các Microservices Vệ Tinh (REST Only)"]
@@ -84,7 +84,7 @@ Từ ngày 2026-10-30, hệ thống chính thức áp dụng quyết định ki�
 2. **Loại bỏ Bất đồng bộ Kép & Lệch Dữ liệu (Outbox Desynchronization):** Trong các hệ thống phân tán phức tạp, bảng Outbox và tiến trình quét Worker thường xuyên gặp lỗi trễ quét (polling delay), trùng lặp bản tin (duplicate events), hoặc tranh chấp kết nối cơ sở dữ liệu.
 3. **Cơ chế Điều Phối Đồng Bộ Kèm Bù Trừ (Synchronous Orchestration with Compensation Circuit):** Commerce Service trực tiếp đóng vai trò nhạc trưởng điều phối thông qua các Outbound Typed REST Clients với cơ chế bảo vệ:
    - **Atomic Pop** trên Redis Cache ngăn chặn trùng lặp đặt hàng (Double-Click).
-   - **Khóa giữ kho 15 phút** tại Fulfillment Service trước khi thanh toán.
+   - **Khóa giữ kho 5 phút** tại Fulfillment Service trước khi thanh toán.
    - **Thanh toán trực tiếp Idempotent** qua Wallet Service.
    - **Tự động kích hoạt chuỗi bù trừ (Compensation Rollback)**: Nếu quá trình lưu cơ sở dữ liệu thất bại sau khi đã trừ tiền ví và giữ kho, Commerce Service lập tức phát lệnh hoàn tiền ví 100% và nhả kho tức thời.
 
@@ -182,7 +182,7 @@ Tại Commerce Service, **TUYỆT ĐỐI CẤM SỬ DỤNG REPOSITORY PATTERN B�
 | **ORM / Data Access** | Entity Framework Core | 8.0.10 | Code-First Migrations, Fluent API, No-Repository pattern. |
 | **PostgreSQL Provider** | `Npgsql.EntityFrameworkCore.PostgreSQL` | 8.0.10 | Hỗ trợ ánh xạ Native JSONB, Date/Time mapping chuẩn UTC. |
 | **Cơ Sở Dữ Liệu** | PostgreSQL | 16.x Alpine | Port container `5435`, Database `commerce_db`. Độc lập 100%. |
-| **Bộ Nhớ Đệm Phân Tán** | `StackExchange.Redis` / Distributed Cache | 8.0 | Lưu trữ Quote Snapshot (TTL 15 phút), Atomic Pop chống bấm đúp. |
+| **Bộ Nhớ Đệm Phân Tán** | `StackExchange.Redis` / Distributed Cache | 8.0 | Lưu trữ Quote Snapshot (TTL 5 phút), Atomic Pop chống bấm đúp. |
 | **Giao Tiếp Microservices** | `HttpClient` (Typed REST Clients) | Built-in | `CatalogClient`, `FulfillmentClient`, `WalletClient` kèm `IdentityPropagation`. |
 | **Chạy Tác Vụ Ngầm** | `BackgroundService` + `PeriodicTimer` | Built-in | `PaymentTimeoutWorker` chạy chu kỳ 60 giây dọn dẹp đơn quá hạn. |
 | **Tuần Tự Hóa JSON** | `System.Text.Json` | Built-in | `PascalCaseJsonStringEnumConverter`, camelCase property naming. |
@@ -853,7 +853,7 @@ Tất cả các endpoints đều tuân thủ 100% quy chuẩn danh từ số nhi
 | `ORD-05` | `POST` | `/api/v1/orders/{orderId}/reject` | Seller | Người bán từ chối đơn con, kích hoạt nhả kho mục tiêu và hoàn tiền ví. |
 | `ORD-06` | `POST` | `/api/v1/orders/{orderId}/cancel` | Buyer | Người mua chủ động hủy đơn hàng khi còn ở trạng thái `PendingPayment`. |
 | `ORD-07` | `GET` | `/api/v1/sub-orders/{subOrderId}` | Buyer/Seller | Lấy chi tiết đơn con của Shop (Single DTO bóc tách giảm giá & địa chỉ JSONB). |
-| `ORD-08` | `GET` | `/api/v1/shipments/order/{orderId}` | Buyer/Seller | Tra cứu mã vận đơn GHN, tiến độ giao hàng và link in phiếu giao vận. |
+| `ORD-08` | `GET` | `/api/v1/orders/{orderId}/shipments` | Buyer/Seller | Tra cứu mã vận đơn GHN, tiến độ giao hàng và link in phiếu giao vận (alias: `/api/v1/shipments/order/{orderId}`). |
 | `ORD-09` | `POST` | `/api/v1/sub-orders/{subOrderId}/confirm-receipt` | Buyer | Người mua xác nhận đã nhận hàng (`Completed`) và kích hoạt giải ngân Escrow. |
 | `ORD-10` | `POST` | `/api/v1/sub-orders/{subOrderId}/refund` | Buyer | Người mua khởi tạo yêu cầu hoàn tiền cho đơn hàng con. |
 | `ORD-11` | `POST` | `/api/v1/sub-orders/{subOrderId}/delivery-status` | Internal | Webhook từ Fulfillment Service cập nhật 9 trạng thái giao hàng của carrier. |
@@ -968,8 +968,8 @@ Mọi phản hồi lỗi từ Commerce Service bắt buộc phải tuân thủ n
 Khi cần hiệu chỉnh các hành vi nghiệp vụ trong quá trình vận hành thực tế, các kỹ sư có thể điều chỉnh tại các điểm kiểm soát tập trung sau:
 
 1. **Thời Gian Hạn Chót Thanh Toán (Payment Deadline):**
-   - *Mặc định:* **15 phút** cho đơn hàng thông thường, **24 giờ** cho đơn hàng thắng đấu giá.
-   - *Vị trí kiểm soát:* Hằng số `PaymentDeadlineAt` tại `OrderService.cs` và `_checkInterval = TimeSpan.FromMinutes(1)` tại `PaymentTimeoutWorker.cs`.
+   - *Mặc định:* **5 phút** cho đơn hàng thông thường, **24 giờ** cho đơn hàng thắng đấu giá.
+   - *Vị trí kiểm soát:* Hằng số `DefaultPaymentDeadlineMinutes = 5` tại `OrderService.cs` và `_checkInterval = TimeSpan.FromMinutes(1)` tại `PaymentTimeoutWorker.cs`.
 2. **Ngưỡng Giới Hạn Giỏ Hàng (Cart Threshold Invariants):**
    - *Mặc định:* Tối đa **50 loại sản phẩm khác nhau** và tối đa **99 chiếc** cho một dòng sản phẩm.
    - *Vị trí kiểm soát:* Domain Invariant hằng số tại `Commerce.Domain/Entities/Cart.cs` (`MaxItemsInCart`, `MaxQuantityPerItem`).
@@ -977,8 +977,8 @@ Khi cần hiệu chỉnh các hành vi nghiệp vụ trong quá trình vận hà
    - *Mặc định:* **30.000đ / Shop**.
    - *Vị trí kiểm soát:* Khối bắt ngoại lệ `catch` tại `OrderService.QuoteCheckoutAsync` (line 114).
 4. **Thời Gian Sống Của Báo Giá Xem Trước (Quote TTL):**
-   - *Mặc định:* **15 phút** trong Redis Cache.
-   - *Vị trí kiểm soát:* `TimeSpan.FromMinutes(15)` tại `OrderService.QuoteCheckoutAsync` (line 152).
+   - *Mặc định:* **5 phút** trong Redis Cache.
+   - *Vị trí kiểm soát:* `DefaultPaymentDeadlineMinutes` (5 phút) tại `OrderService.QuoteCheckoutAsync`.
 5. **Cấu Hình Địa Chỉ Các Dịch Vụ Vệ Tinh (Satellite Endpoints):**
    - *Vị trí kiểm soát:* `appsettings.json` và Biến môi trường Docker Compose (`docker-compose.yml`):
      - `CATALOG_SERVICE_URL`: `http://catalog-service:8002` (Mặc định local: `http://localhost:8002`)

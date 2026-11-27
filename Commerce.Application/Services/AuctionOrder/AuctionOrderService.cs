@@ -1367,12 +1367,12 @@ public class AuctionOrderService : IAuctionOrderService
             }
 
             var resolved = new ShippingAddressDto(
-                FullName: rawAddress.ReceiverName,
+                FullName: rawAddress.ReceiverName ?? string.Empty,
                 PhoneNumber: phone,
-                AddressLine: rawAddress.Street,
-                ProvinceName: rawAddress.Province,
-                DistrictName: rawAddress.District,
-                WardName: rawAddress.Ward,
+                AddressLine: rawAddress.Street ?? string.Empty,
+                ProvinceName: rawAddress.Province ?? string.Empty,
+                DistrictName: rawAddress.District ?? string.Empty,
+                WardName: rawAddress.Ward ?? string.Empty,
                 GhnDistrictId: rawAddress.GhnDistrictId.Value,
                 GhnWardCode: rawAddress.GhnWardCode.Trim(),
                 ProvinceId: rawAddress.ProvinceId
