@@ -1957,4 +1957,139 @@ public class OrderServiceTests
         result.Should().NotBeNull();
         result.OrderId.Should().NotBeEmpty();
     }
+
+    [Fact]
+    public async Task GetOrderDetailAsync_And_GetSubOrderDetailAsync_ShouldIncludeAppliedVouchers_ExcludingReleased()
+    {
+        // Arrange
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var adminId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+
+        var shopVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "SHOP10K",
+            Name = "Shop 10k",
+            ScopeType = DiscountScopeType.Shop,
+            OwnerSellerId = sellerId,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 10000m,
+            MinOrderAmount = 50000m,
+            Status = DiscountStatus.Active
+        };
+        var platformVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "NEXUS20K",
+            Name = "Platform 20k",
+            ScopeType = DiscountScopeType.System,
+            OwnerSellerId = null,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 20000m,
+            MinOrderAmount = 100000m,
+            Status = DiscountStatus.Active
+        };
+        var releasedVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "OLDVOID",
+            Name = "Voided",
+            ScopeType = DiscountScopeType.Shop,
+            OwnerSellerId = sellerId,
+            DiscountType = DiscountType.FixedAmount,
+            DiscountValue = 5000m,
+            MinOrderAmount = 0m,
+            Status = DiscountStatus.Active
+        };
+        dbContext.DiscountCodes.AddRange(shopVoucher, platformVoucher, releasedVoucher);
+
+        var order = new Order
+        {
+            Id = orderId,
+            BuyerId = buyerId,
+            Status = OrderStatus.Paid,
+            TotalAmount = 170000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+        var subOrder = new SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-VOUCHER-001",
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            Status = SubOrderStatus.Paid,
+            PaymentMethod = PaymentMethod.Wallet,
+            ShippingAddress = new ShippingAddressSnapshot("Buyer", "0901234567", "123 Street", "Ward", "District", "Province", 1, "1"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 200000m,
+            ShopDiscountAmount = 10000m,
+            SystemDiscountAmount = 20000m,
+            TotalAmount = 170000m,
+            SellerReceiveAmount = 180000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+        dbContext.Orders.Add(order);
+        dbContext.SubOrders.Add(subOrder);
+        dbContext.DiscountCodeUsages.AddRange(
+            new DiscountCodeUsage
+            {
+                Id = Guid.NewGuid(),
+                DiscountCodeId = shopVoucher.Id,
+                UserId = buyerId,
+                OrderId = orderId,
+                SubOrderId = subOrderId,
+                Status = DiscountUsageStatus.Used,
+                DiscountAmount = 10000m
+            },
+            new DiscountCodeUsage
+            {
+                Id = Guid.NewGuid(),
+                DiscountCodeId = platformVoucher.Id,
+                UserId = buyerId,
+                OrderId = orderId,
+                SubOrderId = null,
+                Status = DiscountUsageStatus.Used,
+                DiscountAmount = 20000m
+            },
+            new DiscountCodeUsage
+            {
+                Id = Guid.NewGuid(),
+                DiscountCodeId = releasedVoucher.Id,
+                UserId = buyerId,
+                OrderId = orderId,
+                SubOrderId = subOrderId,
+                Status = DiscountUsageStatus.Released,
+                DiscountAmount = 5000m
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        // Act
+        var orderDetail = await service.GetOrderDetailAsync(adminId, orderId, isAdminOrStaff: true);
+        var subOrderDetail = await service.GetSubOrderDetailAsync(adminId, subOrderId, isAdminOrStaff: true);
+
+        // Assert
+        orderDetail.AppliedVouchers.Should().NotBeNull();
+        orderDetail.AppliedVouchers.Should().HaveCount(2);
+        orderDetail.AppliedVouchers!.Should().Contain(v => v.Code == "SHOP10K" && v.DiscountAmount == 10000m);
+        orderDetail.AppliedVouchers!.Should().Contain(v => v.Code == "NEXUS20K" && v.DiscountAmount == 20000m);
+        orderDetail.AppliedVouchers!.Should().NotContain(v => v.Code == "OLDVOID");
+
+        subOrderDetail.AppliedVouchers.Should().NotBeNull();
+        subOrderDetail.AppliedVouchers.Should().HaveCount(2);
+        subOrderDetail.AppliedVouchers!.Should().Contain(v => v.Code == "SHOP10K" && v.DiscountAmount == 10000m);
+        subOrderDetail.AppliedVouchers!.Should().Contain(v => v.Code == "NEXUS20K" && v.DiscountAmount == 20000m);
+    }
 }

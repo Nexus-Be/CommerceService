@@ -1384,43 +1384,66 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("FORBIDDEN", "You do not have permission to access this order.", 403);
         }
 
-        var subOrderResponses = order.SubOrders.Select(so => new SubOrderDetailResponse(
-            so.Id,
-            so.SubOrderNo,
-            so.OrderId,
-            so.BuyerId,
-            so.SellerId,
-            $"Shop {so.SellerId.ToString()[..8]}",
-            so.Status.ToString(),
-            so.PaymentMethod.ToString(),
-            so.ShippingAddress,
-            so.ContactPhone,
-            so.ItemsAmount,
-            so.ProductDiscountAmount,
-            so.ShopDiscountAmount,
-            so.SystemDiscountAmount,
-            so.ShopDiscountAmount + so.ProductDiscountAmount + so.SystemDiscountAmount,
-            so.ShippingFeeAmount,
-            so.TotalAmount,
-            so.CreatedAt,
-            so.Items.Select(i => new SubOrderItemResponse(
-                i.Id,
-                i.ProductId,
-                i.SkuId,
-                i.ProductNameSnapshot,
-                i.SkuCodeSnapshot,
-                i.Quantity,
-                i.UnitPrice,
-                i.LineTotal
-            )).ToList(),
-            so.CarrierCode,
-            so.TrackingCode,
-            so.ShipmentPendingCreation,
-            so.LabelPrintUrl,
-            so.SellerAcceptedAt,
-            so.ShippedAt,
-            so.DeliveredAt
-        )).ToList();
+        var orderVoucherUsages = await _dbContext.DiscountCodeUsages
+            .AsNoTracking()
+            .Include(u => u.DiscountCode)
+            .Where(u => u.OrderId == orderId && u.Status != DiscountUsageStatus.Released && u.DiscountCode != null)
+            .ToListAsync(ct);
+
+        var orderAppliedVouchers = orderVoucherUsages
+            .GroupBy(u => new { u.DiscountCode!.Code, ScopeType = u.DiscountCode.ScopeType.ToString(), u.DiscountCode.OwnerSellerId })
+            .Select(g => new AppliedVoucherDetail(g.Key.Code, g.Key.ScopeType, g.Key.OwnerSellerId, g.Sum(x => x.DiscountAmount)))
+            .ToList();
+
+        var subOrderResponses = order.SubOrders.Select(so =>
+        {
+            var subVouchers = orderVoucherUsages
+                .Where(u => u.SubOrderId == so.Id ||
+                            (u.SubOrderId == null && u.DiscountCode!.OwnerSellerId == so.SellerId) ||
+                            (u.DiscountCode!.OwnerSellerId == null && so.SystemDiscountAmount > 0m))
+                .GroupBy(u => new { u.DiscountCode!.Code, ScopeType = u.DiscountCode.ScopeType.ToString(), u.DiscountCode.OwnerSellerId })
+                .Select(g => new AppliedVoucherDetail(g.Key.Code, g.Key.ScopeType, g.Key.OwnerSellerId, g.Sum(x => x.DiscountAmount)))
+                .ToList();
+
+            return new SubOrderDetailResponse(
+                so.Id,
+                so.SubOrderNo,
+                so.OrderId,
+                so.BuyerId,
+                so.SellerId,
+                $"Shop {so.SellerId.ToString()[..8]}",
+                so.Status.ToString(),
+                so.PaymentMethod.ToString(),
+                so.ShippingAddress,
+                so.ContactPhone,
+                so.ItemsAmount,
+                so.ProductDiscountAmount,
+                so.ShopDiscountAmount,
+                so.SystemDiscountAmount,
+                so.ShopDiscountAmount + so.ProductDiscountAmount + so.SystemDiscountAmount,
+                so.ShippingFeeAmount,
+                so.TotalAmount,
+                so.CreatedAt,
+                so.Items.Select(i => new SubOrderItemResponse(
+                    i.Id,
+                    i.ProductId,
+                    i.SkuId,
+                    i.ProductNameSnapshot,
+                    i.SkuCodeSnapshot,
+                    i.Quantity,
+                    i.UnitPrice,
+                    i.LineTotal
+                )).ToList(),
+                so.CarrierCode,
+                so.TrackingCode,
+                so.ShipmentPendingCreation,
+                so.LabelPrintUrl,
+                so.SellerAcceptedAt,
+                so.ShippedAt,
+                so.DeliveredAt,
+                subVouchers.Count > 0 ? subVouchers : null
+            );
+        }).ToList();
 
         var orderNo = $"ORD-{order.Id.ToString()[..8].ToUpperInvariant()}";
 
@@ -1432,7 +1455,8 @@ public sealed class OrderService : IOrderService
             order.TotalAmount,
             order.PaymentDeadlineAt,
             order.CreatedAt,
-            subOrderResponses
+            subOrderResponses,
+            orderAppliedVouchers.Count > 0 ? orderAppliedVouchers : null
         );
     }
 
@@ -1506,6 +1530,20 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("FORBIDDEN", "You do not have permission to access this sub-order.", 403);
         }
 
+        var subVoucherUsages = await _dbContext.DiscountCodeUsages
+            .AsNoTracking()
+            .Include(u => u.DiscountCode)
+            .Where(u => u.OrderId == so.OrderId && u.Status != DiscountUsageStatus.Released && u.DiscountCode != null)
+            .ToListAsync(ct);
+
+        var appliedVouchers = subVoucherUsages
+            .Where(u => u.SubOrderId == subOrderId ||
+                        (u.SubOrderId == null && u.DiscountCode!.OwnerSellerId == so.SellerId) ||
+                        (u.DiscountCode!.OwnerSellerId == null && so.SystemDiscountAmount > 0m))
+            .GroupBy(u => new { u.DiscountCode!.Code, ScopeType = u.DiscountCode.ScopeType.ToString(), u.DiscountCode.OwnerSellerId })
+            .Select(g => new AppliedVoucherDetail(g.Key.Code, g.Key.ScopeType, g.Key.OwnerSellerId, g.Sum(x => x.DiscountAmount)))
+            .ToList();
+
         return new SubOrderDetailResponse(
             so.Id,
             so.SubOrderNo,
@@ -1541,7 +1579,8 @@ public sealed class OrderService : IOrderService
             so.LabelPrintUrl,
             so.SellerAcceptedAt,
             so.ShippedAt,
-            so.DeliveredAt
+            so.DeliveredAt,
+            appliedVouchers.Count > 0 ? appliedVouchers : null
         );
     }
 

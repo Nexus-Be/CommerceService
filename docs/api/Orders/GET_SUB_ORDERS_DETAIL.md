@@ -39,7 +39,15 @@ Không có (Phương thức không yêu cầu body payload).
   "subOrderId": "02000000-0000-0000-0000-000000000001",
   "subOrderNo": "SUB-20261121-0001",
   "status": "Confirmed",
-  "items": []
+  "items": [],
+  "appliedVouchers": [
+    {
+      "code": "SHOP10K",
+      "scopeType": "Shop",
+      "ownerSellerId": "04000000-0000-0000-0000-000000000001",
+      "discountAmount": 10000
+    }
+  ]
 }
 ```
 

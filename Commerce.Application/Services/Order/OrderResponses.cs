@@ -96,7 +96,8 @@ public sealed record SubOrderDetailResponse(
     string? LabelPrintUrl = null,
     DateTimeOffset? SellerAcceptedAt = null,
     DateTimeOffset? ShippedAt = null,
-    DateTimeOffset? DeliveredAt = null);
+    DateTimeOffset? DeliveredAt = null,
+    List<AppliedVoucherDetail>? AppliedVouchers = null);
 
 public sealed record SubOrderShipmentInfo(
     Guid SubOrderId,
@@ -171,7 +172,8 @@ public sealed record OrderResponse(
     decimal TotalAmount,
     DateTimeOffset PaymentDeadlineAt,
     DateTimeOffset CreatedAt,
-    List<SubOrderDetailResponse> SubOrders);
+    List<SubOrderDetailResponse> SubOrders,
+    List<AppliedVoucherDetail>? AppliedVouchers = null);
 
 public sealed record SubOrderSummaryResponse(
     Guid SubOrderId,

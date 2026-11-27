@@ -36,10 +36,22 @@ Không có (Phương thức không yêu cầu body payload).
 - **JSON Response Body mẫu (Pure DTO - camelCase):**
 ```json
 {
-  "orderId": "01000000-0000-0000-0000-000000000001",
-  "orderNo": "ORD-20261121-0001",
+  "id": "01000000-0000-0000-0000-000000000001",
+  "orderNo": "ORD-01000000",
+  "buyerId": "03000000-0000-0000-0000-000000000001",
   "status": "PendingPayment",
-  "subOrders": []
+  "totalAmount": 170000,
+  "paymentDeadlineAt": "2026-11-21T10:15:00Z",
+  "createdAt": "2026-11-21T10:00:00Z",
+  "subOrders": [],
+  "appliedVouchers": [
+    {
+      "code": "NEXUS20K",
+      "scopeType": "System",
+      "ownerSellerId": null,
+      "discountAmount": 20000
+    }
+  ]
 }
 ```
 
