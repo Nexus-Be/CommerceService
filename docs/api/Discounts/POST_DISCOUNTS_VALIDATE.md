@@ -50,10 +50,16 @@ public sealed record ValidateVoucherRequest(
 - **JSON Response Body mẫu (Pure DTO - camelCase):**
 ```json
 {
-  "code": "FREESHIP50K",
   "isValid": true,
-  "discountAmount": 50000.0,
-  "message": "Voucher applied successfully."
+  "discountId": "d1000000-0000-0000-0000-000000000001",
+  "code": "FREESHIP50K",
+  "scopeType": "Shop",
+  "estimatedDiscountAmount": 50000.0,
+  "ownerSellerId": "s1000000-0000-0000-0000-000000000001",
+  "discountType": "FixedAmount",
+  "discountValue": 50000.0,
+  "minOrderAmount": 100000.0,
+  "maxDiscountAmount": null
 }
 ```
 

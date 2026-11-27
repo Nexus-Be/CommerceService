@@ -136,6 +136,7 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
         var shopDiscountPerShop = shopItems.Keys.ToDictionary(k => k, _ => 0m);
         var systemDiscountPerShop = shopItems.Keys.ToDictionary(k => k, _ => 0m);
         var usagesPerShop = shopItems.Keys.ToDictionary(k => k, _ => new List<AllocatedVoucherUsage>());
+        var itemProductDiscountsPerShop = shopItems.Keys.ToDictionary(k => k, _ => new Dictionary<Guid, decimal>());
 
         // 2. Tier 1: Product / SKU vouchers
         foreach (var pv in productCandidates)
@@ -149,14 +150,24 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
             }
 
             var sellerId = pv.OwnerSellerId.Value;
-            var targetSkuIds = (pv.Scopes ?? Enumerable.Empty<DiscountCodeScope>())
-                .Where(s => s.ScopeRefType == DiscountScopeRefType.Sku && s.ScopeRefId.HasValue)
+            var activeScopes = (pv.Scopes ?? Enumerable.Empty<DiscountCodeScope>())
+                .Where(s => s.ScopeRefId.HasValue)
+                .ToList();
+
+            var targetSkuIds = activeScopes
+                .Where(s => s.ScopeRefType == DiscountScopeRefType.Sku)
                 .Select(s => s.ScopeRefId!.Value)
                 .ToHashSet();
 
-            var eligibleItems = targetSkuIds.Count > 0
-                ? sellerItems.Where(i => targetSkuIds.Contains(i.SkuId)).ToList()
-                : sellerItems;
+            var targetProductIds = activeScopes
+                .Where(s => s.ScopeRefType == DiscountScopeRefType.Product)
+                .Select(s => s.ScopeRefId!.Value)
+                .ToHashSet();
+
+            var hasProductOrSkuScopes = targetSkuIds.Count > 0 || targetProductIds.Count > 0;
+            var eligibleItems = hasProductOrSkuScopes
+                ? sellerItems.Where(i => targetSkuIds.Contains(i.SkuId) || targetProductIds.Contains(i.ProductId)).ToList()
+                : (activeScopes.Count == 0 ? sellerItems : new List<CalculationItemInput>());
 
             if (eligibleItems.Count == 0)
             {
@@ -183,6 +194,28 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
                 usagesPerShop[sellerId].Add(usage);
                 allAllocatedUsages.Add(usage);
                 appliedVoucherCodes.Add(pv.Code);
+
+                // Allocate product discount across eligible SKUs for item-level unit price breakdown
+                var sortedEligible = eligibleItems.OrderBy(i => i.SkuId).ToList();
+                decimal allocatedItemSum = 0m;
+                for (int idx = 0; idx < sortedEligible.Count; idx++)
+                {
+                    var elItem = sortedEligible[idx];
+                    var elLineTotal = elItem.Quantity * elItem.UnitPrice;
+                    decimal itemDiscount = idx == sortedEligible.Count - 1
+                        ? discount - allocatedItemSum
+                        : Math.Round(discount * (elLineTotal / baseAmount), 0, MidpointRounding.AwayFromZero);
+                    itemDiscount = Math.Clamp(itemDiscount, 0m, elLineTotal);
+                    if (idx < sortedEligible.Count - 1)
+                    {
+                        allocatedItemSum += itemDiscount;
+                    }
+                    if (itemDiscount > 0m && elItem.SkuId != Guid.Empty)
+                    {
+                        itemProductDiscountsPerShop[sellerId][elItem.SkuId] =
+                            itemProductDiscountsPerShop[sellerId].GetValueOrDefault(elItem.SkuId) + itemDiscount;
+                    }
+                }
             }
         }
 
@@ -321,7 +354,8 @@ public sealed class VoucherCalculationEngine : IVoucherCalculationEngine
                 PlatformFeeAmount: platformFee,
                 SellerReceiveAmount: sellerReceive,
                 TotalAmount: totalAmount,
-                AllocatedUsages: usagesPerShop[sellerId]
+                AllocatedUsages: usagesPerShop[sellerId],
+                ItemProductDiscounts: itemProductDiscountsPerShop[sellerId].Count > 0 ? itemProductDiscountsPerShop[sellerId] : null
             );
 
             shopResults[sellerId] = result;

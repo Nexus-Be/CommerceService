@@ -38,9 +38,15 @@ public sealed class UserClient : IUserClient
         if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Object)
             root = data;
 
+        string? shopName = null;
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("shopName", out var shopNameProp) && shopNameProp.ValueKind == JsonValueKind.String)
+        {
+            shopName = shopNameProp.GetString();
+        }
+
         return root.ValueKind == JsonValueKind.Object && root.TryGetProperty("shopId", out var shopId)
             && shopId.ValueKind == JsonValueKind.String && Guid.TryParse(shopId.GetString(), out var parsed) && parsed != Guid.Empty
-                ? new SellerShopResult(true, parsed)
+                ? new SellerShopResult(true, parsed, shopName)
                 : new SellerShopResult(false, null);
     }
 

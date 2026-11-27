@@ -17,7 +17,12 @@ public sealed record ValidateVoucherResponse(
     DiscountScopeType? ScopeType,
     decimal EstimatedDiscountAmount,
     string? IneligibleReason = null,
-    string? Message = null
+    string? Message = null,
+    Guid? OwnerSellerId = null,
+    DiscountType? DiscountType = null,
+    decimal? DiscountValue = null,
+    decimal? MinOrderAmount = null,
+    decimal? MaxDiscountAmount = null
 )
 {
     public ValidateVoucherResponse(
@@ -41,7 +46,8 @@ public sealed record ValidateVoucherResponse(
 }
 
 public sealed record RecommendVouchersRequest(
-    [Required] IReadOnlyList<Guid> CartItemIds
+    [Required] IReadOnlyList<Guid> CartItemIds,
+    PaymentMethod? PaymentMethod = null
 );
 
 public sealed record TierSavingsDto(

@@ -445,6 +445,25 @@ public sealed class DiscountService : IDiscountService
             .Take(pageSize)
             .ToListAsync(ct);
 
+        var userUsageByVoucher = new Dictionary<Guid, int>();
+        if (buyerId != Guid.Empty)
+        {
+            var userLimitedIds = vouchers
+                .Where(v => v.MaxUsesPerUser.HasValue)
+                .Select(v => v.Id)
+                .ToList();
+
+            if (userLimitedIds.Count > 0)
+            {
+                userUsageByVoucher = await _db.DiscountCodeUsages
+                    .AsNoTracking()
+                    .Where(u => u.UserId == buyerId && userLimitedIds.Contains(u.DiscountCodeId) && u.Status != DiscountUsageStatus.Released && !u.IsDeleted)
+                    .GroupBy(u => u.DiscountCodeId)
+                    .Select(g => new { g.Key, Count = g.Count() })
+                    .ToDictionaryAsync(x => x.Key, x => x.Count, ct);
+            }
+        }
+
         var dtoList = new List<BuyerAvailableVoucherDto>();
         foreach (var v in vouchers)
         {
@@ -452,7 +471,17 @@ public sealed class DiscountService : IDiscountService
             string? ineligibleReason = null;
             decimal estimatedDiscount = 0m;
 
-            if (cartItems.Count > 0)
+            if (v.MaxUsesTotal.HasValue && (v.UsedCount + v.ReservedCount) >= v.MaxUsesTotal.Value)
+            {
+                isEligible = false;
+                ineligibleReason = "Voucher has reached its total usage limit.";
+            }
+            else if (v.MaxUsesPerUser.HasValue && userUsageByVoucher.TryGetValue(v.Id, out var usedCount) && usedCount >= v.MaxUsesPerUser.Value)
+            {
+                isEligible = false;
+                ineligibleReason = "You have reached the usage limit for this voucher.";
+            }
+            else if (cartItems.Count > 0)
             {
                 var calcItems = cartItems.Select(ci => new CalculationItemInput(
                     ci.Id, ci.ProductId, ci.SkuId, ci.SellerId, ci.ProductNameSnapshot, ci.Quantity, ci.UnitPriceSnapshot
@@ -563,7 +592,12 @@ public sealed class DiscountService : IDiscountService
             DiscountId: voucher.Id,
             Code: voucher.Code,
             ScopeType: voucher.ScopeType,
-            EstimatedDiscountAmount: estimatedDiscount
+            EstimatedDiscountAmount: estimatedDiscount,
+            OwnerSellerId: voucher.OwnerSellerId,
+            DiscountType: voucher.DiscountType,
+            DiscountValue: voucher.DiscountValue,
+            MinOrderAmount: voucher.MinOrderAmount,
+            MaxDiscountAmount: voucher.MaxDiscountAmount
         );
     }
 
@@ -587,19 +621,44 @@ public sealed class DiscountService : IDiscountService
         )).ToList();
 
         var sellerIds = cartItems.Select(i => i.SellerId).Distinct().ToList();
-        var skuIds = cartItems.Select(i => i.SkuId).Distinct().ToList();
         var now = DateTimeOffset.UtcNow;
 
-        var candidateVouchers = await _db.DiscountCodes
+        var rawCandidates = await _db.DiscountCodes
             .AsNoTracking()
             .Include(d => d.Scopes)
             .Where(d => !d.IsDeleted && d.Status == DiscountStatus.Active && d.IsVisible)
             .Where(d => (!d.StartsAt.HasValue || d.StartsAt.Value <= now) && (!d.EndsAt.HasValue || d.EndsAt.Value > now))
+            .Where(d => !d.MaxUsesTotal.HasValue || (d.UsedCount + d.ReservedCount) < d.MaxUsesTotal.Value)
             .Where(d => d.ScopeType == DiscountScopeType.System || (d.OwnerSellerId.HasValue && sellerIds.Contains(d.OwnerSellerId.Value)))
             .ToListAsync(ct);
 
+        var userUsageByVoucher = new Dictionary<Guid, int>();
+        if (buyerId != Guid.Empty)
+        {
+            var userLimitedIds = rawCandidates
+                .Where(v => v.MaxUsesPerUser.HasValue)
+                .Select(v => v.Id)
+                .ToList();
+
+            if (userLimitedIds.Count > 0)
+            {
+                userUsageByVoucher = await _db.DiscountCodeUsages
+                    .AsNoTracking()
+                    .Where(u => u.UserId == buyerId && userLimitedIds.Contains(u.DiscountCodeId) && u.Status != DiscountUsageStatus.Released && !u.IsDeleted)
+                    .GroupBy(u => u.DiscountCodeId)
+                    .Select(g => new { g.Key, Count = g.Count() })
+                    .ToDictionaryAsync(x => x.Key, x => x.Count, ct);
+            }
+        }
+
+        var candidateVouchers = rawCandidates
+            .Where(v => !v.MaxUsesPerUser.HasValue || !userUsageByVoucher.TryGetValue(v.Id, out var used) || used < v.MaxUsesPerUser.Value)
+            .Where(v => request.PaymentMethod != PaymentMethod.Cod || v.ScopeType != DiscountScopeType.System)
+            .ToList();
+
         // Pick optimal voucher per shop (Shopee 2-tier model: single best voucher per shop having max(ProductDiscount, ShopDiscount))
         var optimalCandidates = new List<DiscountCode>();
+        decimal totalShopAndProductDiscounts = 0m;
 
         foreach (var sId in sellerIds)
         {
@@ -616,14 +675,24 @@ public sealed class DiscountService : IDiscountService
                 decimal candidateDiscount = 0m;
                 if (v.ScopeType == DiscountScopeType.Product)
                 {
-                    var targetSkuIds = (v.Scopes ?? Enumerable.Empty<DiscountCodeScope>())
-                        .Where(s => s.ScopeRefType == DiscountScopeRefType.Sku && s.ScopeRefId.HasValue)
+                    var activeScopes = (v.Scopes ?? Enumerable.Empty<DiscountCodeScope>())
+                        .Where(s => s.ScopeRefId.HasValue && !s.IsDeleted)
+                        .ToList();
+
+                    var targetSkuIds = activeScopes
+                        .Where(s => s.ScopeRefType == DiscountScopeRefType.Sku)
                         .Select(s => s.ScopeRefId!.Value)
                         .ToHashSet();
 
-                    var eligibleItems = targetSkuIds.Count > 0
-                        ? sellerItems.Where(i => targetSkuIds.Contains(i.SkuId)).ToList()
-                        : sellerItems;
+                    var targetProductIds = activeScopes
+                        .Where(s => s.ScopeRefType == DiscountScopeRefType.Product)
+                        .Select(s => s.ScopeRefId!.Value)
+                        .ToHashSet();
+
+                    var hasProductOrSkuScopes = targetSkuIds.Count > 0 || targetProductIds.Count > 0;
+                    var eligibleItems = hasProductOrSkuScopes
+                        ? sellerItems.Where(i => targetSkuIds.Contains(i.SkuId) || targetProductIds.Contains(i.ProductId)).ToList()
+                        : (activeScopes.Count == 0 ? sellerItems : new List<CartItem>());
 
                     if (eligibleItems.Count > 0)
                     {
@@ -653,49 +722,40 @@ public sealed class DiscountService : IDiscountService
             if (bestShopVoucher != null && maxShopDiscount > 0m)
             {
                 optimalCandidates.Add(bestShopVoucher);
+                totalShopAndProductDiscounts += maxShopDiscount;
             }
         }
 
-        // 3. Best System voucher
-        var systemCandidates = candidateVouchers
-            .Where(v => v.ScopeType == DiscountScopeType.System)
-            .ToList();
-
-        DiscountCode? bestSystemVoucher = null;
-        decimal maxSystemDiscount = 0m;
-
-        var totalItemsBase = cartItems.Sum(i => i.Quantity * i.UnitPriceSnapshot);
-        var remainingSystemBase = Math.Max(0m, totalItemsBase - optimalCandidates.Sum(v =>
+        // 3. Best System voucher (excluded for COD) evaluated on remaining subtotal after shop/product discounts
+        if (request.PaymentMethod != PaymentMethod.Cod)
         {
-            var sId = v.OwnerSellerId!.Value;
-            var sItems = cartItems.Where(i => i.SellerId == sId);
-            if (v.ScopeType == DiscountScopeType.Product)
-            {
-                var targetSkuIds = (v.Scopes ?? Enumerable.Empty<DiscountCodeScope>())
-                    .Where(s => s.ScopeRefType == DiscountScopeRefType.Sku && s.ScopeRefId.HasValue)
-                    .Select(s => s.ScopeRefId!.Value)
-                    .ToHashSet();
-                return sItems.Where(i => targetSkuIds.Contains(i.SkuId)).Sum(i => i.Quantity * i.UnitPriceSnapshot);
-            }
-            return sItems.Sum(i => i.Quantity * i.UnitPriceSnapshot);
-        }));
+            var systemCandidates = candidateVouchers
+                .Where(v => v.ScopeType == DiscountScopeType.System)
+                .ToList();
 
-        foreach (var sysV in systemCandidates)
-        {
-            if (remainingSystemBase >= sysV.MinOrderAmount)
+            DiscountCode? bestSystemVoucher = null;
+            decimal maxSystemDiscount = 0m;
+
+            var totalItemsBase = cartItems.Sum(i => i.Quantity * i.UnitPriceSnapshot);
+            var remainingSystemBase = Math.Max(0m, totalItemsBase - totalShopAndProductDiscounts);
+
+            foreach (var sysV in systemCandidates)
             {
-                var disc = _calculationEngine.CalculateRawDiscount(remainingSystemBase, sysV);
-                if (disc > maxSystemDiscount)
+                if (remainingSystemBase >= sysV.MinOrderAmount)
                 {
-                    maxSystemDiscount = disc;
-                    bestSystemVoucher = sysV;
+                    var disc = _calculationEngine.CalculateRawDiscount(remainingSystemBase, sysV);
+                    if (disc > maxSystemDiscount)
+                    {
+                        maxSystemDiscount = disc;
+                        bestSystemVoucher = sysV;
+                    }
                 }
             }
-        }
 
-        if (bestSystemVoucher != null && maxSystemDiscount > 0m)
-        {
-            optimalCandidates.Add(bestSystemVoucher);
+            if (bestSystemVoucher != null && maxSystemDiscount > 0m)
+            {
+                optimalCandidates.Add(bestSystemVoucher);
+            }
         }
 
         var evalResult = _calculationEngine.EvaluateAndApplyVouchers(new EvaluateVouchersRequest(

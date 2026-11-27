@@ -412,4 +412,211 @@ public class DiscountServiceTests
         result.Message.Should().Be("You have reached the usage limit for this voucher.");
         result.EstimatedDiscountAmount.Should().Be(0m);
     }
+
+    [Fact]
+    public async Task ValidateVoucherAsync_ShouldReturnVoucherMetadata_WhenValid()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = new Cart { Id = Guid.NewGuid(), BuyerId = buyerId, Status = CartStatus.Active };
+        var cartItem = new CartItem
+        {
+            Id = Guid.NewGuid(), CartId = cart.Id, ProductId = Guid.NewGuid(), SkuId = Guid.NewGuid(),
+            SellerId = sellerId, ProductNameSnapshot = "Shirt", Quantity = 1, UnitPriceSnapshot = 200000m
+        };
+        cart.Items.Add(cartItem);
+        _db.Carts.Add(cart);
+        _db.CartItems.Add(cartItem);
+        _db.DiscountCodes.Add(new DiscountCode
+        {
+            Id = Guid.NewGuid(), Code = "SHOP20", Name = "Shop 20k",
+            ScopeType = DiscountScopeType.Shop, OwnerSellerId = sellerId,
+            DiscountType = DiscountType.FixedAmount, DiscountValue = 20000m,
+            MinOrderAmount = 100000m, MaxDiscountAmount = 50000m,
+            Status = DiscountStatus.Active, IsVisible = false
+        });
+        await _db.SaveChangesAsync();
+
+        var realService = new DiscountService(_db, _mockUserClient.Object, _mockCatalogClient.Object, new VoucherCalculationEngine());
+        var res = await realService.ValidateVoucherAsync(buyerId, new ValidateVoucherRequest("SHOP20", new[] { cartItem.Id }));
+
+        res.IsValid.Should().BeTrue();
+        res.OwnerSellerId.Should().Be(sellerId);
+        res.DiscountType.Should().Be(DiscountType.FixedAmount);
+        res.DiscountValue.Should().Be(20000m);
+        res.MinOrderAmount.Should().Be(100000m);
+        res.MaxDiscountAmount.Should().Be(50000m);
+    }
+
+    [Fact]
+    public async Task RecommendVouchersAsync_ShouldSkipExhaustedAndUserLimitVouchers_ExcludeSystemOnCod_AndComputeRemainingSystemBase()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+
+        var cart = new Cart { Id = Guid.NewGuid(), BuyerId = buyerId, Status = CartStatus.Active };
+        var cartItem = new CartItem
+        {
+            Id = Guid.NewGuid(), CartId = cart.Id, ProductId = productId, SkuId = skuId,
+            SellerId = sellerId, ProductNameSnapshot = "Jacket", Quantity = 1, UnitPriceSnapshot = 500000m
+        };
+        cart.Items.Add(cartItem);
+        _db.Carts.Add(cart);
+        _db.CartItems.Add(cartItem);
+
+        // Exhausted total uses -> must be skipped
+        var exhaustedTotal = new DiscountCode
+        {
+            Id = Guid.NewGuid(), Code = "EXHAUSTED_TOT", Name = "Exhausted",
+            ScopeType = DiscountScopeType.Shop, OwnerSellerId = sellerId,
+            DiscountType = DiscountType.FixedAmount, DiscountValue = 200000m,
+            MaxUsesTotal = 1, UsedCount = 1, Status = DiscountStatus.Active, IsVisible = true
+        };
+        // Exhausted per-user uses -> must be skipped
+        var usedUpByUser = new DiscountCode
+        {
+            Id = Guid.NewGuid(), Code = "USED_BY_ME", Name = "Used by me",
+            ScopeType = DiscountScopeType.Shop, OwnerSellerId = sellerId,
+            DiscountType = DiscountType.FixedAmount, DiscountValue = 150000m,
+            MaxUsesTotal = 100, MaxUsesPerUser = 1, Status = DiscountStatus.Active, IsVisible = true
+        };
+        // Product voucher scoped by ProductId -> 50k off (better than Shop 30k)
+        var prodVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(), Code = "PROD50", Name = "Prod 50k",
+            ScopeType = DiscountScopeType.Product, OwnerSellerId = sellerId,
+            DiscountType = DiscountType.FixedAmount, DiscountValue = 50000m,
+            MinOrderAmount = 100000m, Status = DiscountStatus.Active, IsVisible = true,
+            Scopes = new List<DiscountCodeScope>
+            {
+                new() { Id = Guid.NewGuid(), DiscountCodeId = Guid.NewGuid(), ScopeRefType = DiscountScopeRefType.Product, ScopeRefId = productId }
+            }
+        };
+        var shopVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(), Code = "SHOP30", Name = "Shop 30k",
+            ScopeType = DiscountScopeType.Shop, OwnerSellerId = sellerId,
+            DiscountType = DiscountType.FixedAmount, DiscountValue = 30000m,
+            MinOrderAmount = 100000m, Status = DiscountStatus.Active, IsVisible = true
+        };
+        // System voucher requiring remaining base >= 400,000 (500,000 - 50,000 = 450,000 >= 400,000)
+        var sysVoucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(), Code = "SYS40", Name = "System 40k",
+            ScopeType = DiscountScopeType.System,
+            DiscountType = DiscountType.FixedAmount, DiscountValue = 40000m,
+            MinOrderAmount = 400000m, Status = DiscountStatus.Active, IsVisible = true
+        };
+
+        _db.DiscountCodes.AddRange(exhaustedTotal, usedUpByUser, prodVoucher, shopVoucher, sysVoucher);
+        _db.DiscountCodeUsages.Add(new DiscountCodeUsage
+        {
+            Id = Guid.NewGuid(), DiscountCodeId = usedUpByUser.Id, UserId = buyerId,
+            Status = DiscountUsageStatus.Used, DiscountAmount = 150000m
+        });
+        await _db.SaveChangesAsync();
+
+        var realService = new DiscountService(_db, _mockUserClient.Object, _mockCatalogClient.Object, new VoucherCalculationEngine());
+
+        var walletRec = await realService.RecommendVouchersAsync(buyerId, new RecommendVouchersRequest(new[] { cartItem.Id }, PaymentMethod.Wallet));
+        walletRec.RecommendedVoucherCodes.Should().BeEquivalentTo(new[] { "PROD50", "SYS40" });
+        walletRec.SavingsBreakdown.TotalSavings.Should().Be(90000m);
+
+        var codRec = await realService.RecommendVouchersAsync(buyerId, new RecommendVouchersRequest(new[] { cartItem.Id }, PaymentMethod.Cod));
+        codRec.RecommendedVoucherCodes.Should().BeEquivalentTo(new[] { "PROD50" });
+        codRec.SavingsBreakdown.SystemDiscount.Should().Be(0m);
+        codRec.SavingsBreakdown.TotalSavings.Should().Be(50000m);
+    }
+
+    [Fact]
+    public async Task GetAvailableVouchersAsync_ShouldMarkUserLimitExceededAsIneligible()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = new Cart { Id = Guid.NewGuid(), BuyerId = buyerId, Status = CartStatus.Active };
+        var cartItem = new CartItem
+        {
+            Id = Guid.NewGuid(), CartId = cart.Id, ProductId = Guid.NewGuid(), SkuId = Guid.NewGuid(),
+            SellerId = sellerId, ProductNameSnapshot = "Book", Quantity = 1, UnitPriceSnapshot = 200000m
+        };
+        cart.Items.Add(cartItem);
+        _db.Carts.Add(cart);
+        _db.CartItems.Add(cartItem);
+
+        var voucher = new DiscountCode
+        {
+            Id = Guid.NewGuid(), Code = "ONCE_ONLY", Name = "Once only",
+            ScopeType = DiscountScopeType.System,
+            DiscountType = DiscountType.FixedAmount, DiscountValue = 20000m,
+            MaxUsesPerUser = 1, Status = DiscountStatus.Active, IsVisible = true
+        };
+        _db.DiscountCodes.Add(voucher);
+        _db.DiscountCodeUsages.Add(new DiscountCodeUsage
+        {
+            Id = Guid.NewGuid(), DiscountCodeId = voucher.Id, UserId = buyerId,
+            Status = DiscountUsageStatus.Used, DiscountAmount = 20000m
+        });
+        await _db.SaveChangesAsync();
+
+        var realService = new DiscountService(_db, _mockUserClient.Object, _mockCatalogClient.Object, new VoucherCalculationEngine());
+        var page = await realService.GetAvailableVouchersAsync(buyerId, null, new[] { cartItem.Id }, 1, 20);
+
+        var item = page.Items.Should().ContainSingle(x => x.Code == "ONCE_ONLY").Subject;
+        item.IsEligible.Should().BeFalse();
+        item.IneligibleReason.Should().Be("You have reached the usage limit for this voucher.");
+        item.EstimatedDiscountAmount.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task ValidateVoucherAsync_ShouldReturnSpecificIneligibleReason_WhenExpiredOrNotStartedOrMinOrderNotMet()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = new Cart { Id = Guid.NewGuid(), BuyerId = buyerId, Status = CartStatus.Active };
+        var cartItem = new CartItem
+        {
+            Id = Guid.NewGuid(), CartId = cart.Id, ProductId = Guid.NewGuid(), SkuId = Guid.NewGuid(),
+            SellerId = sellerId, ProductNameSnapshot = "Tea", Quantity = 1, UnitPriceSnapshot = 100000m
+        };
+        cart.Items.Add(cartItem);
+        _db.Carts.Add(cart);
+        _db.CartItems.Add(cartItem);
+
+        _db.DiscountCodes.AddRange(
+            new DiscountCode
+            {
+                Id = Guid.NewGuid(), Code = "EXP_V", Name = "Expired", ScopeType = DiscountScopeType.Shop, OwnerSellerId = sellerId,
+                DiscountType = DiscountType.FixedAmount, DiscountValue = 10000m, EndsAt = DateTimeOffset.UtcNow.AddHours(-1),
+                Status = DiscountStatus.Active, IsVisible = true
+            },
+            new DiscountCode
+            {
+                Id = Guid.NewGuid(), Code = "FUT_V", Name = "Future", ScopeType = DiscountScopeType.Shop, OwnerSellerId = sellerId,
+                DiscountType = DiscountType.FixedAmount, DiscountValue = 10000m, StartsAt = DateTimeOffset.UtcNow.AddHours(2),
+                Status = DiscountStatus.Active, IsVisible = true
+            },
+            new DiscountCode
+            {
+                Id = Guid.NewGuid(), Code = "MIN_V", Name = "Min 500k", ScopeType = DiscountScopeType.Shop, OwnerSellerId = sellerId,
+                DiscountType = DiscountType.FixedAmount, DiscountValue = 10000m, MinOrderAmount = 500000m,
+                Status = DiscountStatus.Active, IsVisible = true
+            });
+        await _db.SaveChangesAsync();
+
+        var realService = new DiscountService(_db, _mockUserClient.Object, _mockCatalogClient.Object, new VoucherCalculationEngine());
+
+        var expRes = await realService.ValidateVoucherAsync(buyerId, new ValidateVoucherRequest("EXP_V", new[] { cartItem.Id }));
+        expRes.IsValid.Should().BeFalse();
+        expRes.IneligibleReason.Should().Be("VOUCHER_EXPIRED");
+
+        var futRes = await realService.ValidateVoucherAsync(buyerId, new ValidateVoucherRequest("FUT_V", new[] { cartItem.Id }));
+        futRes.IsValid.Should().BeFalse();
+        futRes.IneligibleReason.Should().Be("VOUCHER_NOT_STARTED");
+
+        var minRes = await realService.ValidateVoucherAsync(buyerId, new ValidateVoucherRequest("MIN_V", new[] { cartItem.Id }));
+        minRes.IsValid.Should().BeFalse();
+        minRes.IneligibleReason.Should().Be("VOUCHER_MIN_ORDER_NOT_MET");
+    }
 }

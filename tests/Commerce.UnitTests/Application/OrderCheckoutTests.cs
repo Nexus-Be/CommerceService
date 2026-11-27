@@ -985,4 +985,312 @@ public class OrderCheckoutTests : IDisposable
         ex.ErrorCode.Should().Be("SHIPPING_FEE_MISMATCH");
         ex.StatusCode.Should().Be(409);
     }
+
+    [Fact]
+    public async Task QuoteCheckoutAsync_ShouldThrow400_WhenVoucherIsRejectedOrNotFound()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+
+        var calc = new Commerce.Application.Services.Discount.VoucherDiscountCalculator(
+            _dbContext,
+            new Commerce.Application.Services.Discount.VoucherCalculationEngine());
+        var service = CreateOrderService(calc);
+
+        var request = PlatformFeeQuoteRequest(cart.Items.First().Id) with
+        {
+            VoucherCodes = new List<string> { "NO_SUCH_VOUCHER" }
+        };
+
+        var act = () => service.QuoteCheckoutAsync(buyerId, request, CancellationToken.None);
+
+        var ex = (await act.Should().ThrowAsync<CommerceDomainException>()).Which;
+        ex.ErrorCode.Should().Be("VOUCHER_NOT_FOUND");
+        ex.StatusCode.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldThrow409_WhenCachedQuoteHasRejectedVouchers()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+
+        var calc = new Mock<IVoucherDiscountCalculator>();
+        calc.Setup(v => v.CalculateDiscountsAsync(It.IsAny<VoucherCalculationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VoucherCalculationResult(
+                new Dictionary<Guid, ShopDiscountBreakdown> { [sellerId] = new ShopDiscountBreakdown() },
+                new List<string>(),
+                new List<string> { "EXPIRED50" },
+                new List<string> { "Voucher expired." },
+                null,
+                new Dictionary<string, string> { ["EXPIRED50"] = "EXPIRED" }));
+
+        var service = CreateOrderService(calc.Object);
+        var act = () => service.QuoteCheckoutAsync(
+            buyerId,
+            PlatformFeeQuoteRequest(cart.Items.First().Id) with { VoucherCodes = new List<string> { "EXPIRED50" } },
+            CancellationToken.None);
+
+        var ex = (await act.Should().ThrowAsync<CommerceDomainException>()).Which;
+        ex.ErrorCode.Should().Be("VOUCHER_EXPIRED");
+        ex.StatusCode.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task GetOrderDetailAndSubOrderDetail_ShouldResolveShopNameAndSplitSystemVoucherPerSubOrder()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerA = Guid.NewGuid();
+        var sellerB = Guid.NewGuid();
+        var skuA = Guid.NewGuid();
+        var skuB = Guid.NewGuid();
+        var prodA = Guid.NewGuid();
+        var prodB = Guid.NewGuid();
+
+        _mockUserClient
+            .Setup(u => u.GetSellerShopAsync(sellerA, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SellerShopResult(true, Guid.NewGuid(), "Cua Hang Alpha"));
+        _mockUserClient
+            .Setup(u => u.GetSellerShopAsync(sellerB, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SellerShopResult(true, Guid.NewGuid(), "Cua Hang Beta"));
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, CatalogProductCheckResult>
+            {
+                [skuA] = new(skuA, prodA, sellerA, "Item A", 100000m, true, 100),
+                [skuB] = new(skuB, prodB, sellerB, "Item B", 200000m, true, 100)
+            });
+
+        var cart = new Cart
+        {
+            Id = Guid.NewGuid(),
+            BuyerId = buyerId,
+            Status = CartStatus.Active,
+            ItemCount = 2,
+            SubtotalAmount = 300000m,
+            LastActivityAt = DateTimeOffset.UtcNow
+        };
+        var itemA = new CartItem { Id = Guid.NewGuid(), CartId = cart.Id, ProductId = prodA, SkuId = skuA, SellerId = sellerA, ProductNameSnapshot = "Item A", Quantity = 1, UnitPriceSnapshot = 100000m };
+        var itemB = new CartItem { Id = Guid.NewGuid(), CartId = cart.Id, ProductId = prodB, SkuId = skuB, SellerId = sellerB, ProductNameSnapshot = "Item B", Quantity = 1, UnitPriceSnapshot = 200000m };
+        cart.Items.Add(itemA);
+        cart.Items.Add(itemB);
+        _dbContext.Carts.Add(cart);
+
+        _dbContext.DiscountCodes.Add(new DiscountCode
+        {
+            Id = Guid.NewGuid(),
+            Code = "SYS10",
+            Name = "10% System",
+            ScopeType = DiscountScopeType.System,
+            DiscountType = DiscountType.Percentage,
+            DiscountValue = 10m,
+            MinOrderAmount = 0m,
+            MaxUsesTotal = 100,
+            MaxUsesPerUser = 5,
+            Status = DiscountStatus.Active,
+            IsVisible = true
+        });
+        await _dbContext.SaveChangesAsync();
+
+        var engine = new Commerce.Application.Services.Discount.VoucherCalculationEngine();
+        var calc = new Commerce.Application.Services.Discount.VoucherDiscountCalculator(_dbContext, engine);
+        var lifecycle = new Commerce.Application.Services.Discount.VoucherLifecycleService(_dbContext);
+        var service = new OrderService(
+            _dbContext, _mockWalletClient.Object, _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object, _mockUserClient.Object, _cache, _mockLogger.Object, calc, lifecycle);
+
+        var quote = await service.QuoteCheckoutAsync(
+            buyerId,
+            new CheckoutQuoteRequest(
+                new List<Guid> { itemA.Id, itemB.Id },
+                new ShippingAddressInput("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101", ProvinceId: 202),
+                "0901234567",
+                PaymentMethod.Wallet,
+                null,
+                new List<string> { "SYS10" }),
+            CancellationToken.None);
+
+        quote.Shops.First(s => s.SellerId == sellerA).ShopName.Should().Be("Cua Hang Alpha");
+        quote.Shops.First(s => s.SellerId == sellerB).ShopName.Should().Be("Cua Hang Beta");
+
+        var created = await service.CreateOrderAsync(buyerId, WalletCreateRequest(quote.QuoteId), CancellationToken.None);
+        var orderDetail = await service.GetOrderDetailAsync(buyerId, created.OrderId, CancellationToken.None);
+
+        var subA = orderDetail.SubOrders.First(s => s.SellerId == sellerA);
+        var subB = orderDetail.SubOrders.First(s => s.SellerId == sellerB);
+
+        subA.ShopName.Should().Be("Cua Hang Alpha");
+        subB.ShopName.Should().Be("Cua Hang Beta");
+        subA.AppliedVouchers.Should().ContainSingle(v => v.Code == "SYS10" && v.DiscountAmount == 10000m);
+        subB.AppliedVouchers.Should().ContainSingle(v => v.Code == "SYS10" && v.DiscountAmount == 20000m);
+
+        var subDetailA = await service.GetSubOrderDetailAsync(buyerId, subA.SubOrderId, CancellationToken.None);
+        subDetailA.ShopName.Should().Be("Cua Hang Alpha");
+        subDetailA.AppliedVouchers.Should().ContainSingle(v => v.Code == "SYS10" && v.DiscountAmount == 10000m);
+    }
+
+    [Fact]
+    public async Task CreateOrderAndSellerAccept_ShouldPreserveInitialAndAwaitingSellerMilestones_InTimeline_ForBothWalletAndCod()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var cart = await SeedCartWithItemAsync(buyerId, Guid.NewGuid(), sellerId, 200000m, 1);
+        _mockFulfillmentClient
+            .Setup(f => f.CreateShipmentAsync(It.IsAny<ShipmentCreationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ShipmentCreationResult("GHN-999", "GHN", "https://label"));
+
+        var service = CreateOrderService();
+
+        // 1. Wallet order
+        var walletQuote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id), CancellationToken.None);
+        var walletOrder = await service.CreateOrderAsync(buyerId, WalletCreateRequest(walletQuote.QuoteId), CancellationToken.None);
+        var walletSubId = walletOrder.SubOrderIds.Single();
+
+        var tlWalletBefore = await service.GetShipmentTimelineAsync(buyerId, walletSubId, CancellationToken.None);
+        tlWalletBefore.Timeline.Select(t => t.Status).Should().ContainInOrder("PendingPayment", "Paid");
+
+        await service.SellerAcceptSubOrderAsync(sellerId, walletOrder.OrderId, new SellerAcceptOrderRequest(walletSubId), CancellationToken.None);
+        var tlWalletAfter = await service.GetShipmentTimelineAsync(buyerId, walletSubId, CancellationToken.None);
+        tlWalletAfter.Timeline.Select(t => t.Status).Should().ContainInOrder("PendingPayment", "Paid", "Confirmed");
+
+        // 2. COD order (distinct buyer so active cart is isolated)
+        var codBuyerId = Guid.NewGuid();
+        var codSku = Guid.NewGuid();
+        var codCart = await SeedCartWithItemAsync(codBuyerId, codSku, sellerId, 150000m, 1);
+        var codQuote = await service.QuoteCheckoutAsync(
+            codBuyerId,
+            PlatformFeeQuoteRequest(codCart.Items.First().Id) with { PaymentMethod = PaymentMethod.Cod },
+            CancellationToken.None);
+        var codOrder = await service.CreateOrderAsync(
+            codBuyerId,
+            WalletCreateRequest(codQuote.QuoteId) with { PaymentMethod = PaymentMethod.Cod },
+            CancellationToken.None);
+        var codSubId = codOrder.SubOrderIds.Single();
+
+        var tlCodBefore = await service.GetShipmentTimelineAsync(codBuyerId, codSubId, CancellationToken.None);
+        tlCodBefore.Timeline.Should().ContainSingle(t => t.Status == "PendingPayment");
+
+        await service.SellerAcceptSubOrderAsync(sellerId, codOrder.OrderId, new SellerAcceptOrderRequest(codSubId), CancellationToken.None);
+        var tlCodAfter = await service.GetShipmentTimelineAsync(codBuyerId, codSubId, CancellationToken.None);
+        tlCodAfter.Timeline.Select(t => t.Status).Should().ContainInOrder("PendingPayment", "Confirmed");
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_ShouldAttributeShopVouchersToCorrectSubOrders_RegardlessOfVoucherGuidOrder()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerA = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var sellerB = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var skuA = Guid.NewGuid();
+        var skuB = Guid.NewGuid();
+        var prodA = Guid.NewGuid();
+        var prodB = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, CatalogProductCheckResult>
+            {
+                [skuA] = new(skuA, prodA, sellerA, "Item A", 100000m, true, 100),
+                [skuB] = new(skuB, prodB, sellerB, "Item B", 200000m, true, 100)
+            });
+
+        var cart = new Cart { Id = Guid.NewGuid(), BuyerId = buyerId, Status = CartStatus.Active, ItemCount = 2, SubtotalAmount = 300000m };
+        var itemA = new CartItem { Id = Guid.NewGuid(), CartId = cart.Id, ProductId = prodA, SkuId = skuA, SellerId = sellerA, ProductNameSnapshot = "Item A", Quantity = 1, UnitPriceSnapshot = 100000m };
+        var itemB = new CartItem { Id = Guid.NewGuid(), CartId = cart.Id, ProductId = prodB, SkuId = skuB, SellerId = sellerB, ProductNameSnapshot = "Item B", Quantity = 1, UnitPriceSnapshot = 200000m };
+        cart.Items.Add(itemA);
+        cart.Items.Add(itemB);
+        _dbContext.Carts.Add(cart);
+
+        // Deliberately assign smaller GUID to sellerB's voucher so ReserveVouchersAsync sorts it before sellerA's voucher
+        _dbContext.DiscountCodes.AddRange(
+            new DiscountCode
+            {
+                Id = Guid.Parse("99999999-9999-9999-9999-999999999999"),
+                Code = "VOUCHER_A", Name = "Shop A", ScopeType = DiscountScopeType.Shop, OwnerSellerId = sellerA,
+                DiscountType = DiscountType.FixedAmount, DiscountValue = 10000m, Status = DiscountStatus.Active, IsVisible = true
+            },
+            new DiscountCode
+            {
+                Id = Guid.Parse("00000000-0000-0000-0000-000000000001"),
+                Code = "VOUCHER_B", Name = "Shop B", ScopeType = DiscountScopeType.Shop, OwnerSellerId = sellerB,
+                DiscountType = DiscountType.FixedAmount, DiscountValue = 20000m, Status = DiscountStatus.Active, IsVisible = true
+            });
+        await _dbContext.SaveChangesAsync();
+
+        var engine = new Commerce.Application.Services.Discount.VoucherCalculationEngine();
+        var calc = new Commerce.Application.Services.Discount.VoucherDiscountCalculator(_dbContext, engine);
+        var lifecycle = new Commerce.Application.Services.Discount.VoucherLifecycleService(_dbContext);
+        var service = new OrderService(
+            _dbContext, _mockWalletClient.Object, _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object, _mockUserClient.Object, _cache, _mockLogger.Object, calc, lifecycle);
+
+        var quote = await service.QuoteCheckoutAsync(
+            buyerId,
+            PlatformFeeQuoteRequest(itemA.Id) with { CartItemIds = new List<Guid> { itemA.Id, itemB.Id }, VoucherCodes = new List<string> { "VOUCHER_A", "VOUCHER_B" } },
+            CancellationToken.None);
+        var created = await service.CreateOrderAsync(buyerId, WalletCreateRequest(quote.QuoteId), CancellationToken.None);
+        var orderDetail = await service.GetOrderDetailAsync(buyerId, created.OrderId, CancellationToken.None);
+
+        var subA = orderDetail.SubOrders.First(s => s.SellerId == sellerA);
+        var subB = orderDetail.SubOrders.First(s => s.SellerId == sellerB);
+
+        subA.AppliedVouchers.Should().ContainSingle(v => v.Code == "VOUCHER_A" && v.DiscountAmount == 10000m);
+        subB.AppliedVouchers.Should().ContainSingle(v => v.Code == "VOUCHER_B" && v.DiscountAmount == 20000m);
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_WhenPriceDropBreaksVoucherMinOrder_RefreshesCartSnapshotBeforeThrowing()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var prodId = Guid.NewGuid();
+
+        var cart = new Cart { Id = Guid.NewGuid(), BuyerId = buyerId, Status = CartStatus.Active, ItemCount = 1, SubtotalAmount = 300000m };
+        var cartItem = new CartItem { Id = Guid.NewGuid(), CartId = cart.Id, ProductId = prodId, SkuId = skuId, SellerId = sellerId, ProductNameSnapshot = "Drop Item", Quantity = 1, UnitPriceSnapshot = 300000m };
+        cart.Items.Add(cartItem);
+        _dbContext.Carts.Add(cart);
+        _dbContext.DiscountCodes.Add(new DiscountCode
+        {
+            Id = Guid.NewGuid(), Code = "MIN280", Name = "Min 280k", ScopeType = DiscountScopeType.Shop, OwnerSellerId = sellerId,
+            DiscountType = DiscountType.FixedAmount, DiscountValue = 30000m, MinOrderAmount = 280000m, Status = DiscountStatus.Active, IsVisible = true
+        });
+        await _dbContext.SaveChangesAsync();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, CatalogProductCheckResult>
+            {
+                [skuId] = new(skuId, prodId, sellerId, "Drop Item", 300000m, true, 100)
+            });
+
+        var engine = new Commerce.Application.Services.Discount.VoucherCalculationEngine();
+        var calc = new Commerce.Application.Services.Discount.VoucherDiscountCalculator(_dbContext, engine);
+        var lifecycle = new Commerce.Application.Services.Discount.VoucherLifecycleService(_dbContext);
+        var service = new OrderService(
+            _dbContext, _mockWalletClient.Object, _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object, _mockUserClient.Object, _cache, _mockLogger.Object, calc, lifecycle);
+
+        var quote = await service.QuoteCheckoutAsync(
+            buyerId,
+            PlatformFeeQuoteRequest(cartItem.Id) with { VoucherCodes = new List<string> { "MIN280" } },
+            CancellationToken.None);
+
+        // Catalog price drops below 280k before CreateOrderAsync
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, CatalogProductCheckResult>
+            {
+                [skuId] = new(skuId, prodId, sellerId, "Drop Item", 250000m, true, 100)
+            });
+
+        var act = () => service.CreateOrderAsync(buyerId, WalletCreateRequest(quote.QuoteId), CancellationToken.None);
+        (await act.Should().ThrowAsync<CommerceDomainException>()).Which.ErrorCode.Should().Be("VOUCHER_NO_LONGER_VALID");
+
+        var updatedItem = await _dbContext.CartItems.FirstAsync(i => i.Id == cartItem.Id);
+        updatedItem.UnitPriceSnapshot.Should().Be(250000m);
+    }
 }

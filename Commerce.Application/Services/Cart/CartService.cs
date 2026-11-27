@@ -16,15 +16,18 @@ public sealed class CartService : ICartService
     private readonly ICommerceDbContext _dbContext;
     private readonly ICatalogClient _catalogClient;
     private readonly IFulfillmentClient _fulfillmentClient;
+    private readonly IUserClient? _userClient;
 
     public CartService(
         ICommerceDbContext dbContext,
         ICatalogClient catalogClient,
-        IFulfillmentClient fulfillmentClient)
+        IFulfillmentClient fulfillmentClient,
+        IUserClient? userClient = null)
     {
         _dbContext = dbContext;
         _catalogClient = catalogClient;
         _fulfillmentClient = fulfillmentClient;
+        _userClient = userClient;
     }
 
     public async Task<CartDto> GetActiveCartByBuyerIdAsync(Guid buyerId, CancellationToken cancellationToken = default)

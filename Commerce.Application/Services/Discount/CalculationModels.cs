@@ -40,7 +40,8 @@ public sealed record ShopCalculationResult(
     decimal PlatformFeeAmount,
     decimal SellerReceiveAmount,
     decimal TotalAmount,
-    IReadOnlyList<AllocatedVoucherUsage> AllocatedUsages
+    IReadOnlyList<AllocatedVoucherUsage> AllocatedUsages,
+    IReadOnlyDictionary<Guid, decimal>? ItemProductDiscounts = null
 );
 
 public sealed record EvaluateVouchersResult(

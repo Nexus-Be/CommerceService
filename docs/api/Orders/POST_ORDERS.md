@@ -69,6 +69,8 @@ public sealed record CreateOrderRequest(
 | :---: | :--- | :--- | :--- |
 | `400 Bad Request` | `QUOTE_EXPIRED` | `Checkout quote has expired.` | Hết hạn 15m |
 | `400 Bad Request` | `INSUFFICIENT_STOCK` | `One or more items in your order are out of stock.` | Hết hàng kho (Fail-Closed) |
+| `400 Bad Request` | `VOUCHER_EVALUATION_FAILED` | `Unable to validate or reserve the selected voucher codes. Please request a new quote.` | Lỗi kiểm tra hoặc giữ chỗ voucher |
+| `409 Conflict` | `VOUCHER_NO_LONGER_VALID` | `One or more selected vouchers can no longer be applied. Please review your vouchers and request a new quote.` | Quote chứa mã bị từ chối hoặc mã không còn hiệu lực khi tạo đơn |
 
 ---
 

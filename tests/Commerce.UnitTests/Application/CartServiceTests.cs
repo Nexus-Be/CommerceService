@@ -888,4 +888,45 @@ public class CartServiceTests : IDisposable
             return base.SaveChangesAsync(cancellationToken);
         }
     }
+
+    [Fact]
+    public async Task GetGroupedCartAsync_ShouldResolveRealShopNames_WhenUserClientReturnsShopName()
+    {
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var skuId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+
+        _mockCatalogClient
+            .Setup(c => c.GetSkuBatchDetailsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, CatalogProductCheckResult>
+            {
+                [skuId] = new(skuId, productId, sellerId, "Shirt", 100000m, true, 10)
+            });
+        _mockFulfillmentClient
+            .Setup(f => f.BatchCheckStockAsync(It.IsAny<List<Guid>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<Guid, SkuStockCheckResult>
+            {
+                [skuId] = new(skuId, true, 10)
+            });
+
+        var mockUserClient = new Mock<IUserClient>();
+        mockUserClient
+            .Setup(u => u.GetSellerShopAsync(sellerId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SellerShopResult(true, Guid.NewGuid(), "Cua Hang Nexus"));
+
+        var cart = new Cart { Id = Guid.NewGuid(), BuyerId = buyerId, Status = CartStatus.Active, ItemCount = 1, SubtotalAmount = 100000m };
+        cart.Items.Add(new CartItem
+        {
+            Id = Guid.NewGuid(), CartId = cart.Id, ProductId = productId, SkuId = skuId,
+            SellerId = sellerId, ProductNameSnapshot = "Shirt", Quantity = 1, UnitPriceSnapshot = 100000m
+        });
+        _dbContext.Carts.Add(cart);
+        await _dbContext.SaveChangesAsync();
+
+        var service = new CartService(_dbContext, _mockCatalogClient.Object, _mockFulfillmentClient.Object, mockUserClient.Object);
+        var grouped = await service.GetGroupedCartAsync(buyerId, CancellationToken.None);
+
+        grouped.Shops.Should().ContainSingle(s => s.SellerId == sellerId && s.ShopName == "Cua Hang Nexus");
+    }
 }

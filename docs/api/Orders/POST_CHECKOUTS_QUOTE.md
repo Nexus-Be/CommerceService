@@ -63,6 +63,17 @@ public sealed record CheckoutQuoteRequest(
 | HTTP Status | Error Code | Message (Sentence case) | Điều kiện kích hoạt (Trigger Condition) |
 | :---: | :--- | :--- | :--- |
 | `400 Bad Request` | `VAL_INVALID_INPUT` | `Cart item IDs cannot be empty.` | Không có món nào |
+| `400 Bad Request` | `VOUCHER_NOT_FOUND` | `Voucher code '{code}' was not found.` | Mã giảm giá không tồn tại |
+| `400 Bad Request` | `VOUCHER_NOT_ACTIVE` | `Voucher code '{code}' is currently inactive.` | Mã đang tạm ngưng |
+| `400 Bad Request` | `VOUCHER_NOT_STARTED` | `Voucher code '{code}' has not started yet.` | Chưa đến giờ hiệu lực |
+| `400 Bad Request` | `VOUCHER_EXPIRED` | `Voucher code '{code}' has expired.` | Mã đã hết hạn |
+| `400 Bad Request` | `VOUCHER_USAGE_LIMIT_EXCEEDED` | `Voucher code '{code}' has reached its total usage limit.` | Mã đã hết lượt tổng |
+| `400 Bad Request` | `VOUCHER_USER_LIMIT_EXCEEDED` | `You have reached the usage limit for voucher '{code}'.` | Người mua đã dùng hết lượt |
+| `400 Bad Request` | `VOUCHER_MIN_ORDER_NOT_MET` | `Order amount does not meet the minimum requirement for voucher '{code}'.` | Không đạt giá trị tối thiểu ở tầng áp dụng |
+| `400 Bad Request` | `VOUCHER_SCOPE_MISMATCH` | `Voucher code '{code}' does not apply to any selected items in your cart.` | Sai phạm vi shop hoặc sản phẩm |
+| `400 Bad Request` | `VOUCHER_STACKING_CONFLICT` | `Multiple system vouchers cannot be applied to the same order.` | Chọn nhiều hơn 1 mã toàn sàn |
+| `400 Bad Request` | `SHOP_MULTIPLE_VOUCHERS_NOT_ALLOWED` | `Only one voucher per shop can be applied.` | Chọn cả mã sản phẩm và mã shop cho cùng 1 shop |
+| `409 Conflict` | `SYSTEM_VOUCHER_NOT_ALLOWED_FOR_COD` | `Platform vouchers cannot be used with cash on delivery.` | Dùng mã toàn sàn khi thanh toán COD |
 
 ---
 

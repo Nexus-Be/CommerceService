@@ -10,7 +10,8 @@ public sealed record ShopDiscountBreakdown(
     decimal ProductDiscountAmount = 0m,
     decimal ShopDiscountAmount = 0m,
     decimal SystemDiscountAmount = 0m,
-    decimal ShippingDiscountAmount = 0m
+    decimal ShippingDiscountAmount = 0m,
+    IReadOnlyDictionary<Guid, decimal>? ItemProductDiscounts = null
 );
 
 public sealed record VoucherCalculationRequest(

@@ -68,7 +68,8 @@ public sealed record SubOrderItemResponse(
     string? SkuCode,
     int Quantity,
     decimal UnitPrice,
-    decimal LineTotal);
+    decimal LineTotal,
+    decimal? UnitPriceAfterDiscount = null);
 
 public sealed record SubOrderDetailResponse(
     Guid SubOrderId,

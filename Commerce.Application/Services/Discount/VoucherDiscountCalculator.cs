@@ -154,7 +154,8 @@ public sealed class VoucherDiscountCalculator : IVoucherDiscountCalculator
                     ProductDiscountAmount: shopRes.ProductDiscountAmount,
                     ShopDiscountAmount: shopRes.ShopDiscountAmount,
                     SystemDiscountAmount: shopRes.SystemDiscountAmount,
-                    ShippingDiscountAmount: 0m
+                    ShippingDiscountAmount: 0m,
+                    ItemProductDiscounts: shopRes.ItemProductDiscounts
                 );
             }
             else

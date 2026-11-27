@@ -26,8 +26,8 @@ Không có tham số route hay query bắt buộc.
 - **Khai báo C# & DataAnnotations:**
 ```csharp
 public sealed record RecommendVouchersRequest(
-    [Required, MinLength(1)] List<Guid> CartItemIds,
-    ShippingAddressInput? ShippingAddress = null
+    [Required] IReadOnlyList<Guid> CartItemIds,
+    PaymentMethod? PaymentMethod = null
 );
 ```
 

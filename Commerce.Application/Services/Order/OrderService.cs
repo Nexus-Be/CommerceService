@@ -447,7 +447,13 @@ public sealed class OrderService : IOrderService
         }
 
         VoucherCalculationResult? voucherResult = null;
-        if (_voucherCalculator != null && request.VoucherCodes != null && request.VoucherCodes.Count > 0)
+        var requestedVoucherCodes = (request.VoucherCodes ?? new List<string>())
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (_voucherCalculator != null && requestedVoucherCodes.Count > 0)
         {
             try
             {
@@ -463,7 +469,7 @@ public sealed class OrderService : IOrderService
 
                 var vCalcRequest = new VoucherCalculationRequest(
                     buyerId,
-                    request.VoucherCodes,
+                    requestedVoucherCodes,
                     sellerItemsAmounts,
                     sellerShippingFees,
                     calculationItems);
@@ -478,8 +484,16 @@ public sealed class OrderService : IOrderService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Error executing voucher discount calculation for Buyer '{BuyerId}'.", buyerId);
+                throw new CommerceDomainException(
+                    "VOUCHER_EVALUATION_FAILED",
+                    "Unable to validate the selected voucher codes. Please try again.",
+                    400);
             }
+
+            ThrowIfQuoteHasRejectedVouchers(requestedVoucherCodes, voucherResult);
         }
+
+        var shopNames = await ResolveShopNamesAsync(preQuotes.Select(pq => pq.SellerId), ct);
 
         foreach (var pq in preQuotes)
         {
@@ -502,7 +516,7 @@ public sealed class OrderService : IOrderService
 
             shopQuotes.Add(new ShopOrderQuote(
                 pq.SellerId,
-                $"Shop {pq.SellerId.ToString()[..8]}",
+                shopNames.GetValueOrDefault(pq.SellerId, $"Shop {pq.SellerId.ToString()[..8]}"),
                 pq.ShopItems,
                 pq.ItemsAmount,
                 productDiscount,
@@ -822,6 +836,21 @@ public sealed class OrderService : IOrderService
             }
         }
 
+        // VOUCHER INTEGRITY GUARD: Refuse order creation if the quote contained any rejected or unapplied requested vouchers
+        var quotedRequestedCodes = (cachedQuote.Request.VoucherCodes ?? new List<string>())
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Select(c => c.Trim())
+            .ToList();
+        var quotedAppliedSet = new HashSet<string>(cachedQuote.Response.AppliedVouchers ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+        if ((cachedQuote.Response.RejectedVouchers?.Count ?? 0) > 0 ||
+            quotedRequestedCodes.Any(c => !quotedAppliedSet.Contains(c)))
+        {
+            throw new CommerceDomainException(
+                "VOUCHER_NO_LONGER_VALID",
+                "One or more selected vouchers can no longer be applied. Please review your vouchers and request a new quote.",
+                409);
+        }
+
         // THẨM ĐỊNH QUYỀN MUA HÀNG VỚI USER SERVICE (INT-01 / BUYER PERMISSION GATE)
         if (_userClient != null)
         {
@@ -974,6 +1003,10 @@ public sealed class OrderService : IOrderService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to re-evaluate vouchers during order creation for Buyer '{BuyerId}'.", buyerId);
+                throw new CommerceDomainException(
+                    "VOUCHER_EVALUATION_FAILED",
+                    "Unable to validate or reserve the selected voucher codes. Please request a new quote.",
+                    400);
             }
         }
 
@@ -1006,6 +1039,18 @@ public sealed class OrderService : IOrderService
                 provinceId: cachedQuote.Request.ShippingAddress?.ProvinceId
             );
 
+            decimal shopDiscount = shop.ShopDiscountAmount;
+            decimal systemDiscount = shop.SystemDiscountAmount;
+            decimal productDiscount = shop.ProductDiscountAmount;
+            IReadOnlyDictionary<Guid, decimal>? itemProductDiscounts = null;
+            if (recalculatedVouchers != null && recalculatedVouchers.ShopDiscounts.TryGetValue(shop.SellerId, out var freshBreakdown))
+            {
+                shopDiscount = freshBreakdown.ShopDiscountAmount;
+                systemDiscount = freshBreakdown.SystemDiscountAmount;
+                productDiscount = freshBreakdown.ProductDiscountAmount;
+                itemProductDiscounts = freshBreakdown.ItemProductDiscounts;
+            }
+
             decimal shopItemsAmount = 0m;
             var subOrderItems = new List<SubOrderItem>();
 
@@ -1014,6 +1059,15 @@ public sealed class OrderService : IOrderService
                 var effectivePrice = freshSkuPrices.TryGetValue(item.SkuId, out var freshPrice) ? freshPrice : item.UnitPrice;
                 var lineTotal = effectivePrice * item.Quantity;
                 shopItemsAmount += lineTotal;
+
+                decimal itemDiscount = 0m;
+                if (itemProductDiscounts != null && itemProductDiscounts.TryGetValue(item.SkuId, out var d))
+                {
+                    itemDiscount = d;
+                }
+                var unitPriceAfterDiscount = itemDiscount > 0m && item.Quantity > 0
+                    ? Math.Max(0m, Math.Round((lineTotal - itemDiscount) / item.Quantity, 0, MidpointRounding.AwayFromZero))
+                    : effectivePrice;
 
                 subOrderItems.Add(new SubOrderItem
                 {
@@ -1025,7 +1079,7 @@ public sealed class OrderService : IOrderService
                     ProductNameSnapshot = item.ProductName,
                     Quantity = item.Quantity,
                     UnitPrice = effectivePrice,
-                    UnitPriceAfterDiscount = effectivePrice,
+                    UnitPriceAfterDiscount = unitPriceAfterDiscount,
                     LineTotal = lineTotal
                 });
             }
@@ -1047,16 +1101,6 @@ public sealed class OrderService : IOrderService
             foreach (var soi in subOrderItems)
             {
                 subOrder.Items.Add(soi);
-            }
-
-            decimal shopDiscount = shop.ShopDiscountAmount;
-            decimal systemDiscount = shop.SystemDiscountAmount;
-            decimal productDiscount = shop.ProductDiscountAmount;
-            if (recalculatedVouchers != null && recalculatedVouchers.ShopDiscounts.TryGetValue(shop.SellerId, out var freshBreakdown))
-            {
-                shopDiscount = freshBreakdown.ShopDiscountAmount;
-                systemDiscount = freshBreakdown.SystemDiscountAmount;
-                productDiscount = freshBreakdown.ProductDiscountAmount;
             }
 
             subOrder.PlatformFeePercent = platformMarkupPercent;
@@ -1090,11 +1134,17 @@ public sealed class OrderService : IOrderService
         if (reservedUsageIds.Count > 0)
         {
             var usages = await _dbContext.DiscountCodeUsages.Where(u => reservedUsageIds.Contains(u.Id)).ToListAsync(ct);
-            foreach (var u in usages)
+            var usagesById = usages.ToDictionary(u => u.Id);
+            var allocatedList = recalculatedVouchers?.AllocatedUsages;
+            for (int idx = 0; idx < reservedUsageIds.Count; idx++)
             {
+                if (!usagesById.TryGetValue(reservedUsageIds[idx], out var u)) continue;
                 u.OrderId = orderId;
-                var matchingSub = createdSubOrders.FirstOrDefault(so =>
-                    recalculatedVouchers?.AllocatedUsages?.Any(au => au.DiscountCodeId == u.DiscountCodeId && au.SubOrderSellerId == so.SellerId) == true);
+                Guid? sellerId = (allocatedList != null && idx < allocatedList.Count) ? allocatedList[idx].SubOrderSellerId : null;
+                var matchingSub = sellerId.HasValue
+                    ? createdSubOrders.FirstOrDefault(so => so.SellerId == sellerId.Value)
+                    : createdSubOrders.FirstOrDefault(so =>
+                        allocatedList?.Any(au => au.DiscountCodeId == u.DiscountCodeId && au.SubOrderSellerId == so.SellerId) == true);
                 if (matchingSub != null)
                 {
                     u.SubOrderId = matchingSub.Id;
@@ -1232,6 +1282,41 @@ public sealed class OrderService : IOrderService
 
         try
         {
+            var historyBaseTime = DateTimeOffset.UtcNow;
+            foreach (var so in createdSubOrders)
+            {
+                var placedAt = so.CreatedAt != default ? so.CreatedAt : historyBaseTime;
+                _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = so.Id,
+                    FromStatus = null,
+                    ToStatus = SubOrderStatus.PendingPayment,
+                    ActorRole = OrderActorRole.Buyer,
+                    Reason = request.PaymentMethod == PaymentMethod.Cod
+                        ? "[PendingPayment] Order placed and awaiting seller confirmation."
+                        : "[PendingPayment] Order placed and awaiting payment.",
+                    CreatedAt = placedAt
+                });
+
+                if (paid && so.Status == SubOrderStatus.Paid)
+                {
+                    var paidTime = so.PaidAt.HasValue && so.PaidAt.Value > placedAt
+                        ? so.PaidAt.Value
+                        : placedAt.AddMilliseconds(1);
+                    _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+                    {
+                        Id = Guid.NewGuid(),
+                        SubOrderId = so.Id,
+                        FromStatus = SubOrderStatus.PendingPayment,
+                        ToStatus = SubOrderStatus.Paid,
+                        ActorRole = OrderActorRole.Buyer,
+                        Reason = "[Paid] Payment received and awaiting seller confirmation.",
+                        CreatedAt = paidTime
+                    });
+                }
+            }
+
             // Tự động dọn dẹp các món đã mua khỏi giỏ hàng
             var cart = await _dbContext.Carts
                 .Include(c => c.Items)
@@ -1395,15 +1480,11 @@ public sealed class OrderService : IOrderService
             .Select(g => new AppliedVoucherDetail(g.Key.Code, g.Key.ScopeType, g.Key.OwnerSellerId, g.Sum(x => x.DiscountAmount)))
             .ToList();
 
+        var shopNames = await ResolveShopNamesAsync(order.SubOrders.Select(s => s.SellerId), ct);
+
         var subOrderResponses = order.SubOrders.Select(so =>
         {
-            var subVouchers = orderVoucherUsages
-                .Where(u => u.SubOrderId == so.Id ||
-                            (u.SubOrderId == null && u.DiscountCode!.OwnerSellerId == so.SellerId) ||
-                            (u.DiscountCode!.OwnerSellerId == null && so.SystemDiscountAmount > 0m))
-                .GroupBy(u => new { u.DiscountCode!.Code, ScopeType = u.DiscountCode.ScopeType.ToString(), u.DiscountCode.OwnerSellerId })
-                .Select(g => new AppliedVoucherDetail(g.Key.Code, g.Key.ScopeType, g.Key.OwnerSellerId, g.Sum(x => x.DiscountAmount)))
-                .ToList();
+            var subVouchers = BuildSubOrderAppliedVouchers(orderVoucherUsages, so);
 
             return new SubOrderDetailResponse(
                 so.Id,
@@ -1411,7 +1492,7 @@ public sealed class OrderService : IOrderService
                 so.OrderId,
                 so.BuyerId,
                 so.SellerId,
-                $"Shop {so.SellerId.ToString()[..8]}",
+                shopNames.GetValueOrDefault(so.SellerId, $"Shop {so.SellerId.ToString()[..8]}"),
                 so.Status.ToString(),
                 so.PaymentMethod.ToString(),
                 so.ShippingAddress,
@@ -1432,7 +1513,8 @@ public sealed class OrderService : IOrderService
                     i.SkuCodeSnapshot,
                     i.Quantity,
                     i.UnitPrice,
-                    i.LineTotal
+                    i.LineTotal,
+                    i.UnitPriceAfterDiscount
                 )).ToList(),
                 so.CarrierCode,
                 so.TrackingCode,
@@ -1536,13 +1618,8 @@ public sealed class OrderService : IOrderService
             .Where(u => u.OrderId == so.OrderId && u.Status != DiscountUsageStatus.Released && u.DiscountCode != null)
             .ToListAsync(ct);
 
-        var appliedVouchers = subVoucherUsages
-            .Where(u => u.SubOrderId == subOrderId ||
-                        (u.SubOrderId == null && u.DiscountCode!.OwnerSellerId == so.SellerId) ||
-                        (u.DiscountCode!.OwnerSellerId == null && so.SystemDiscountAmount > 0m))
-            .GroupBy(u => new { u.DiscountCode!.Code, ScopeType = u.DiscountCode.ScopeType.ToString(), u.DiscountCode.OwnerSellerId })
-            .Select(g => new AppliedVoucherDetail(g.Key.Code, g.Key.ScopeType, g.Key.OwnerSellerId, g.Sum(x => x.DiscountAmount)))
-            .ToList();
+        var appliedVouchers = BuildSubOrderAppliedVouchers(subVoucherUsages, so);
+        var shopNames = await ResolveShopNamesAsync(new[] { so.SellerId }, ct);
 
         return new SubOrderDetailResponse(
             so.Id,
@@ -1550,7 +1627,7 @@ public sealed class OrderService : IOrderService
             so.OrderId,
             so.BuyerId,
             so.SellerId,
-            $"Shop {so.SellerId.ToString()[..8]}",
+            shopNames.GetValueOrDefault(so.SellerId, $"Shop {so.SellerId.ToString()[..8]}"),
             so.Status.ToString(),
             so.PaymentMethod.ToString(),
             so.ShippingAddress,
@@ -1571,7 +1648,8 @@ public sealed class OrderService : IOrderService
                 i.SkuCodeSnapshot,
                 i.Quantity,
                 i.UnitPrice,
-                i.LineTotal
+                i.LineTotal,
+                i.UnitPriceAfterDiscount
             )).ToList(),
             so.CarrierCode,
             so.TrackingCode,
@@ -2656,7 +2734,8 @@ public sealed class OrderService : IOrderService
                     i.SkuCodeSnapshot,
                     i.Quantity,
                     i.UnitPrice,
-                    i.LineTotal
+                    i.LineTotal,
+                    i.UnitPriceAfterDiscount
                 )).ToList()
             ))
             .ToListAsync(ct);
@@ -2687,12 +2766,14 @@ public sealed class OrderService : IOrderService
             var visibleSubOrders = (isAdminOrStaff || isBuyer)
                 ? order.SubOrders
                 : order.SubOrders.Where(so => so.SellerId == currentUserId);
+            var visibleList = visibleSubOrders.ToList();
+            var shopNames = await ResolveShopNamesAsync(visibleList.Select(so => so.SellerId), ct);
 
-            var shipments = visibleSubOrders.Select(so => new SubOrderShipmentInfo(
+            var shipments = visibleList.Select(so => new SubOrderShipmentInfo(
                 so.Id,
                 so.SubOrderNo,
                 so.SellerId,
-                $"Shop {so.SellerId.ToString()[..8]}",
+                shopNames.GetValueOrDefault(so.SellerId, $"Shop {so.SellerId.ToString()[..8]}"),
                 so.Status.ToString(),
                 so.CarrierCode ?? "GHN",
                 so.TrackingCode,
@@ -2742,6 +2823,8 @@ public sealed class OrderService : IOrderService
                 i.LineTotal
             )).ToList();
 
+            var shopNames = await ResolveShopNamesAsync(new[] { subOrder.SellerId }, ct);
+
             return new ShipmentTrackingResponse(
                 subOrder.OrderId,
                 subOrder.SubOrderNo,
@@ -2751,7 +2834,7 @@ public sealed class OrderService : IOrderService
                         subOrder.Id,
                         subOrder.SubOrderNo,
                         subOrder.SellerId,
-                        $"Shop {subOrder.SellerId.ToString()[..8]}",
+                        shopNames.GetValueOrDefault(subOrder.SellerId, $"Shop {subOrder.SellerId.ToString()[..8]}"),
                         subOrder.Status.ToString(),
                         subOrder.CarrierCode ?? "GHN",
                         subOrder.TrackingCode,
@@ -2784,7 +2867,7 @@ public sealed class OrderService : IOrderService
                 throw new CommerceDomainException("FORBIDDEN", "You do not have permission to view this shipment timeline.", 403);
             }
 
-            var timelineEvents = MapHistoriesToTimeline(so.StatusHistories, so.Status, so.CreatedAt);
+            var timelineEvents = MapHistoriesToTimeline(so.StatusHistories, so.Status, so.CreatedAt, so.PaymentMethod, so.PaidAt);
             var soItems = so.Items.Where(i => !i.IsDeleted).Select(i => new SubOrderItemResponse(
                 i.Id,
                 i.ProductId,
@@ -3672,9 +3755,143 @@ public sealed class OrderService : IOrderService
         _logger.LogInformation("[OrderService] AuctionOrder '{AuctionOrderId}' delivery status updated to '{Status}'.", auctionOrder.Id, auctionOrder.Status);
     }
 
-    private static List<TimelineEventDto> MapHistoriesToTimeline(IEnumerable<OrderStatusHistory> histories, SubOrderStatus currentStatus, DateTimeOffset fallbackCreatedAt)
+    private async Task<Dictionary<Guid, string>> ResolveShopNamesAsync(IEnumerable<Guid> sellerIds, CancellationToken ct)
     {
-        var sorted = histories.OrderBy(h => h.CreatedAt).ToList();
+        var distinctIds = sellerIds.Where(id => id != Guid.Empty).Distinct().ToList();
+        var map = new Dictionary<Guid, string>(distinctIds.Count);
+        if (distinctIds.Count == 0 || _userClient == null)
+        {
+            foreach (var id in distinctIds)
+            {
+                map[id] = $"Shop {id.ToString()[..8]}";
+            }
+            return map;
+        }
+
+        var lookups = await Task.WhenAll(distinctIds.Select(async sellerId =>
+        {
+            var fallback = $"Shop {sellerId.ToString()[..8]}";
+            try
+            {
+                var shop = await _userClient.GetSellerShopAsync(sellerId, ct);
+                if (shop.Found && !string.IsNullOrWhiteSpace(shop.ShopName))
+                {
+                    return (sellerId, shop.ShopName.Trim());
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to resolve shop name for Seller '{SellerId}'. Using fallback label.", sellerId);
+            }
+            return (sellerId, fallback);
+        }));
+
+        foreach (var (sellerId, name) in lookups)
+        {
+            map[sellerId] = name;
+        }
+        return map;
+    }
+
+    private static List<AppliedVoucherDetail> BuildSubOrderAppliedVouchers(
+        IReadOnlyList<DiscountCodeUsage> orderVoucherUsages,
+        SubOrder so)
+    {
+        return orderVoucherUsages
+            .Where(u => u.DiscountCode != null && (
+                (u.DiscountCode.ScopeType == DiscountScopeType.System && so.SystemDiscountAmount > 0m) ||
+                u.SubOrderId == so.Id ||
+                (u.SubOrderId == null && u.DiscountCode.OwnerSellerId == so.SellerId)))
+            .GroupBy(u => new
+            {
+                u.DiscountCode!.Code,
+                ScopeType = u.DiscountCode.ScopeType.ToString(),
+                u.DiscountCode.OwnerSellerId
+            })
+            .Select(g =>
+            {
+                var amount = string.Equals(g.Key.ScopeType, nameof(DiscountScopeType.System), StringComparison.Ordinal)
+                    ? so.SystemDiscountAmount
+                    : g.Sum(x => x.DiscountAmount);
+                return new AppliedVoucherDetail(g.Key.Code, g.Key.ScopeType, g.Key.OwnerSellerId, amount);
+            })
+            .ToList();
+    }
+
+    private static void ThrowIfQuoteHasRejectedVouchers(
+        IReadOnlyList<string> requestedCodes,
+        VoucherCalculationResult? voucherResult)
+    {
+        if (requestedCodes.Count == 0)
+        {
+            return;
+        }
+
+        if (voucherResult == null)
+        {
+            throw new CommerceDomainException(
+                "VOUCHER_EVALUATION_FAILED",
+                "Unable to validate the selected voucher codes. Please try again.",
+                400);
+        }
+
+        var rejectedCodes = new List<string>();
+        if (voucherResult.RejectedVouchers != null)
+        {
+            rejectedCodes.AddRange(voucherResult.RejectedVouchers.Where(c => !string.IsNullOrWhiteSpace(c)));
+        }
+
+        var appliedSet = new HashSet<string>(
+            voucherResult.AppliedVouchers ?? Array.Empty<string>(),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var code in requestedCodes)
+        {
+            if (!appliedSet.Contains(code) && !rejectedCodes.Contains(code, StringComparer.OrdinalIgnoreCase))
+            {
+                rejectedCodes.Add(code);
+            }
+        }
+
+        if (rejectedCodes.Count == 0)
+        {
+            return;
+        }
+
+        var firstCode = rejectedCodes[0];
+        string? reasonCode = null;
+        if (voucherResult.RejectedReasons != null)
+        {
+            voucherResult.RejectedReasons.TryGetValue(firstCode, out reasonCode);
+        }
+
+        var (errorCode, message) = MapVoucherRejectionError(firstCode, reasonCode);
+        throw new CommerceDomainException(errorCode, message, 400);
+    }
+
+    private static (string ErrorCode, string Message) MapVoucherRejectionError(string code, string? reasonCode) =>
+        reasonCode?.Trim().ToUpperInvariant() switch
+        {
+            "NOT_FOUND" => ("VOUCHER_NOT_FOUND", $"Voucher code '{code}' was not found."),
+            "NOT_ACTIVE" => ("VOUCHER_NOT_ACTIVE", $"Voucher code '{code}' is currently inactive."),
+            "NOT_STARTED" => ("VOUCHER_NOT_STARTED", $"Voucher code '{code}' has not started yet."),
+            "EXPIRED" => ("VOUCHER_EXPIRED", $"Voucher code '{code}' has expired."),
+            "USAGE_LIMIT_REACHED" => ("VOUCHER_USAGE_LIMIT_EXCEEDED", $"Voucher code '{code}' has reached its total usage limit."),
+            "USER_LIMIT_REACHED" => ("VOUCHER_USER_LIMIT_EXCEEDED", $"You have reached the usage limit for voucher '{code}'."),
+            "MIN_ORDER_NOT_MET" => ("VOUCHER_MIN_ORDER_NOT_MET", $"Order amount does not meet the minimum requirement for voucher '{code}'."),
+            "SCOPE_MISMATCH" => ("VOUCHER_SCOPE_MISMATCH", $"Voucher code '{code}' does not apply to any selected items in your cart."),
+            "EVALUATION_FAILED" => ("VOUCHER_EVALUATION_FAILED", $"Unable to validate voucher code '{code}'. Please try again."),
+            _ => ("VOUCHER_NOT_APPLICABLE", $"Voucher code '{code}' cannot be applied to this checkout.")
+        };
+
+    private static List<TimelineEventDto> MapHistoriesToTimeline(
+        IEnumerable<OrderStatusHistory> histories,
+        SubOrderStatus currentStatus,
+        DateTimeOffset fallbackCreatedAt,
+        PaymentMethod? paymentMethod = null,
+        DateTimeOffset? paidAt = null)
+    {
+        var sorted = histories.OrderBy(h => h.CreatedAt).ThenBy(h => h.ToStatus).ToList();
         var result = new List<TimelineEventDto>();
 
         foreach (var h in sorted)
@@ -3722,14 +3939,40 @@ public sealed class OrderService : IOrderService
 
         if (result.Count == 0)
         {
-            var statusName = currentStatus.ToString();
-            result.Add(new TimelineEventDto(
-                statusName,
-                GetEventTitle(statusName),
-                GetDefaultDescription(statusName),
-                fallbackCreatedAt,
-                null
-            ));
+            if (currentStatus == SubOrderStatus.Paid)
+            {
+                var paidTimestamp = paidAt.HasValue && paidAt.Value > fallbackCreatedAt
+                    ? paidAt.Value
+                    : fallbackCreatedAt.AddMilliseconds(1);
+                result.Add(new TimelineEventDto(
+                    "PendingPayment",
+                    GetEventTitle("PendingPayment"),
+                    "Order placed and awaiting payment.",
+                    fallbackCreatedAt,
+                    null
+                ));
+                result.Add(new TimelineEventDto(
+                    "Paid",
+                    GetEventTitle("Paid"),
+                    "Payment received and awaiting seller confirmation.",
+                    paidTimestamp,
+                    null
+                ));
+            }
+            else
+            {
+                var statusName = currentStatus.ToString();
+                var desc = currentStatus == SubOrderStatus.PendingPayment && paymentMethod == PaymentMethod.Cod
+                    ? "Order placed and awaiting seller confirmation."
+                    : GetDefaultDescription(statusName);
+                result.Add(new TimelineEventDto(
+                    statusName,
+                    GetEventTitle(statusName),
+                    desc,
+                    fallbackCreatedAt,
+                    null
+                ));
+            }
         }
 
         return result;
@@ -3930,7 +4173,7 @@ public sealed class OrderService : IOrderService
                 FromStatus = prevStatus,
                 ToStatus = SubOrderStatus.Paid,
                 ActorRole = OrderActorRole.Buyer,
-                Reason = "Order repayment succeeded via wallet.",
+                Reason = "[Paid] Payment received and awaiting seller confirmation.",
                 CreatedAt = now
             });
         }
@@ -4669,7 +4912,8 @@ public sealed class OrderService : IOrderService
                     i.SkuCodeSnapshot,
                     i.Quantity,
                     i.UnitPrice,
-                    i.LineTotal
+                    i.LineTotal,
+                    i.UnitPriceAfterDiscount
                 )).ToList()
             ))
             .ToListAsync(ct);

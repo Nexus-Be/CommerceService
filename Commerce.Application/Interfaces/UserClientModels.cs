@@ -76,7 +76,7 @@ public static class UserPenaltyViolationTypes
 }
 
 /// <summary>Answer of the shop lookup.</summary>
-public sealed record SellerShopResult(bool Found, Guid? ShopId);
+public sealed record SellerShopResult(bool Found, Guid? ShopId, string? ShopName = null);
 
 /// <summary>Represents buyer address retrieved from UserService.</summary>
 public sealed record BuyerAddressDto(
