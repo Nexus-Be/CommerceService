@@ -120,21 +120,21 @@ public sealed class WalletClient : IWalletClient
     }
 
     /// <summary>
-    /// Tra cứu số dư ví:
-    /// GET /api/v1/wallets/me
-    /// Header: x-user-id: <userId>
+    /// Tra cứu số dư ví qua internal endpoint (an toàn cả với worker nền lẫn HTTP request):
+    /// GET /api/v1/internal/wallets/{userId}
+    /// Header: X-Internal-Service-Key (tự động gắn từ HttpClient default headers)
     /// </summary>
     public async Task<decimal> GetWalletBalanceAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, "api/v1/wallets/me");
             var effectiveUserId = ResolveEffectiveUserId(userId);
-            if (effectiveUserId != Guid.Empty)
+            if (effectiveUserId == Guid.Empty)
             {
-                request.Headers.TryAddWithoutValidation("x-user-id", effectiveUserId.ToString());
+                return 0m;
             }
 
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"api/v1/internal/wallets/{effectiveUserId}");
             var response = await _httpClient.SendAsync(request, cancellationToken);
             if (response.IsSuccessStatusCode)
             {
