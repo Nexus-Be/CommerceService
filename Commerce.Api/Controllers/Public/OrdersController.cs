@@ -216,8 +216,8 @@ public class OrdersController : ControllerBase
             return authError;
         }
 
-        await _orderService.SellerAcceptSubOrderAsync(sellerId, orderId, request, ct);
-        return Ok(new { subOrderId = request.SubOrderId, status = "Confirmed", acceptedAt = DateTimeOffset.UtcNow });
+        var response = await _orderService.SellerAcceptSubOrderAsync(sellerId, orderId, request, ct);
+        return Ok(response);
     }
 
     /// <summary>R84: Người bán từ chối đơn hàng con (SubOrderStatus to Cancelled, reason: SellerRejected).</summary>

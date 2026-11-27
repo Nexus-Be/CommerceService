@@ -234,11 +234,11 @@ public class ExternalClientFaultTests : IDisposable
     }
 
     // =========================================================================
-    // FAULT-06: SHIPMENT CREATION RESILIENCE ON SELLER ACCEPT
+    // FAULT-06: SHIPMENT CREATION FAIL-CLOSED ON SELLER ACCEPT
     // =========================================================================
 
     [Fact]
-    public async Task SellerAcceptSubOrderAsync_ShouldSucceed_EvenWhenFulfillmentShipmentCreationThrows()
+    public async Task SellerAcceptSubOrderAsync_ShouldThrowAndKeepPaid_WhenFulfillmentShipmentCreationThrows()
     {
         // Arrange
         var buyerId = Guid.NewGuid();
@@ -280,7 +280,7 @@ public class ExternalClientFaultTests : IDisposable
         // Fulfillment bi timeout khi tao van don GHN
         _mockFulfillmentClient
             .Setup(f => f.CreateShipmentAsync(It.IsAny<ShipmentCreationRequest>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new TimeoutException("GHN create shipment gateway timed out"));
+            .ThrowsAsync(new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Unable to create shipment with fulfillment service.", 503));
 
         var orderService = new OrderService(
             _dbContext,
@@ -291,11 +291,15 @@ public class ExternalClientFaultTests : IDisposable
             _mockOrderLogger.Object);
 
         // Act
-        await orderService.SellerAcceptSubOrderAsync(sellerId, orderId, new SellerAcceptOrderRequest(subOrderId), CancellationToken.None);
+        var act = () => orderService.SellerAcceptSubOrderAsync(sellerId, orderId, new SellerAcceptOrderRequest(subOrderId), CancellationToken.None);
 
-        // Assert: Nghiệp vụ xác nhận đơn con của Seller vẫn thành công (Confirmed), không bị gián đoạn vì lỗi đối tác thứ 3
+        // Assert: Nếu Fulfillment lỗi thì Commerce cũng nhả lỗi và giữ SubOrder ở trạng thái Paid (không xác nhận giả)
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Which.StatusCode.Should().Be(503);
+
         var updatedSubOrder = await _dbContext.SubOrders.FirstOrDefaultAsync(s => s.Id == subOrderId);
-        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Confirmed);
-        updatedSubOrder.SellerAcceptedAt.Should().NotBeNull();
+        updatedSubOrder!.Status.Should().Be(SubOrderStatus.Paid);
+        updatedSubOrder.SellerAcceptedAt.Should().BeNull();
+        updatedSubOrder.TrackingCode.Should().BeNull();
     }
 }

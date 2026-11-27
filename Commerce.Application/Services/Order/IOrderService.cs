@@ -38,7 +38,7 @@ public interface IOrderService
     Task<CancelSubOrderResponse> CancelSubOrderAsync(Guid currentUserId, Guid subOrderId, CancelSubOrderRequest request, CancellationToken ct = default);
 
     /// <summary>R83: Người bán tiếp nhận đơn hàng con.</summary>
-    Task SellerAcceptSubOrderAsync(Guid sellerId, Guid orderId, SellerAcceptOrderRequest request, CancellationToken ct = default);
+    Task<SellerAcceptOrderResponse> SellerAcceptSubOrderAsync(Guid sellerId, Guid orderId, SellerAcceptOrderRequest request, CancellationToken ct = default);
 
     /// <summary>R84: Người bán từ chối đơn hàng con.</summary>
     Task SellerRejectSubOrderAsync(Guid sellerId, Guid orderId, SellerRejectOrderRequest request, CancellationToken ct = default);

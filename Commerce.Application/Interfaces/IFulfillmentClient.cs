@@ -51,12 +51,22 @@ public sealed record ShipmentCreationRequest(
     int WeightInGrams,
     IReadOnlyList<ShipmentCreationItem> Items,
     int? PickShiftId = null,
-    int CodAmount = 0);
+    int CodAmount = 0,
+    Guid? BuyerId = null,
+    string? SubOrderNo = null);
 
 public sealed record ShipmentCreationResult(
     string TrackingCode,
     string CarrierCode,
     string LabelPrintUrl
+);
+
+public sealed record ExistingShipmentResult(
+    Guid ShipmentId,
+    string TrackingCode,
+    string CarrierCode,
+    string LabelPrintUrl,
+    string Status
 );
 
 public sealed record BatchReleaseStockResult(
@@ -96,6 +106,9 @@ public interface IFulfillmentClient
 
     /// <summary>Tạo vận đơn GHN khi Shop tiếp nhận đơn hàng con (ORD-04).</summary>
     Task<ShipmentCreationResult> CreateShipmentAsync(ShipmentCreationRequest request, CancellationToken ct = default);
+
+    /// <summary>Kiểm tra xem đơn hàng con đã được tạo vận đơn bên Fulfillment hay chưa (trả về null nếu chưa có).</summary>
+    Task<ExistingShipmentResult?> GetShipmentByOrderIdAsync(Guid subOrderId, CancellationToken ct = default);
 
     /// <summary>Hủy vận đơn đã tạo bên bưu cục GHN khi đơn con bị hủy trước khi lấy hàng.</summary>
     Task<bool> CancelShipmentAsync(Guid subOrderId, string reason = "SubOrderCancelled", CancellationToken ct = default);

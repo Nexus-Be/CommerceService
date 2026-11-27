@@ -44,7 +44,9 @@ public static class ShipmentRequestFactory
             ToDistrictId: address.GhnDistrictId,
             ToWardCode: address.GhnWardCode,
             WeightInGrams: weight,
-            Items: new[] { new ShipmentCreationItem(skuId, 1, order.ProductNameSnapshot, order.WinningAmount, weight) });
+            Items: new[] { new ShipmentCreationItem(skuId, 1, order.ProductNameSnapshot, order.WinningAmount, weight) },
+            BuyerId: order.BuyerId,
+            SubOrderNo: order.OrderNo);
     }
 
     public static ShipmentCreationRequest ForSubOrder(SubOrder subOrder, int? pickShiftId = null)
@@ -77,7 +79,9 @@ public static class ShipmentRequestFactory
             WeightInGrams: DefaultWeightInGrams,
             Items: items,
             PickShiftId: pickShiftId,
-            CodAmount: codAmount);
+            CodAmount: codAmount,
+            BuyerId: subOrder.BuyerId,
+            SubOrderNo: subOrder.SubOrderNo);
     }
 
     private static string JoinAddress(params string?[] parts) =>

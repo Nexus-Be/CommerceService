@@ -47,16 +47,19 @@ Không có (Phương thức không yêu cầu body payload).
 
 | HTTP Status | Error Code | Message (Sentence case) | Điều kiện kích hoạt (Trigger Condition) |
 | :---: | :--- | :--- | :--- |
-| `400 Bad Request` | `SHIPMENT_ALREADY_EXISTS` | `Shipment tracking code already generated.` | Đã có vận đơn |
+| `400 Bad Request` | `SHIPMENT_ALREADY_EXISTS` | `Shipment has already been created for this sub-order.` | Đã có vận đơn ở Commerce hoặc đã tồn tại bên Fulfillment (tự đồng bộ lại thông tin vận đơn nếu thiếu) |
+| `400 Bad Request` | `INVALID_STATUS` | `Only paid or confirmed sub-orders can have carrier shipments created.` | Trạng thái đơn không hợp lệ |
+| `503 Service Unavailable` | `FULFILLMENT_SERVICE_UNAVAILABLE` | `Unable to reach fulfillment service to verify shipment status.` | Lỗi kết nối Fulfillment/GHN |
 
 ---
 
 ## 5. Kế hoạch Thực thi & Checklist Kiểm chứng (Pre-Code Plan & Checklist)
 
 ### 5.1 Các bước thực thi nghiệp vụ (Execution Flow Plan)
-1. **Bước 1:** Gọi lại GHN tạo vận đơn khi trước đó gặp sự cố mạng.
-2. **Bước 2:** Cập nhật TrackingCode.
-3. **Bước 3:** Trả về RetryShipmentResponse.
+1. **Bước 1:** Kiểm tra `TrackingCode` cục bộ và gọi `GET /api/v1/internal/shipments/order/{subOrderId}` sang Fulfillment; nếu đã có vận đơn thì đồng bộ lại vào `SubOrder` và báo `SHIPMENT_ALREADY_EXISTS`.
+2. **Bước 2:** Nếu chưa có vận đơn, gọi Fulfillment/GHN tạo vận đơn mới.
+3. **Bước 3:** Cập nhật `TrackingCode`, `CarrierCode`, `LabelPrintUrl` và đảm bảo trạng thái `Confirmed`.
+4. **Bước 4:** Trả về `RetryShipmentResponse`.
 
 ### 5.2 Checklist hoàn thành
 - [x] **Pre-Code:** Đã đối soát code có sẵn trong CommerceService để tái sử dụng DTO/Enum/Naming.

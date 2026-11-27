@@ -285,9 +285,59 @@ public class AuctionOrderExtendedLifecycleTests : IDisposable
         result.LabelPrintUrl.Should().Be("https://ghn.vn/print/999");
 
         var updated = await _dbContext.AuctionOrders.FindAsync(auctionOrder.Id);
-        updated!.Status.Should().Be(SubOrderStatus.Shipping);
+        updated!.Status.Should().Be(SubOrderStatus.Confirmed);
         updated.TrackingCode.Should().Be("GHNRETRY999");
-        updated.ShippedAt.Should().NotBeNull();
+        updated.SellerAcceptedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task RetryAuctionShipment_WhenShipmentAlreadyExistsInFulfillment_SyncsTrackingAndThrowsShipmentAlreadyExists_400()
+    {
+        var sellerId = Guid.NewGuid();
+        var auctionOrder = new AuctionOrder
+        {
+            Id = Guid.NewGuid(),
+            OrderNo = "AO-RETRY-SYNC",
+            AuctionId = Guid.NewGuid(),
+            BuyerId = Guid.NewGuid(),
+            SellerId = sellerId,
+            WinningBidId = Guid.NewGuid(),
+            ProductId = Guid.NewGuid(),
+            ProductNameSnapshot = "Vintage Watch",
+            WinningAmount = 900000m,
+            RemainingAmount = 900000m,
+            SellerReceiveAmount = 855000m,
+            PlatformFeeAmount = 45000m,
+            PaymentMethod = PaymentMethod.Wallet,
+            WeightGramsSnapshot = 600,
+            Status = SubOrderStatus.Paid,
+            TrackingCode = null,
+            ShippingAddress = "{\"fullName\":\"John Doe\",\"phoneNumber\":\"0909123456\",\"addressLine\":\"123 Main St\",\"provinceName\":\"HCM\",\"districtName\":\"District 1\",\"wardName\":\"Ward 1\",\"ghnDistrictId\":1442,\"ghnWardCode\":\"20101\"}",
+            ContactPhone = "0909123456",
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15)
+        };
+        _dbContext.AuctionOrders.Add(auctionOrder);
+        await _dbContext.SaveChangesAsync();
+
+        _mockFulfillmentClient
+            .Setup(f => f.GetShipmentByOrderIdAsync(auctionOrder.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExistingShipmentResult(
+                ShipmentId: Guid.NewGuid(),
+                TrackingCode: "GHN-ALREADY-888",
+                CarrierCode: "GHN",
+                LabelPrintUrl: "https://ghn.vn/print/888",
+                Status: "ReadyToPick"));
+
+        var act = async () => await _auctionOrderService.RetryAuctionShipmentAsync(sellerId, auctionOrder.Id);
+
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Which.ErrorCode.Should().Be("SHIPMENT_ALREADY_EXISTS");
+        ex.Which.StatusCode.Should().Be(400);
+
+        var updated = await _dbContext.AuctionOrders.FindAsync(auctionOrder.Id);
+        updated!.TrackingCode.Should().Be("GHN-ALREADY-888");
+        updated.Status.Should().Be(SubOrderStatus.Confirmed);
+        _mockFulfillmentClient.Verify(f => f.CreateShipmentAsync(It.IsAny<ShipmentCreationRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

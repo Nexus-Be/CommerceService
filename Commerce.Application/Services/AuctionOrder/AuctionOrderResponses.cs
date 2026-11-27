@@ -45,7 +45,11 @@ public sealed record AuctionOrderDetailResponse(
     DateTimeOffset? DeliveredAt,
     DateTimeOffset? CompletedAt,
     DateTimeOffset? CancelledAt,
-    DateTimeOffset CreatedAt
+    DateTimeOffset CreatedAt,
+    string? CarrierCode = null,
+    string? TrackingCode = null,
+    string? LabelPrintUrl = null,
+    DateTimeOffset? EstimatedDeliveryAt = null
 );
 
 public sealed record AuctionOrderSummaryResponse(
@@ -64,7 +68,10 @@ public sealed record AuctionOrderSummaryResponse(
     Guid? WinningBidId,
     string? OrderSource,
     decimal DepositAmount,
-    decimal? ShippingFeeAmount
+    decimal? ShippingFeeAmount,
+    string? CarrierCode = null,
+    string? TrackingCode = null,
+    string? LabelPrintUrl = null
 )
 {
     public AuctionOrderSummaryResponse(
@@ -80,7 +87,7 @@ public sealed record AuctionOrderSummaryResponse(
         string status,
         DateTimeOffset paymentDeadlineAt,
         DateTimeOffset createdAt)
-        : this(id, orderNo, auctionId, buyerId, sellerId, productName, imageUrl, winningAmount, totalAmount, status, paymentDeadlineAt, createdAt, null, null, 0m, null)
+        : this(id, orderNo, auctionId, buyerId, sellerId, productName, imageUrl, winningAmount, totalAmount, status, paymentDeadlineAt, createdAt, null, null, 0m, null, null, null, null)
     {
     }
 }

@@ -84,7 +84,7 @@ public class AuctionOrdersController : ControllerBase
     [RequireRole("seller", "admin", "staff")]
     public async Task<IActionResult> SellerAccept(
         [FromRoute] Guid auctionOrderId,
-        [FromBody] SellerAcceptAuctionOrderRequest request,
+        [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] SellerAcceptAuctionOrderRequest? request,
         CancellationToken ct)
     {
         if (!this.TryGetUserId(out var sellerId, out var authError))
@@ -92,7 +92,7 @@ public class AuctionOrdersController : ControllerBase
             return authError;
         }
 
-        var response = await _auctionOrderService.SellerAcceptAsync(auctionOrderId, sellerId, request, ct);
+        var response = await _auctionOrderService.SellerAcceptAsync(auctionOrderId, sellerId, request ?? new SellerAcceptAuctionOrderRequest(), ct);
         return Ok(response);
     }
 

@@ -529,7 +529,9 @@ public sealed class FulfillmentClient : IFulfillmentClient
             {
                 orderId = request.OrderId,
                 subOrderId = request.SubOrderId,
+                subOrderNo = request.SubOrderNo,
                 sellerId = request.SellerId,
+                buyerId = request.BuyerId,
                 recipientName = request.RecipientName,
                 recipientPhone = request.RecipientPhone,
                 shippingAddress = request.ShippingAddress,
@@ -596,6 +598,52 @@ public sealed class FulfillmentClient : IFulfillmentClient
         }
     }
 
+    public async Task<ExistingShipmentResult?> GetShipmentByOrderIdAsync(Guid subOrderId, CancellationToken ct = default)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"api/v1/internal/shipments/order/{subOrderId}", ct);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadFromJsonAsync<ExistingShipmentApiResponse>(JsonOptions, ct);
+                if (body is null)
+                {
+                    return null;
+                }
+
+                var tracking = body.TrackingNumber ?? body.GhnOrderCode ?? string.Empty;
+                var labelUrl = !string.IsNullOrWhiteSpace(body.LabelUrl)
+                    ? body.LabelUrl
+                    : (!string.IsNullOrWhiteSpace(tracking) ? $"https://dev-online-gateway.ghn.vn/a5/public-api/printA5?token={body.PrintToken ?? tracking}" : string.Empty);
+
+                return new ExistingShipmentResult(
+                    ShipmentId: body.Id,
+                    TrackingCode: tracking,
+                    CarrierCode: string.IsNullOrWhiteSpace(body.CarrierCode) ? "GHN" : body.CarrierCode,
+                    LabelPrintUrl: labelUrl,
+                    Status: string.IsNullOrWhiteSpace(body.Status) ? "ReadyToPick" : body.Status);
+            }
+
+            _logger.LogWarning("[REST Fulfillment Client] Lookup shipment returned status {StatusCode} for SubOrder '{SubOrderId}'.",
+                response.StatusCode, subOrderId);
+            throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Fulfillment service could not verify existing shipment status.", 503);
+        }
+        catch (CommerceDomainException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[REST Fulfillment Client] Connection error checking existing shipment for SubOrder '{SubOrderId}'.", subOrderId);
+            throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Unable to reach fulfillment service to verify shipment status.", 503);
+        }
+    }
+
     // The service-to-service route (shipment found by sub-order id). The public /api/v1/shipments/{id}/cancel needs a signed-in owner and answered
     // 403 to Commerce, so the carrier order was never cancelled.
     public async Task<bool> CancelShipmentAsync(Guid subOrderId, string reason = "SubOrderCancelled", CancellationToken ct = default)
@@ -632,6 +680,16 @@ public sealed class FulfillmentClient : IFulfillmentClient
     /// <summary>Fulfillment answers TrackingNumber/LabelUrl; the older names are still read so either build works.</summary>
     private sealed record CreateShipmentApiResponse(
         string? TrackingNumber = null, string? TrackingCode = null, string? CarrierCode = null, string? LabelUrl = null, string? LabelPrintUrl = null);
+
+    private sealed record ExistingShipmentApiResponse(
+        Guid Id,
+        Guid OrderId,
+        string? TrackingNumber = null,
+        string? GhnOrderCode = null,
+        string? PrintToken = null,
+        string? CarrierCode = null,
+        string? LabelUrl = null,
+        string? Status = null);
 
     private sealed class BatchReleaseApiResponse
     {

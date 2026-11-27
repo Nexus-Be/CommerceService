@@ -92,7 +92,11 @@ public sealed record SubOrderDetailResponse(
     List<SubOrderItemResponse> Items,
     string? CarrierCode = null,
     string? TrackingCode = null,
-    bool ShipmentPendingCreation = false);
+    bool ShipmentPendingCreation = false,
+    string? LabelPrintUrl = null,
+    DateTimeOffset? SellerAcceptedAt = null,
+    DateTimeOffset? ShippedAt = null,
+    DateTimeOffset? DeliveredAt = null);
 
 public sealed record SubOrderShipmentInfo(
     Guid SubOrderId,
@@ -104,7 +108,17 @@ public sealed record SubOrderShipmentInfo(
     string? TrackingCode,
     DateTimeOffset? ShippedAt,
     DateTimeOffset? DeliveredAt,
-    string? LabelPrintUrl = null);
+    string? LabelPrintUrl = null,
+    List<SubOrderItemResponse>? Items = null);
+
+public sealed record SellerAcceptOrderResponse(
+    Guid SubOrderId,
+    string SubOrderNo,
+    string Status,
+    DateTimeOffset AcceptedAt,
+    string? TrackingCode,
+    string? CarrierCode,
+    string? LabelPrintUrl);
 
 public sealed record RetryShipmentResponse(
     Guid SubOrderId,
@@ -132,7 +146,8 @@ public sealed record ShipmentTimelineResponse(
     string CurrentStatus,
     DateTimeOffset? EstimatedDeliveryAt,
     Commerce.Domain.ValueObjects.ShippingAddressSnapshot ShippingAddress,
-    List<TimelineEventDto> Timeline);
+    List<TimelineEventDto> Timeline,
+    List<SubOrderItemResponse>? Items = null);
 
 public sealed record ShipmentTrackingResponse(
     Guid OrderId,
@@ -176,7 +191,12 @@ public sealed record SubOrderSummaryResponse(
     DateTimeOffset? ShippedAt,
     DateTimeOffset? DeliveredAt,
     DateTimeOffset? CompletedAt,
-    DateTimeOffset? CancelledAt
+    DateTimeOffset? CancelledAt,
+    string? CarrierCode = null,
+    string? TrackingCode = null,
+    string? LabelPrintUrl = null,
+    bool ShipmentPendingCreation = false,
+    List<SubOrderItemResponse>? Items = null
 );
 
 public sealed record ConfirmReceiptResponse(

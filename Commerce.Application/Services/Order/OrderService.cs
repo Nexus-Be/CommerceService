@@ -1415,7 +1415,11 @@ public sealed class OrderService : IOrderService
             )).ToList(),
             so.CarrierCode,
             so.TrackingCode,
-            so.ShipmentPendingCreation
+            so.ShipmentPendingCreation,
+            so.LabelPrintUrl,
+            so.SellerAcceptedAt,
+            so.ShippedAt,
+            so.DeliveredAt
         )).ToList();
 
         var orderNo = $"ORD-{order.Id.ToString()[..8].ToUpperInvariant()}";
@@ -1533,7 +1537,11 @@ public sealed class OrderService : IOrderService
             )).ToList(),
             so.CarrierCode,
             so.TrackingCode,
-            so.ShipmentPendingCreation
+            so.ShipmentPendingCreation,
+            so.LabelPrintUrl,
+            so.SellerAcceptedAt,
+            so.ShippedAt,
+            so.DeliveredAt
         );
     }
 
@@ -2035,7 +2043,7 @@ public sealed class OrderService : IOrderService
         );
     }
 
-    public async Task SellerAcceptSubOrderAsync(Guid sellerId, Guid orderId, SellerAcceptOrderRequest request, CancellationToken ct = default)
+    public async Task<SellerAcceptOrderResponse> SellerAcceptSubOrderAsync(Guid sellerId, Guid orderId, SellerAcceptOrderRequest request, CancellationToken ct = default)
     {
         var so = await _dbContext.SubOrders
             .Include(s => s.Items)
@@ -2052,10 +2060,23 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("INVALID_STATUS", "Sub-order cannot be accepted in its current status.");
         }
 
+        // Tạo vận đơn GHN qua Fulfillment Service trước khi chốt Confirmed: nếu Fulfillment lỗi thì nhả lỗi, không chuyển Confirmed giả
+        var shipmentRequest = ShipmentRequestFactory.ForSubOrder(so, request.PickShiftId);
+        var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(shipmentRequest, ct);
+        if (shipmentResult == null || string.IsNullOrWhiteSpace(shipmentResult.TrackingCode))
+        {
+            throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Carrier logistics service returned an empty shipment response.", 503);
+        }
+
+        var now = DateTimeOffset.UtcNow;
         var previousStatus = so.Status;
         so.Status = SubOrderStatus.Confirmed;
-        so.SellerAcceptedAt = DateTimeOffset.UtcNow;
-        so.UpdatedAt = DateTimeOffset.UtcNow;
+        so.SellerAcceptedAt = now;
+        so.UpdatedAt = now;
+        so.TrackingCode = shipmentResult.TrackingCode;
+        so.CarrierCode = !string.IsNullOrWhiteSpace(shipmentResult.CarrierCode) ? shipmentResult.CarrierCode : "GHN";
+        so.LabelPrintUrl = shipmentResult.LabelPrintUrl;
+        so.ShipmentPendingCreation = false;
 
         _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
         {
@@ -2067,31 +2088,16 @@ public sealed class OrderService : IOrderService
             Reason = !string.IsNullOrWhiteSpace(request.Note) ? request.Note : "Seller accepted sub-order for fulfillment."
         });
 
-        // Tạo vận đơn GHN tự động qua Fulfillment Service (ORD-04 / T009)
-        try
-        {
-            var shipmentRequest = ShipmentRequestFactory.ForSubOrder(so, request.PickShiftId);
-            var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(shipmentRequest, ct);
-            if (shipmentResult != null && !string.IsNullOrWhiteSpace(shipmentResult.TrackingCode))
-            {
-                so.TrackingCode = shipmentResult.TrackingCode;
-                so.CarrierCode = !string.IsNullOrWhiteSpace(shipmentResult.CarrierCode) ? shipmentResult.CarrierCode : "GHN";
-                so.LabelPrintUrl = shipmentResult.LabelPrintUrl;
-                so.ShipmentPendingCreation = false;
-            }
-            else
-            {
-                so.ShipmentPendingCreation = true;
-            }
-        }
-        catch (Exception ex)
-        {
-            // Tránh ngắt quãng luồng xác nhận nếu service giao vận tạm bận
-            _logger.LogWarning(ex, "Transient error creating carrier shipment for SubOrder '{SubOrderId}'. Flagging for retry.", so.Id);
-            so.ShipmentPendingCreation = true;
-        }
-
         await _dbContext.SaveChangesAsync(ct);
+
+        return new SellerAcceptOrderResponse(
+            so.Id,
+            so.SubOrderNo,
+            so.Status.ToString(),
+            so.SellerAcceptedAt.Value,
+            so.TrackingCode,
+            so.CarrierCode,
+            so.LabelPrintUrl);
     }
 
     public async Task<RetryShipmentResponse> RetryCreateShipmentAsync(Guid sellerId, Guid subOrderId, CancellationToken ct = default)
@@ -2106,13 +2112,47 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("FORBIDDEN", "You do not have permission to retry shipment creation for this sub-order.", 403);
         }
 
-        if (so.Status != SubOrderStatus.Confirmed)
+        var canRetryFromStatus = so.Status == SubOrderStatus.Confirmed ||
+                                 so.Status == SubOrderStatus.Paid ||
+                                 (so.PaymentMethod == PaymentMethod.Cod && so.Status == SubOrderStatus.PendingPayment);
+        if (!canRetryFromStatus)
         {
-            throw new CommerceDomainException("INVALID_STATUS", "Only confirmed sub-orders can have carrier shipments created.", 400);
+            throw new CommerceDomainException("INVALID_STATUS", "Only paid or confirmed sub-orders can have carrier shipments created.", 400);
         }
 
         if (!string.IsNullOrWhiteSpace(so.TrackingCode))
         {
+            throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this sub-order.", 400);
+        }
+
+        // Check Fulfillment first: if a shipment was already created there, sync it and tell the caller it already exists.
+        var existingShipment = await _fulfillmentClient.GetShipmentByOrderIdAsync(subOrderId, ct);
+        if (existingShipment != null)
+        {
+            var syncNow = DateTimeOffset.UtcNow;
+            so.TrackingCode = existingShipment.TrackingCode;
+            so.CarrierCode = !string.IsNullOrWhiteSpace(existingShipment.CarrierCode) ? existingShipment.CarrierCode : "GHN";
+            so.LabelPrintUrl = existingShipment.LabelPrintUrl;
+            so.ShipmentPendingCreation = false;
+            so.UpdatedAt = syncNow;
+
+            if (so.Status != SubOrderStatus.Confirmed)
+            {
+                var prev = so.Status;
+                so.Status = SubOrderStatus.Confirmed;
+                so.SellerAcceptedAt ??= syncNow;
+                _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = so.Id,
+                    FromStatus = prev,
+                    ToStatus = SubOrderStatus.Confirmed,
+                    ActorRole = OrderActorRole.Seller,
+                    Reason = "Synchronized existing shipment from fulfillment service."
+                });
+            }
+
+            await _dbContext.SaveChangesAsync(ct);
             throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this sub-order.", 400);
         }
 
@@ -2125,11 +2165,28 @@ public sealed class OrderService : IOrderService
                 throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Carrier logistics service returned an empty shipment response.", 503);
             }
 
+            var now = DateTimeOffset.UtcNow;
             so.TrackingCode = shipmentResult.TrackingCode;
             so.CarrierCode = !string.IsNullOrWhiteSpace(shipmentResult.CarrierCode) ? shipmentResult.CarrierCode : "GHN";
             so.LabelPrintUrl = shipmentResult.LabelPrintUrl;
             so.ShipmentPendingCreation = false;
-            so.UpdatedAt = DateTimeOffset.UtcNow;
+            so.UpdatedAt = now;
+
+            if (so.Status != SubOrderStatus.Confirmed)
+            {
+                var prev = so.Status;
+                so.Status = SubOrderStatus.Confirmed;
+                so.SellerAcceptedAt ??= now;
+                _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+                {
+                    Id = Guid.NewGuid(),
+                    SubOrderId = so.Id,
+                    FromStatus = prev,
+                    ToStatus = SubOrderStatus.Confirmed,
+                    ActorRole = OrderActorRole.Seller,
+                    Reason = "Seller accepted sub-order and created carrier shipment via retry."
+                });
+            }
 
             await _dbContext.SaveChangesAsync(ct);
 
@@ -2139,7 +2196,7 @@ public sealed class OrderService : IOrderService
                 so.TrackingCode,
                 so.CarrierCode,
                 so.LabelPrintUrl ?? "",
-                DateTimeOffset.UtcNow
+                now
             );
         }
         catch (CommerceDomainException)
@@ -2547,7 +2604,21 @@ public sealed class OrderService : IOrderService
                 s.ShippedAt,
                 s.DeliveredAt,
                 s.CompletedAt,
-                s.CancelledAt
+                s.CancelledAt,
+                s.CarrierCode,
+                s.TrackingCode,
+                s.LabelPrintUrl,
+                s.ShipmentPendingCreation,
+                s.Items.Where(i => !i.IsDeleted).Select(i => new SubOrderItemResponse(
+                    i.Id,
+                    i.ProductId,
+                    i.SkuId,
+                    i.ProductNameSnapshot,
+                    i.SkuCodeSnapshot,
+                    i.Quantity,
+                    i.UnitPrice,
+                    i.LineTotal
+                )).ToList()
             ))
             .ToListAsync(ct);
 
@@ -2562,32 +2633,98 @@ public sealed class OrderService : IOrderService
         var order = await _dbContext.Orders
             .AsNoTracking()
             .Include(o => o.SubOrders)
-            .FirstOrDefaultAsync(o => o.Id == orderId, ct)
-            ?? throw new EntityNotFoundException("ORDER_NOT_FOUND", "Order", orderId);
+                .ThenInclude(s => s.Items)
+            .FirstOrDefaultAsync(o => o.Id == orderId, ct);
 
-        if (!isAdminOrStaff && order.BuyerId != currentUserId)
+        if (order != null)
         {
-            throw new CommerceDomainException("FORBIDDEN", "You do not have permission to track this shipment.", 403);
+            var isBuyer = order.BuyerId == currentUserId;
+            var isSellerInOrder = order.SubOrders.Any(so => so.SellerId == currentUserId);
+            if (!isAdminOrStaff && !isBuyer && !isSellerInOrder)
+            {
+                throw new CommerceDomainException("FORBIDDEN", "You do not have permission to track this shipment.", 403);
+            }
+
+            var visibleSubOrders = (isAdminOrStaff || isBuyer)
+                ? order.SubOrders
+                : order.SubOrders.Where(so => so.SellerId == currentUserId);
+
+            var shipments = visibleSubOrders.Select(so => new SubOrderShipmentInfo(
+                so.Id,
+                so.SubOrderNo,
+                so.SellerId,
+                $"Shop {so.SellerId.ToString()[..8]}",
+                so.Status.ToString(),
+                so.CarrierCode ?? "GHN",
+                so.TrackingCode,
+                so.ShippedAt,
+                so.DeliveredAt,
+                so.LabelPrintUrl,
+                so.Items.Where(i => !i.IsDeleted).Select(i => new SubOrderItemResponse(
+                    i.Id,
+                    i.ProductId,
+                    i.SkuId,
+                    i.ProductNameSnapshot,
+                    i.SkuCodeSnapshot,
+                    i.Quantity,
+                    i.UnitPrice,
+                    i.LineTotal
+                )).ToList()
+            )).ToList();
+
+            return new ShipmentTrackingResponse(
+                order.Id,
+                $"ORD-{order.Id.ToString()[..8].ToUpperInvariant()}",
+                shipments
+            );
         }
 
-        var shipments = order.SubOrders.Select(so => new SubOrderShipmentInfo(
-            so.Id,
-            so.SubOrderNo,
-            so.SellerId,
-            $"Shop {so.SellerId.ToString()[..8]}",
-            so.Status.ToString(),
-            so.CarrierCode ?? "GHN",
-            so.TrackingCode,
-            so.ShippedAt,
-            so.DeliveredAt,
-            so.LabelPrintUrl
-        )).ToList();
+        // Also support lookup by SubOrderId directly
+        var subOrder = await _dbContext.SubOrders
+            .AsNoTracking()
+            .Include(s => s.Items)
+            .FirstOrDefaultAsync(s => s.Id == orderId, ct);
 
-        return new ShipmentTrackingResponse(
-            order.Id,
-            $"ORD-{order.Id.ToString()[..8].ToUpperInvariant()}",
-            shipments
-        );
+        if (subOrder != null)
+        {
+            if (!isAdminOrStaff && subOrder.BuyerId != currentUserId && subOrder.SellerId != currentUserId)
+            {
+                throw new CommerceDomainException("FORBIDDEN", "You do not have permission to track this shipment.", 403);
+            }
+
+            var subItems = subOrder.Items.Where(i => !i.IsDeleted).Select(i => new SubOrderItemResponse(
+                i.Id,
+                i.ProductId,
+                i.SkuId,
+                i.ProductNameSnapshot,
+                i.SkuCodeSnapshot,
+                i.Quantity,
+                i.UnitPrice,
+                i.LineTotal
+            )).ToList();
+
+            return new ShipmentTrackingResponse(
+                subOrder.OrderId,
+                subOrder.SubOrderNo,
+                new List<SubOrderShipmentInfo>
+                {
+                    new(
+                        subOrder.Id,
+                        subOrder.SubOrderNo,
+                        subOrder.SellerId,
+                        $"Shop {subOrder.SellerId.ToString()[..8]}",
+                        subOrder.Status.ToString(),
+                        subOrder.CarrierCode ?? "GHN",
+                        subOrder.TrackingCode,
+                        subOrder.ShippedAt,
+                        subOrder.DeliveredAt,
+                        subOrder.LabelPrintUrl,
+                        subItems)
+                }
+            );
+        }
+
+        throw new EntityNotFoundException("ORDER_NOT_FOUND", "Order", orderId);
     }
 
     public Task<ShipmentTimelineResponse> GetShipmentTimelineAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default)
@@ -2597,6 +2734,7 @@ public sealed class OrderService : IOrderService
     {
         var so = await _dbContext.SubOrders
             .AsNoTracking()
+            .Include(s => s.Items)
             .Include(s => s.StatusHistories)
             .FirstOrDefaultAsync(s => s.Id == subOrderId, ct);
 
@@ -2608,6 +2746,16 @@ public sealed class OrderService : IOrderService
             }
 
             var timelineEvents = MapHistoriesToTimeline(so.StatusHistories, so.Status, so.CreatedAt);
+            var soItems = so.Items.Where(i => !i.IsDeleted).Select(i => new SubOrderItemResponse(
+                i.Id,
+                i.ProductId,
+                i.SkuId,
+                i.ProductNameSnapshot,
+                i.SkuCodeSnapshot,
+                i.Quantity,
+                i.UnitPrice,
+                i.LineTotal
+            )).ToList();
 
             return new ShipmentTimelineResponse(
                 so.Id,
@@ -2620,7 +2768,8 @@ public sealed class OrderService : IOrderService
                 so.Status.ToString(),
                 so.EstimatedDeliveryAt,
                 so.ShippingAddress,
-                timelineEvents
+                timelineEvents,
+                soItems
             );
         }
 
@@ -2687,7 +2836,19 @@ public sealed class OrderService : IOrderService
                 ao.Status.ToString(),
                 ao.EstimatedDeliveryAt,
                 addressSnapshot,
-                timelineEvents
+                timelineEvents,
+                new List<SubOrderItemResponse>
+                {
+                    new(
+                        ao.Id,
+                        ao.ProductId,
+                        ao.SkuId ?? ao.ProductId,
+                        ao.ProductNameSnapshot,
+                        null,
+                        1,
+                        ao.WinningAmount,
+                        ao.WinningAmount)
+                }
             );
         }
 
@@ -4399,6 +4560,7 @@ public sealed class OrderService : IOrderService
 
         var query = _dbContext.SubOrders
             .AsNoTracking()
+            .Include(s => s.Items)
             .Where(s => !s.IsDeleted);
 
         if (filter.BuyerId.HasValue && filter.BuyerId.Value != Guid.Empty)
@@ -4455,7 +4617,21 @@ public sealed class OrderService : IOrderService
                 s.ShippedAt,
                 s.DeliveredAt,
                 s.CompletedAt,
-                s.CancelledAt
+                s.CancelledAt,
+                s.CarrierCode,
+                s.TrackingCode,
+                s.LabelPrintUrl,
+                s.ShipmentPendingCreation,
+                s.Items.Where(i => !i.IsDeleted).Select(i => new SubOrderItemResponse(
+                    i.Id,
+                    i.ProductId,
+                    i.SkuId,
+                    i.ProductNameSnapshot,
+                    i.SkuCodeSnapshot,
+                    i.Quantity,
+                    i.UnitPrice,
+                    i.LineTotal
+                )).ToList()
             ))
             .ToListAsync(ct);
 

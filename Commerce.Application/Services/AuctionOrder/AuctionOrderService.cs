@@ -408,7 +408,11 @@ public class AuctionOrderService : IAuctionOrderService
             DeliveredAt: order.DeliveredAt,
             CompletedAt: order.CompletedAt,
             CancelledAt: order.CancelledAt,
-            CreatedAt: order.CreatedAt
+            CreatedAt: order.CreatedAt,
+            CarrierCode: order.CarrierCode,
+            TrackingCode: order.TrackingCode,
+            LabelPrintUrl: order.LabelPrintUrl,
+            EstimatedDeliveryAt: order.EstimatedDeliveryAt
         );
 
     public async Task<PayAuctionOrderResponse> PayAuctionOrderAsync(
@@ -545,31 +549,34 @@ public class AuctionOrderService : IAuctionOrderService
 
         var shipmentRequest = ShipmentRequestFactory.ForAuctionOrder(auctionOrder);
         var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(shipmentRequest, cancellationToken);
+        if (shipmentResult == null || string.IsNullOrWhiteSpace(shipmentResult.TrackingCode))
+        {
+            throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Carrier logistics service returned an empty shipment response.", 503);
+        }
 
         var now = DateTimeOffset.UtcNow;
         auctionOrder.Status = SubOrderStatus.Confirmed;
         auctionOrder.SellerAcceptedAt = now;
-        if (shipmentResult != null)
-        {
-            auctionOrder.TrackingCode = shipmentResult.TrackingCode;
-            auctionOrder.CarrierCode = shipmentResult.CarrierCode;
-            auctionOrder.LabelPrintUrl = shipmentResult.LabelPrintUrl;
-        }
+        auctionOrder.TrackingCode = shipmentResult.TrackingCode;
+        auctionOrder.CarrierCode = !string.IsNullOrWhiteSpace(shipmentResult.CarrierCode) ? shipmentResult.CarrierCode : "GHN";
+        auctionOrder.LabelPrintUrl = shipmentResult.LabelPrintUrl;
 
-        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        var acceptHistory = new OrderStatusHistory
         {
             Id = Guid.NewGuid(),
             AuctionOrderId = auctionOrder.Id,
             FromStatus = SubOrderStatus.Paid,
             ToStatus = SubOrderStatus.Confirmed,
             ActorRole = OrderActorRole.Seller,
-            Reason = string.IsNullOrWhiteSpace(request.Note) ? "Seller accepted auction order." : request.Note
-        });
+            Reason = string.IsNullOrWhiteSpace(request.Note) ? "Seller accepted auction order." : request.Note,
+            AuctionCallbackStatus = "SellerAccepted"
+        };
+        _dbContext.OrderStatusHistories.Add(acceptHistory);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.LogInformation("[AuctionOrder] Seller accepted Order '{OrderId}'. Shipment created with TrackingCode '{TrackingCode}'.",
-            auctionOrder.Id, shipmentResult?.TrackingCode);
+            auctionOrder.Id, shipmentResult.TrackingCode);
 
         // Outbound callback to Auction Service
         var callbackReq = new AuctionPaymentStatusCallbackRequest(
@@ -581,7 +588,11 @@ public class AuctionOrderService : IAuctionOrderService
             OccurredAt: now
         );
 
-        await _auctionClient.NotifyPaymentStatusAsync(auctionOrder.AuctionId, callbackReq, cancellationToken);
+        if (await _auctionClient.NotifyPaymentStatusAsync(auctionOrder.AuctionId, callbackReq, cancellationToken))
+        {
+            acceptHistory.AuctionCallbackSentAt = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
 
         return new SellerRespondResponse(
             OrderId: auctionOrder.Id,
@@ -902,7 +913,14 @@ public class AuctionOrderService : IAuctionOrderService
                 a.TotalAmount,
                 a.Status.ToString(),
                 a.PaymentDeadlineAt,
-                a.CreatedAt
+                a.CreatedAt,
+                a.WinningBidId,
+                a.OrderSource.ToString(),
+                a.DepositAmount,
+                a.ShippingFeeAmount,
+                a.CarrierCode,
+                a.TrackingCode,
+                a.LabelPrintUrl
             ))
             .ToListAsync(cancellationToken);
 
@@ -959,7 +977,10 @@ public class AuctionOrderService : IAuctionOrderService
                 a.WinningBidId,
                 a.OrderSource.ToString(),
                 a.DepositAmount,
-                a.ShippingFeeAmount
+                a.ShippingFeeAmount,
+                a.CarrierCode,
+                a.TrackingCode,
+                a.LabelPrintUrl
             ))
             .ToListAsync(cancellationToken);
 
@@ -1111,7 +1132,19 @@ public class AuctionOrderService : IAuctionOrderService
             ao.Status.ToString(),
             ao.EstimatedDeliveryAt,
             addressSnapshot,
-            timelineEvents
+            timelineEvents,
+            new List<SubOrderItemResponse>
+            {
+                new(
+                    ao.Id,
+                    ao.ProductId,
+                    ao.SkuId ?? ao.ProductId,
+                    ao.ProductNameSnapshot,
+                    null,
+                    1,
+                    ao.WinningAmount,
+                    ao.WinningAmount)
+            }
         );
     }
 
@@ -1243,13 +1276,51 @@ public class AuctionOrderService : IAuctionOrderService
             throw new CommerceDomainException("FORBIDDEN", "You do not have permission to retry shipment creation for this auction order.", 403);
         }
 
-        if (auctionOrder.Status != SubOrderStatus.Confirmed)
+        if (auctionOrder.Status != SubOrderStatus.Confirmed && auctionOrder.Status != SubOrderStatus.Paid)
         {
-            throw new CommerceDomainException("INVALID_STATUS", "Only confirmed auction orders can have carrier shipments created.", 400);
+            throw new CommerceDomainException("INVALID_STATUS", "Only paid or confirmed auction orders can have carrier shipments created.", 400);
+        }
+
+        if (auctionOrder.Status == SubOrderStatus.Paid &&
+            auctionOrder.SellerRespondDeadlineAt.HasValue &&
+            DateTimeOffset.UtcNow > auctionOrder.SellerRespondDeadlineAt.Value)
+        {
+            throw new CommerceDomainException("SELLER_RESPOND_TIMEOUT", "Seller response deadline has expired. Order is awaiting cancellation.", 400);
         }
 
         if (!string.IsNullOrWhiteSpace(auctionOrder.TrackingCode))
         {
+            throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this auction order.", 400);
+        }
+
+        // Check Fulfillment first: if shipment already exists in Fulfillment, sync it and inform caller.
+        var existingShipment = await _fulfillmentClient.GetShipmentByOrderIdAsync(auctionOrderId, cancellationToken);
+        if (existingShipment != null)
+        {
+            var syncNow = DateTimeOffset.UtcNow;
+            var wasPaid = auctionOrder.Status == SubOrderStatus.Paid;
+            auctionOrder.TrackingCode = existingShipment.TrackingCode;
+            auctionOrder.CarrierCode = !string.IsNullOrWhiteSpace(existingShipment.CarrierCode) ? existingShipment.CarrierCode : "GHN";
+            auctionOrder.LabelPrintUrl = existingShipment.LabelPrintUrl;
+            if (wasPaid)
+            {
+                auctionOrder.Status = SubOrderStatus.Confirmed;
+                auctionOrder.SellerAcceptedAt ??= syncNow;
+                _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+                {
+                    Id = Guid.NewGuid(),
+                    AuctionOrderId = auctionOrder.Id,
+                    FromStatus = SubOrderStatus.Paid,
+                    ToStatus = SubOrderStatus.Confirmed,
+                    ChangedBy = currentUserId,
+                    ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Seller,
+                    Reason = "Synchronized existing shipment from fulfillment service.",
+                    AuctionCallbackStatus = "SellerAccepted",
+                    CreatedAt = syncNow
+                });
+            }
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
             throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this auction order.", 400);
         }
 
@@ -1258,36 +1329,57 @@ public class AuctionOrderService : IAuctionOrderService
 
         if (shipmentResult == null || string.IsNullOrWhiteSpace(shipmentResult.TrackingCode))
         {
-            throw new CommerceDomainException("SHIPMENT_CREATION_FAILED", "Failed to create shipment with carrier.", 500);
+            throw new CommerceDomainException("FULFILLMENT_SERVICE_UNAVAILABLE", "Carrier logistics service returned an empty shipment response.", 503);
         }
 
         var now = DateTimeOffset.UtcNow;
+        var previousStatus = auctionOrder.Status;
         auctionOrder.TrackingCode = shipmentResult.TrackingCode;
-        auctionOrder.CarrierCode = shipmentResult.CarrierCode ?? "GHN";
+        auctionOrder.CarrierCode = !string.IsNullOrWhiteSpace(shipmentResult.CarrierCode) ? shipmentResult.CarrierCode : "GHN";
         auctionOrder.LabelPrintUrl = shipmentResult.LabelPrintUrl;
-        auctionOrder.Status = SubOrderStatus.Shipping;
-        auctionOrder.ShippedAt = now;
+        auctionOrder.Status = SubOrderStatus.Confirmed;
+        auctionOrder.SellerAcceptedAt ??= now;
 
-        _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+        var retryHistory = new OrderStatusHistory
         {
             Id = Guid.NewGuid(),
             AuctionOrderId = auctionOrder.Id,
-            FromStatus = SubOrderStatus.Confirmed,
-            ToStatus = SubOrderStatus.Shipping,
+            FromStatus = previousStatus,
+            ToStatus = SubOrderStatus.Confirmed,
             ChangedBy = currentUserId,
             ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Seller,
             Reason = $"Shipment retried and created successfully. TrackingCode: {shipmentResult.TrackingCode}",
+            AuctionCallbackStatus = previousStatus == SubOrderStatus.Paid ? "SellerAccepted" : null,
             CreatedAt = now
-        });
+        };
+        _dbContext.OrderStatusHistories.Add(retryHistory);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        if (previousStatus == SubOrderStatus.Paid)
+        {
+            var callbackReq = new AuctionPaymentStatusCallbackRequest(
+                OrderId: auctionOrder.Id,
+                WinnerId: auctionOrder.BuyerId,
+                Status: "SellerAccepted",
+                EventId: Guid.NewGuid(),
+                OrderSource: auctionOrder.OrderSource.ToWireValue(),
+                OccurredAt: now
+            );
+
+            if (await _auctionClient.NotifyPaymentStatusAsync(auctionOrder.AuctionId, callbackReq, cancellationToken))
+            {
+                retryHistory.AuctionCallbackSentAt = DateTimeOffset.UtcNow;
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+        }
 
         return new RetryAuctionShipmentResponse(
             AuctionOrderId: auctionOrder.Id,
             OrderNo: auctionOrder.OrderNo,
-            TrackingCode: shipmentResult.TrackingCode,
+            TrackingCode: auctionOrder.TrackingCode,
             CarrierCode: auctionOrder.CarrierCode,
-            LabelPrintUrl: shipmentResult.LabelPrintUrl,
+            LabelPrintUrl: auctionOrder.LabelPrintUrl,
             RetriedAt: now
         );
     }
