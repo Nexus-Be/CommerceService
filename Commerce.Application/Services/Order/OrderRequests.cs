@@ -41,10 +41,6 @@ public sealed record CreateOrderRequest(
     string? Note = null,
     decimal? ExpectedShippingFee = null);
 
-public sealed record CancelOrderRequest(
-    CancellationReasonCode ReasonCode = CancellationReasonCode.BuyerChangedMind,
-    string? ReasonText = null);
-
 public sealed record SellerAcceptOrderRequest(
     Guid SubOrderId,
     string? Note = null,

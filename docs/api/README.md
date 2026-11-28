@@ -1,13 +1,15 @@
-# COMMERCE SERVICE — TOÀN BỘ 73 ĐẶC TẢ API CHUẨN SERVICE-API-DOC
+# COMMERCE SERVICE — TOÀN BỘ 72 ĐẶC TẢ API CHUẨN SERVICE-API-DOC
 
 > **Căn cứ quy chuẩn:** Kỹ năng chuyên biệt [service-api-doc](file:///d:/CommerceService/.agents/skills/service-api-doc/SKILL.md) và mẫu tài liệu [SERVICE_API_DOC_TEMPLATE.md](file:///d:/CommerceService/docs/api/SERVICE_API_DOC_TEMPLATE.md).
 > **Nguyên tắc cốt lõi:** 100% Inward-Only, Pure DTO (không bọc `ApiResponse<T>`), 100% English sentence-case error messages, PascalCase enum serialization.
 
 ---
 
-## Danh mục 73 Endpoint Chi Tiết Theo Phân Hệ (Feature Breakdown)
+## Danh mục 72 Endpoint Chi Tiết Theo Phân Hệ (Feature Breakdown)
 
-### Orders (29 Endpoints)
+### Orders (28 Endpoints)
+
+> **Lưu ý:** Endpoint hủy đơn cha `POST /api/v1/orders/{orderId}/cancel` đã bị gỡ bỏ (`REMOVED`). Người mua chỉ hủy từng đơn hàng con trước khi người bán xác nhận qua `POST /api/v1/sub-orders/{subOrderId}/cancel`.
 
 | HTTP | Route Endpoint | Tên / Nghiệp Vụ Cốt Lõi | File Đặc Tả Markdown |
 | :-: | - | - | - |
@@ -20,7 +22,6 @@
 | `GET` | `/api/v1/orders` | List My Master Orders History | [GET_ORDERS_LIST.md](file:///d:/CommerceService/docs/api/Orders/GET_ORDERS_LIST.md) |
 | `GET` | `/api/v1/sub-orders` | List Seller Sub-Orders | [GET_SUB_ORDERS_LIST.md](file:///d:/CommerceService/docs/api/Orders/GET_SUB_ORDERS_LIST.md) |
 | `GET` | `/api/v1/sub-orders/{subOrderId}` | Get Sub-Order Detail by ID | [GET_SUB_ORDERS_DETAIL.md](file:///d:/CommerceService/docs/api/Orders/GET_SUB_ORDERS_DETAIL.md) |
-| `POST` | `/api/v1/orders/{orderId}/cancel` | Cancel Master Order | [POST_ORDERS_CANCEL.md](file:///d:/CommerceService/docs/api/Orders/POST_ORDERS_CANCEL.md) |
 | `POST` | `/api/v1/orders/{orderId}/accept` | Seller Accept Sub-Order & Generate Shipment | [POST_ORDERS_ACCEPT.md](file:///d:/CommerceService/docs/api/Orders/POST_ORDERS_ACCEPT.md) |
 | `POST` | `/api/v1/orders/{orderId}/reject` | Seller Reject Sub-Order & Refund | [POST_ORDERS_REJECT.md](file:///d:/CommerceService/docs/api/Orders/POST_ORDERS_REJECT.md) |
 | `GET` | `/api/v1/orders/{orderId}/shipments` | Get Master Order Shipments Tracking | [GET_SHIPMENTS_ORDER_TRACKING.md](file:///d:/CommerceService/docs/api/Orders/GET_SHIPMENTS_ORDER_TRACKING.md) |

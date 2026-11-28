@@ -461,11 +461,39 @@ public sealed class CartService : ICartService
 
         var (stockResults, catalogResults) = await CheckStockAndCatalogForCartItemsAsync(cart.Items, cancellationToken);
 
+        var distinctSellerIds = cart.Items.Select(i => i.SellerId).Distinct().ToList();
+        var shopNamesBySeller = new Dictionary<Guid, string>();
+        if (_userClient != null && distinctSellerIds.Count > 0)
+        {
+            var shopLookups = distinctSellerIds.Select(async sellerId =>
+            {
+                try
+                {
+                    var shop = await _userClient.GetSellerShopAsync(sellerId, cancellationToken);
+                    return (sellerId, shopName: shop?.ShopName);
+                }
+                catch
+                {
+                    return (sellerId, shopName: (string?)null);
+                }
+            });
+
+            foreach (var (sellerId, shopName) in await Task.WhenAll(shopLookups))
+            {
+                if (!string.IsNullOrWhiteSpace(shopName))
+                {
+                    shopNamesBySeller[sellerId] = shopName.Trim();
+                }
+            }
+        }
+
         var shopGroups = cart.Items
             .GroupBy(i => i.SellerId)
             .Select(g => new ShopCartGroupResponse(
                 SellerId: g.Key,
-                ShopName: $"Shop {g.Key.ToString()[..8].ToUpperInvariant()}",
+                ShopName: shopNamesBySeller.TryGetValue(g.Key, out var resolvedName)
+                    ? resolvedName
+                    : $"Shop {g.Key.ToString()[..8].ToUpperInvariant()}",
                 DistinctItemCount: g.Count(),
                 TotalQuantity: g.Sum(x => x.Quantity),
                 ShopSubtotal: g.Sum(x => x.Quantity * x.UnitPriceSnapshot),

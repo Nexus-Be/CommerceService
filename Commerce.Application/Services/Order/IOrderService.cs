@@ -31,9 +31,6 @@ public interface IOrderService
     Task<SubOrderDetailResponse> GetSubOrderDetailAsync(Guid currentUserId, Guid subOrderId, CancellationToken ct = default);
     Task<SubOrderDetailResponse> GetSubOrderDetailAsync(Guid currentUserId, Guid subOrderId, bool isAdminOrStaff, CancellationToken ct = default);
 
-    /// <summary>R80: Người mua hoặc hệ thống hủy đơn hàng.</summary>
-    Task CancelOrderAsync(Guid currentUserId, Guid orderId, CancelOrderRequest request, CancellationToken ct = default);
-
     /// <summary>Người mua hủy riêng một đơn hàng con (SubOrder) của Shop cụ thể trước khi hàng được gửi đi.</summary>
     Task<CancelSubOrderResponse> CancelSubOrderAsync(Guid currentUserId, Guid subOrderId, CancelSubOrderRequest request, CancellationToken ct = default);
 

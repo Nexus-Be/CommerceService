@@ -186,24 +186,6 @@ public class OrdersController : ControllerBase
         return Ok(subOrder);
     }
 
-    /// <summary>R80: Người mua hoặc Người bán hủy đơn hàng / đơn con khi chưa giao.</summary>
-    [HttpPost("{orderId:guid}/cancel")]
-    [HttpPut("{orderId:guid}/cancel")]
-    public async Task<IActionResult> CancelOrder(
-        [FromRoute] Guid orderId,
-        [FromBody] CancelOrderRequest? request = null,
-        CancellationToken ct = default)
-    {
-        if (!this.TryGetUserId(out var currentUserId, out var authError))
-        {
-            return authError;
-        }
-
-        var effectiveRequest = request ?? new CancelOrderRequest(CancellationReasonCode.BuyerChangedMind, "Buyer cancelled order");
-        await _orderService.CancelOrderAsync(currentUserId, orderId, effectiveRequest, ct);
-        return Ok(new { orderId, status = "Cancelled", cancelledAt = DateTimeOffset.UtcNow });
-    }
-
     /// <summary>R83: Người bán tiếp nhận đơn hàng con (SubOrderStatus to Confirmed).</summary>
     [HttpPost("{orderId:guid}/accept")]
     public async Task<IActionResult> SellerAcceptOrder(

@@ -383,7 +383,7 @@ public class OrderSettlementRefundTests : IDisposable
     }
 
     [Fact]
-    public async Task CancelOrder_ShouldSkipWalletRefund_WhenPaymentMethodIsCod()
+    public async Task CancelSubOrder_ShouldSkipWalletRefund_WhenPaymentMethodIsCod()
     {
         // Arrange
         var buyerId = Guid.NewGuid();
@@ -393,12 +393,13 @@ public class OrderSettlementRefundTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         var service = CreateOrderService();
-        var request = new CancelOrderRequest(CancellationReasonCode.BuyerChangedMind, "Changed mind");
+        var request = new CancelSubOrderRequest(CancellationReasonCode.BuyerChangedMind, "Changed mind");
 
         // Act
-        await service.CancelOrderAsync(buyerId, order.Id, request, CancellationToken.None);
+        var response = await service.CancelSubOrderAsync(buyerId, subOrder.Id, request, CancellationToken.None);
 
         // Assert
+        response.RefundAmount.Should().Be(0m);
         var updatedSubOrder = await _dbContext.SubOrders.FindAsync(subOrder.Id);
         updatedSubOrder!.Status.Should().Be(SubOrderStatus.Cancelled);
 
@@ -453,7 +454,7 @@ public class OrderSettlementRefundTests : IDisposable
     }
 
     [Fact]
-    public async Task CancelOrder_ShouldReleaseVouchersAndDecreasesReservedCount_WhenOrderCancelled()
+    public async Task CancelSubOrder_ShouldReleaseVouchersAndDecreaseReservedCount_WhenSubOrderCancelled()
     {
         // Arrange
         var buyerId = Guid.NewGuid();
@@ -494,10 +495,10 @@ public class OrderSettlementRefundTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         var service = CreateOrderService();
-        var request = new CancelOrderRequest(CancellationReasonCode.BuyerChangedMind, "Changed mind");
+        var request = new CancelSubOrderRequest(CancellationReasonCode.BuyerChangedMind, "Changed mind");
 
         // Act
-        await service.CancelOrderAsync(buyerId, order.Id, request, CancellationToken.None);
+        await service.CancelSubOrderAsync(buyerId, subOrder.Id, request, CancellationToken.None);
 
         // Assert
         var updatedUsage = await _dbContext.DiscountCodeUsages.FindAsync(discountUsage.Id);

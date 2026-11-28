@@ -580,7 +580,19 @@ public sealed class DiscountService : IDiscountService
         if (!evalResult.AppliedVoucherCodes.Contains(voucher.Code))
         {
             var reason = evalResult.Warnings.FirstOrDefault() ?? "Voucher is not applicable to current cart items.";
-            throw new CommerceDomainException("VOUCHER_NOT_APPLICABLE", reason, 400);
+            var rawReason = evalResult.RejectedReasons != null && evalResult.RejectedReasons.TryGetValue(voucher.Code, out var mapped)
+                ? mapped
+                : null;
+            var ineligibleCode = rawReason switch
+            {
+                "EXPIRED" => "VOUCHER_EXPIRED",
+                "NOT_STARTED" => "VOUCHER_NOT_STARTED",
+                "MIN_ORDER_NOT_MET" => "VOUCHER_MIN_ORDER_NOT_MET",
+                "USAGE_LIMIT_REACHED" => "VOUCHER_OUT_OF_STOCK",
+                "SCOPE_MISMATCH" => "VOUCHER_SCOPE_MISMATCH",
+                _ => "VOUCHER_NOT_APPLICABLE"
+            };
+            return new ValidateVoucherResponse(false, ineligibleCode, reason, 0m);
         }
 
         var estimatedDiscount = evalResult.AllAllocatedUsages
