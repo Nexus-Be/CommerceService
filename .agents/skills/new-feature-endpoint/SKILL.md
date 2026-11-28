@@ -34,7 +34,7 @@ description: Add or change a REST endpoint in CommerceService (port 8003). Use w
 - [ ] Read the files above.
 - [ ] Run GitNexus impact for every symbol to change and record the risk.
 - [ ] Confirm the contract: method, route, RBAC, ownership, pagination, idempotency, database change.
-- [ ] Create `.agents/plan/PLAN-YYYYMMDD-HHMM-<NAME>.md`.
+- [ ] Create `.agents/plans/YYYY-MM-DD_HHmm-plan-<slug>.md`.
 - [ ] Stop and ask if the contract is ambiguous.
 
 ### 1. Contract

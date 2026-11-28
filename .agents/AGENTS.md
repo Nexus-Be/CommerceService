@@ -17,3 +17,10 @@ Before adding or changing an endpoint, follow `.agents/skills/new-feature-endpoi
 
 ## Verification Checklist
 - `dotnet build Commerce.sln -c Release` must succeed with 0 errors.
+## Workspace Artifacts (Note, Decision, Doc, Plan)
+Every AI Coding Agent working in this repository must follow the local rules for the 4 workspace artifact types under `.agents/`:
+- **Plans** ([`rules/plan-management.md`](rules/plan-management.md)): Save in `.agents/plans/YYYY-MM-DD_HHmm-plan-<slug>.md` using [`plans/plan-template.md`](plans/plan-template.md) (never `.agents/plan/`).
+- **Topic Notes** ([`rules/note-management.md`](rules/note-management.md)): Save in `.agents/notes/YYYY-MM-DD_HHmm-<topic-slug>.md` using [`notes/note-master.template.md`](notes/note-master.template.md) (**1 topic = 1 file**; open a new file when switching topics).
+- **Confirmations & Decisions** ([`rules/decision-management.md`](rules/decision-management.md)): Save every user confirmation question and settled choice in `.agents/decisions/YYYY-MM-DD_HHmm-<decision-slug>.md` using [`decisions/decision-template.md`](decisions/decision-template.md).
+- **Human-Facing Docs** ([`rules/doc-management.md`](rules/doc-management.md)): Save user-requested docs for human readers in `.agents/docs/<slug>.md` and process through the `humanizer` skill first.
+- **Unified Rules**: See [`rules/workspace-artifacts.md`](rules/workspace-artifacts.md).

@@ -1,0 +1,27 @@
+---
+description: Rules for storing plans, per-topic notes, user confirmation decisions, and humanized docs under .agents/
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Workspace Artifacts, Topic Notes, Confirmations & Humanized Docs
+
+All AI Coding Agents operating in this workspace must follow the plural `.agents/` folder standard and keep the workspace clean:
+
+## 1. Plans -> `.agents/plans/`
+- Always save plans in `.agents/plans/YYYY-MM-DD_HHmm-plan-<slug>.md` with creation and last-updated timestamps.
+- Never create or write into `.agents/plan/` (singular).
+
+## 2. Notes -> `.agents/notes/` (One Topic = One File)
+- Record operational actions, issues encountered and their fixes, and reminders/notes for future reading in `.agents/notes/YYYY-MM-DD_HHmm-<topic-slug>.md`.
+- **One topic per file:** Keep all notes for the same topic (e.g. email/Brevo) in the same file. When switching to a new topic (e.g. shipping/delivery), create a **new** note file in `.agents/notes/`.
+
+## 3. User Confirmations & Decisions -> `.agents/decisions/`
+- Whenever the Agent asks the user for confirmation or settles an ambiguity/choice, record the confirmed decision and invariants in `.agents/decisions/YYYY-MM-DD_HHmm-<decision-slug>.md` with timestamps.
+
+## 4. Human-Facing Docs -> `.agents/docs/` (Mandatory `humanizer` Skill)
+- Whenever the user asks to write documentation for human readers, save it in `.agents/docs/<slug>.md` (unless a specific `docs/api/` path is required by API lifecycle rules).
+- **Mandatory `humanizer` skill:** Always read and apply the `humanizer` skill before finalizing any doc in `.agents/docs/` so the prose reads naturally without AI patterns, chatbot residue, em-dash overuse, forced triads, or decorative bold labels.
+
+## 5. Workspace Hygiene
+- Keep `.agents/` using plural YuiKit directories (`plans/`, `notes/`, `decisions/`, `docs/`, `contexts/`, `conversations/`, `rules/`, `skills/`) and remove stale/duplicate folders or temporary `.playwright-mcp/` dumps after finishing tasks.
