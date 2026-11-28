@@ -547,6 +547,34 @@ public class AuctionOrderService : IAuctionOrderService
             throw new CommerceDomainException("SELLER_RESPOND_TIMEOUT", "Seller response deadline has expired. Order is awaiting cancellation.", 400);
         }
 
+        if (!string.IsNullOrWhiteSpace(auctionOrder.TrackingCode))
+        {
+            throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this auction order.", 400);
+        }
+
+        var existingShipment = await _fulfillmentClient.GetShipmentByOrderIdAsync(auctionOrderId, cancellationToken);
+        if (existingShipment != null)
+        {
+            var syncNow = DateTimeOffset.UtcNow;
+            auctionOrder.Status = SubOrderStatus.Confirmed;
+            auctionOrder.SellerAcceptedAt ??= syncNow;
+            auctionOrder.TrackingCode = existingShipment.TrackingCode;
+            auctionOrder.CarrierCode = !string.IsNullOrWhiteSpace(existingShipment.CarrierCode) ? existingShipment.CarrierCode : "GHN";
+            auctionOrder.LabelPrintUrl = existingShipment.LabelPrintUrl;
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                AuctionOrderId = auctionOrder.Id,
+                FromStatus = SubOrderStatus.Paid,
+                ToStatus = SubOrderStatus.Confirmed,
+                ActorRole = OrderActorRole.Seller,
+                Reason = string.IsNullOrWhiteSpace(request.Note) ? "Synchronized existing shipment from fulfillment service." : request.Note,
+                AuctionCallbackStatus = "SellerAccepted"
+            });
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this auction order.", 400);
+        }
+
         var shipmentRequest = ShipmentRequestFactory.ForAuctionOrder(auctionOrder);
         var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(shipmentRequest, cancellationToken);
         if (shipmentResult == null || string.IsNullOrWhiteSpace(shipmentResult.TrackingCode))
@@ -574,6 +602,11 @@ public class AuctionOrderService : IAuctionOrderService
         _dbContext.OrderStatusHistories.Add(acceptHistory);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        if (shipmentResult.AlreadyExisted)
+        {
+            throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this auction order.", 400);
+        }
 
         _logger.LogInformation("[AuctionOrder] Seller accepted Order '{OrderId}'. Shipment created with TrackingCode '{TrackingCode}'.",
             auctionOrder.Id, shipmentResult.TrackingCode);
@@ -1348,13 +1381,20 @@ public class AuctionOrderService : IAuctionOrderService
             ToStatus = SubOrderStatus.Confirmed,
             ChangedBy = currentUserId,
             ActorRole = isAdminOrStaff ? OrderActorRole.SupportStaff : OrderActorRole.Seller,
-            Reason = $"Shipment retried and created successfully. TrackingCode: {shipmentResult.TrackingCode}",
+            Reason = shipmentResult.AlreadyExisted
+                ? "Synchronized existing shipment from fulfillment service."
+                : $"Shipment retried and created successfully. TrackingCode: {shipmentResult.TrackingCode}",
             AuctionCallbackStatus = previousStatus == SubOrderStatus.Paid ? "SellerAccepted" : null,
             CreatedAt = now
         };
         _dbContext.OrderStatusHistories.Add(retryHistory);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        if (shipmentResult.AlreadyExisted)
+        {
+            throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this auction order.", 400);
+        }
 
         if (previousStatus == SubOrderStatus.Paid)
         {

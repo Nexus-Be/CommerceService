@@ -562,7 +562,8 @@ public sealed class FulfillmentClient : IFulfillmentClient
                 return new ShipmentCreationResult(
                     TrackingCode: tracking,
                     CarrierCode: string.IsNullOrWhiteSpace(body.CarrierCode) ? "GHN" : body.CarrierCode,
-                    LabelPrintUrl: body.LabelUrl ?? body.LabelPrintUrl ?? string.Empty);
+                    LabelPrintUrl: body.LabelUrl ?? body.LabelPrintUrl ?? string.Empty,
+                    AlreadyExisted: body.AlreadyExisted);
             }
 
             // A refusal (4xx) means this request is wrong and retrying will not help; only 5xx and timeouts are "unavailable".
@@ -679,7 +680,7 @@ public sealed class FulfillmentClient : IFulfillmentClient
 
     /// <summary>Fulfillment answers TrackingNumber/LabelUrl; the older names are still read so either build works.</summary>
     private sealed record CreateShipmentApiResponse(
-        string? TrackingNumber = null, string? TrackingCode = null, string? CarrierCode = null, string? LabelUrl = null, string? LabelPrintUrl = null);
+        string? TrackingNumber = null, string? TrackingCode = null, string? CarrierCode = null, string? LabelUrl = null, string? LabelPrintUrl = null, bool AlreadyExisted = false);
 
     private sealed record ExistingShipmentApiResponse(
         Guid Id,

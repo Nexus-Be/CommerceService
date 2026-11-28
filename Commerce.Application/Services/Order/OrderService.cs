@@ -2004,6 +2004,37 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("INVALID_STATUS", "Sub-order cannot be accepted in its current status.");
         }
 
+        if (!string.IsNullOrWhiteSpace(so.TrackingCode))
+        {
+            throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this sub-order.", 400);
+        }
+
+        // Check Fulfillment first: if a shipment was already created there, sync it and tell the caller it already exists.
+        var existingShipment = await _fulfillmentClient.GetShipmentByOrderIdAsync(so.Id, ct);
+        if (existingShipment != null)
+        {
+            var syncNow = DateTimeOffset.UtcNow;
+            var prev = so.Status;
+            so.TrackingCode = existingShipment.TrackingCode;
+            so.CarrierCode = !string.IsNullOrWhiteSpace(existingShipment.CarrierCode) ? existingShipment.CarrierCode : "GHN";
+            so.LabelPrintUrl = existingShipment.LabelPrintUrl;
+            so.ShipmentPendingCreation = false;
+            so.Status = SubOrderStatus.Confirmed;
+            so.SellerAcceptedAt ??= syncNow;
+            so.UpdatedAt = syncNow;
+            _dbContext.OrderStatusHistories.Add(new OrderStatusHistory
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = so.Id,
+                FromStatus = prev,
+                ToStatus = SubOrderStatus.Confirmed,
+                ActorRole = OrderActorRole.Seller,
+                Reason = !string.IsNullOrWhiteSpace(request.Note) ? request.Note : "Synchronized existing shipment from fulfillment service."
+            });
+            await _dbContext.SaveChangesAsync(ct);
+            throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this sub-order.", 400);
+        }
+
         // Tạo vận đơn GHN qua Fulfillment Service trước khi chốt Confirmed: nếu Fulfillment lỗi thì nhả lỗi, không chuyển Confirmed giả
         var shipmentRequest = ShipmentRequestFactory.ForSubOrder(so, request.PickShiftId);
         var shipmentResult = await _fulfillmentClient.CreateShipmentAsync(shipmentRequest, ct);
@@ -2033,6 +2064,11 @@ public sealed class OrderService : IOrderService
         });
 
         await _dbContext.SaveChangesAsync(ct);
+
+        if (shipmentResult.AlreadyExisted)
+        {
+            throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this sub-order.", 400);
+        }
 
         return new SellerAcceptOrderResponse(
             so.Id,
@@ -2133,6 +2169,11 @@ public sealed class OrderService : IOrderService
             }
 
             await _dbContext.SaveChangesAsync(ct);
+
+            if (shipmentResult.AlreadyExisted)
+            {
+                throw new CommerceDomainException("SHIPMENT_ALREADY_EXISTS", "Shipment has already been created for this sub-order.", 400);
+            }
 
             return new RetryShipmentResponse(
                 so.Id,

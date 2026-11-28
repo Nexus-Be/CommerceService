@@ -1426,6 +1426,112 @@ public class OrderServiceTests
     }
 
     [Fact]
+    public async Task SellerAcceptSubOrderAsync_WhenAlreadyCreatedInFulfillment_ShouldSyncTrackingAndThrowShipmentAlreadyExists()
+    {
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+
+        dbContext.SubOrders.Add(new SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-20261129-ACCEPT-EXIST",
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            Status = SubOrderStatus.Paid,
+            PaymentMethod = PaymentMethod.Wallet,
+            ShippingAddress = new ShippingAddressSnapshot("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 220000m,
+            ShippingFeeAmount = 30000m,
+            TotalAmount = 250000m,
+            SellerReceiveAmount = 220000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            TrackingCode = null
+        });
+        await dbContext.SaveChangesAsync();
+
+        _mockFulfillmentClient
+            .Setup(f => f.GetShipmentByOrderIdAsync(subOrderId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExistingShipmentResult(Guid.NewGuid(), "GHN-EXIST-ACCEPT", "GHN", "https://label.pdf/accept", "ReadyToPick"));
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var act = () => service.SellerAcceptSubOrderAsync(sellerId, orderId, new SellerAcceptOrderRequest(subOrderId), CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Which.ErrorCode.Should().Be("SHIPMENT_ALREADY_EXISTS");
+
+        var updated = await dbContext.SubOrders.FirstAsync(s => s.Id == subOrderId);
+        updated.TrackingCode.Should().Be("GHN-EXIST-ACCEPT");
+        updated.Status.Should().Be(SubOrderStatus.Confirmed);
+        _mockFulfillmentClient.Verify(f => f.CreateShipmentAsync(It.IsAny<ShipmentCreationRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SellerAcceptSubOrderAsync_WhenCreateShipmentReturnsAlreadyExisted_ShouldSyncTrackingAndThrowShipmentAlreadyExists()
+    {
+        using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();
+        var buyerId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var subOrderId = Guid.NewGuid();
+
+        dbContext.SubOrders.Add(new SubOrder
+        {
+            Id = subOrderId,
+            SubOrderNo = "SUB-20261129-GHN-EXIST",
+            OrderId = orderId,
+            BuyerId = buyerId,
+            SellerId = sellerId,
+            Status = SubOrderStatus.Paid,
+            PaymentMethod = PaymentMethod.Wallet,
+            ShippingAddress = new ShippingAddressSnapshot("Nguyen Van A", "0901234567", "123 Le Loi", "Ben Nghe", "Quan 1", "TP.HCM", 1442, "20101"),
+            ContactPhone = "0901234567",
+            ItemsAmount = 220000m,
+            ShippingFeeAmount = 30000m,
+            TotalAmount = 250000m,
+            SellerReceiveAmount = 220000m,
+            PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(15),
+            TrackingCode = null
+        });
+        await dbContext.SaveChangesAsync();
+
+        _mockFulfillmentClient
+            .Setup(f => f.GetShipmentByOrderIdAsync(subOrderId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ExistingShipmentResult?)null);
+        _mockFulfillmentClient
+            .Setup(f => f.CreateShipmentAsync(It.IsAny<ShipmentCreationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ShipmentCreationResult("GHN-RECOVERED-777", "GHN", "https://label.pdf/777", AlreadyExisted: true));
+
+        var service = new OrderService(
+            dbContext,
+            _mockWalletClient.Object,
+            _mockFulfillmentClient.Object,
+            _mockCatalogClient.Object,
+            _mockCache.Object,
+            _mockLogger.Object);
+
+        var act = () => service.SellerAcceptSubOrderAsync(sellerId, orderId, new SellerAcceptOrderRequest(subOrderId), CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<CommerceDomainException>();
+        ex.Which.ErrorCode.Should().Be("SHIPMENT_ALREADY_EXISTS");
+
+        var updated = await dbContext.SubOrders.FirstAsync(s => s.Id == subOrderId);
+        updated.TrackingCode.Should().Be("GHN-RECOVERED-777");
+        updated.Status.Should().Be(SubOrderStatus.Confirmed);
+    }
+
+    [Fact]
     public async Task RetryCreateShipmentAsync_WhenSubOrderIsPaidAndNoShipmentInFulfillment_ShouldCreateShipmentAndConfirm()
     {
         using var dbContext = TestDbContextFactory.CreateInMemoryDbContext();

@@ -58,7 +58,8 @@ public sealed record ShipmentCreationRequest(
 public sealed record ShipmentCreationResult(
     string TrackingCode,
     string CarrierCode,
-    string LabelPrintUrl
+    string LabelPrintUrl,
+    bool AlreadyExisted = false
 );
 
 public sealed record ExistingShipmentResult(
