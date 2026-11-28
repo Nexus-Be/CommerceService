@@ -965,7 +965,7 @@ public class OrderCheckoutTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateOrderAsync_WhenExpectedShippingFeeMismatches_Throws409Conflict()
+    public async Task CreateOrderAsync_WhenExpectedShippingFeeMismatches_EnforcesServerFeeAndSucceeds()
     {
         var buyerId = Guid.NewGuid();
         var sellerId = Guid.NewGuid();
@@ -975,14 +975,13 @@ public class OrderCheckoutTests : IDisposable
         var quote = await service.QuoteCheckoutAsync(buyerId, PlatformFeeQuoteRequest(cart.Items.First().Id), CancellationToken.None);
         var actualFee = quote.Shops.Sum(s => s.ShippingFeeAmount);
 
-        // FE sends a fee that differs from the server quote (e.g. stale fee)
-        var staleFee = actualFee + 10000m;
-        var request = WalletCreateRequest(quote.QuoteId) with { ExpectedShippingFee = staleFee };
+        // FE sends a fee that differs from the server quote (e.g. F12 tampering or stale fee)
+        var tamperedFee = actualFee + 10000m;
+        var request = WalletCreateRequest(quote.QuoteId) with { ExpectedShippingFee = tamperedFee };
 
-        var act = () => service.CreateOrderAsync(buyerId, request, CancellationToken.None);
+        var result = await service.CreateOrderAsync(buyerId, request, CancellationToken.None);
 
-        var ex = (await act.Should().ThrowAsync<CommerceDomainException>()).Which;
-        ex.ErrorCode.Should().Be("SHIPPING_FEE_MISMATCH");
-        ex.StatusCode.Should().Be(409);
+        result.Should().NotBeNull();
+        result.TotalAmount.Should().Be(quote.GrandTotal);
     }
 }

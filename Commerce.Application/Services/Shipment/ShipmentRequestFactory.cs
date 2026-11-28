@@ -77,7 +77,8 @@ public static class ShipmentRequestFactory
             WeightInGrams: DefaultWeightInGrams,
             Items: items,
             PickShiftId: pickShiftId,
-            CodAmount: codAmount);
+            CodAmount: codAmount,
+            CarrierCode: subOrder.CarrierCode ?? "GHN");
     }
 
     private static string JoinAddress(params string?[] parts) =>

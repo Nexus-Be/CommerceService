@@ -1,4 +1,4 @@
-﻿namespace Commerce.Application.Services.Order;
+namespace Commerce.Application.Services.Order;
 
 using Commerce.Application.Services.Shipment;
 using System;
@@ -422,7 +422,7 @@ public sealed class OrderService : IOrderService
 
             try
             {
-                var shippingQuoteRequest = new ShopShippingQuoteRequest(sellerId, ghnDistrictId, ghnWardCode, quoteItems);
+                var shippingQuoteRequest = new ShopShippingQuoteRequest(sellerId, ghnDistrictId, ghnWardCode, quoteItems, request.CarrierCode);
                 shippingFeeAmount = await _fulfillmentClient.CalculateShopShippingFeeAsync(shippingQuoteRequest, ct);
             }
             catch (CommerceDomainException ex) when (ex.StatusCode == 400)
@@ -809,16 +809,17 @@ public sealed class OrderService : IOrderService
             throw new CommerceDomainException("QUOTE_EXPIRED", "Checkout quote has expired, is invalid, or is currently being processed.");
         }
 
-        // PARITY GUARD: Ensure client shipping fee matches server-quoted fee before creating order
+        // PARITY GUARD: If client shipping fee differs from server-quoted fee (e.g. F12 tampering or stale client state),
+        // log a warning and silently enforce the authentic server-calculated fee instead of throwing 409.
         if (request.ExpectedShippingFee.HasValue)
         {
             var actualShippingFee = cachedQuote.Response.Shops.Sum(s => s.ShippingFeeAmount);
             if (request.ExpectedShippingFee.Value != actualShippingFee)
             {
-                throw new CommerceDomainException(
-                    "SHIPPING_FEE_MISMATCH",
-                    $"Shipping fee has changed from {request.ExpectedShippingFee.Value:N0} to {actualShippingFee:N0}. Please refresh your checkout quote.",
-                    409);
+                _logger.LogWarning(
+                    "[OrderService] Client ExpectedShippingFee ({ClientFee:N0}) differs from server quoted fee ({ActualFee:N0}). Enforcing server quote.",
+                    request.ExpectedShippingFee.Value,
+                    actualShippingFee);
             }
         }
 
@@ -1041,6 +1042,7 @@ public sealed class OrderService : IOrderService
                 PaymentMethod = request.PaymentMethod,
                 ShippingAddress = addressSnapshot,
                 ContactPhone = request.ContactPhone,
+                CarrierCode = cachedQuote.Request.CarrierCode ?? "GHN",
                 PaymentDeadlineAt = DateTimeOffset.UtcNow.AddMinutes(DefaultPaymentDeadlineMinutes)
             };
 

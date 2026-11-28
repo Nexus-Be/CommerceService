@@ -28,7 +28,8 @@ public sealed record ShopShippingQuoteRequest(
     Guid SellerId,
     int GhnDistrictId,
     string GhnWardCode,
-    List<ShippingQuoteItem> Items
+    List<ShippingQuoteItem> Items,
+    string? CarrierCode = null
 );
 
 /// <summary>One parcel line sent to Fulfillment when a shipment is created. Weight is unknown for some orders, in which case Fulfillment applies its default.</summary>
@@ -51,7 +52,8 @@ public sealed record ShipmentCreationRequest(
     int WeightInGrams,
     IReadOnlyList<ShipmentCreationItem> Items,
     int? PickShiftId = null,
-    int CodAmount = 0);
+    int CodAmount = 0,
+    string? CarrierCode = null);
 
 public sealed record ShipmentCreationResult(
     string TrackingCode,

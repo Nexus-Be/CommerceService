@@ -1,4 +1,4 @@
-﻿namespace Commerce.Infrastructure.Services.Fulfillment;
+namespace Commerce.Infrastructure.Services.Fulfillment;
 
 using System;
 using System.Collections.Generic;
@@ -442,6 +442,7 @@ public sealed class FulfillmentClient : IFulfillmentClient
             var payload = new
             {
                 sellerId = request.SellerId,
+                carrierCode = request.CarrierCode,
                 fromDistrictId = 0,
                 toDistrictId = request.GhnDistrictId,
                 toWardCode = request.GhnWardCode,
@@ -530,6 +531,7 @@ public sealed class FulfillmentClient : IFulfillmentClient
                 orderId = request.OrderId,
                 subOrderId = request.SubOrderId,
                 sellerId = request.SellerId,
+                carrierCode = request.CarrierCode,
                 recipientName = request.RecipientName,
                 recipientPhone = request.RecipientPhone,
                 shippingAddress = request.ShippingAddress,
